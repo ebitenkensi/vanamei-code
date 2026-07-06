@@ -45,7 +45,6 @@ function normalize(text: string): string {
 const TOP_LEVEL = [
   "acp",
   "mcp",
-  "tui",
   "attach",
   "run",
   "debug",

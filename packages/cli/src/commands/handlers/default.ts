@@ -6,8 +6,9 @@ import { Daemon } from "../../services/daemon"
 export default Runtime.handler(Commands, () =>
   Effect.gen(function* () {
     const daemon = yield* Daemon.Service
-    const transport = yield* daemon.transport()
-    const { runTui } = yield* Effect.promise(() => import("../../tui"))
-    yield* runTui(transport)
+    const url = yield* daemon.start()
+    const password = yield* daemon.password()
+    const { runMini } = yield* Effect.promise(() => import("opencode/cli/cmd/run"))
+    yield* Effect.promise(() => runMini({ attach: url, password }))
   }),
 )

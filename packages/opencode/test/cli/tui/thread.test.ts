@@ -4,18 +4,10 @@ import fs from "fs/promises"
 import path from "path"
 import yargs from "yargs"
 import { tmpdir } from "../../fixture/fixture"
-import { TuiCommand, TuiThreadCommand, resolveThreadDirectory } from "../../../src/cli/cmd/tui"
+import { TuiThreadCommand, resolveThreadDirectory } from "../../../src/cli/cmd/tui"
 import { cliIt } from "../../lib/cli-process"
 
 describe("tui thread", () => {
-  test("loads the TUI integration lazily", async () => {
-    const source = await Bun.file(new URL("../../../src/cli/cmd/tui.ts", import.meta.url)).text()
-
-    expect(source).toContain('await import("../tui/layer")')
-    expect(source).toMatch(/await import\(["']@\/plugin\/tui\/runtime["']\)/)
-    expect(source).not.toContain('import("./app")')
-  })
-
   async function check(project?: string) {
     await using tmp = await tmpdir({ git: true })
     const link = path.join(path.dirname(tmp.path), path.basename(tmp.path) + "-link")
@@ -55,18 +47,6 @@ describe("tui thread", () => {
       expect(args.replay === false || args.noReplay === true).toBe(true)
       expect(args.replayLimit).toBe(10)
     }
-  })
-
-  test("routes to the fullscreen tui subcommand with a project positional", async () => {
-    let received: string | undefined
-    const args = await yargs([])
-      .command({ ...TuiCommand, handler: (a: any) => (received = a.project) })
-      .command({ ...TuiThreadCommand, handler: () => {} })
-      .exitProcess(false)
-      .parse(["tui", "someproject"])
-
-    expect(args._).toEqual(["tui"])
-    expect(received).toBe("someproject")
   })
 
   test("accepts --attach, --port, and --continue on bare invocation", async () => {
