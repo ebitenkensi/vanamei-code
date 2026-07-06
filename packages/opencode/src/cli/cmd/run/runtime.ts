@@ -434,6 +434,29 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     })
   }
 
+  // Initial fetch for the ✎ modified-file pill, mirroring loadTodos above.
+  // Live updates after this come from session.diff events (session-data.ts).
+  const loadDiff = async (): Promise<void> => {
+    if (footer.isClosed) {
+      return
+    }
+
+    const response = await ctx.sdk.session.diff({ sessionID: state.sessionID }).catch(() => undefined)
+    if (!response || footer.isClosed) {
+      return
+    }
+
+    const diff = response.data
+    if (!diff) {
+      return
+    }
+
+    footer.event({
+      type: "stream.patch",
+      patch: { modified: diff.length },
+    })
+  }
+
   // Refreshes the /sessions panel's list. Fetched fresh on every panel open
   // (rather than cached alongside the startup catalog) so "updated" times
   // stay accurate across a long-running footer.
@@ -613,12 +636,19 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         },
       })
       footer.event({ type: "stream.view", view: { type: "prompt" } })
+      // Reset todos and the modified count to 0 before the fresh fetches below
+      // resolve, so the panel/pill don't briefly show the previous session's
+      // stale state.
+      footer.event({ type: "stream.todo", todos: [] })
       footer.event({
         type: "stream.patch",
         patch: {
           phase: "idle",
           duration: "",
-          usage: "",
+          contextTokens: 0,
+          contextPercent: null,
+          cost: 0,
+          modified: 0,
           first: info.first,
         },
       })
@@ -630,6 +660,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       })
       await ensureStream()
       await loadTodos().catch(() => {})
+      await loadDiff().catch(() => {})
       await state.demo?.start()
     } catch (error) {
       footer.event({
@@ -750,12 +781,19 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
                 },
               })
               footer.event({ type: "stream.view", view: { type: "prompt" } })
+              // Fix: a new session starts with no todos and no diff -- without
+              // this the footer kept showing the previous session's todo
+              // panel/count and modified-file pill.
+              footer.event({ type: "stream.todo", todos: [] })
               footer.event({
                 type: "stream.patch",
                 patch: {
                   phase: "idle",
                   duration: "",
-                  usage: "",
+                  contextTokens: 0,
+                  contextPercent: null,
+                  cost: 0,
+                  modified: 0,
                   first: true,
                 },
               })
@@ -847,6 +885,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
 
       await ensureStream()
       await loadTodos().catch(() => {})
+      await loadDiff().catch(() => {})
     }
 
     if (!eager && input.resolveSession) {

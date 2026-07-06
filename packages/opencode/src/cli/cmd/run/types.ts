@@ -86,7 +86,14 @@ export type FooterState = {
   queue: number
   model: string
   duration: string
-  usage: string
+  // Structured usage numbers for the statusline info pills (P3). contextPercent
+  // is null when the current model's context limit is unknown -- the ctx% pill
+  // falls back to showing the raw token count in that case.
+  contextTokens: number
+  contextPercent: number | null
+  cost: number
+  // Count of files with uncommitted changes in the bound session (session.diff).
+  modified: number
   first: boolean
   interrupt: number
   exit: number

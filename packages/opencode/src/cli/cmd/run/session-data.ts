@@ -25,14 +25,8 @@
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
-import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
 import type { FooterOutput, FooterPatch, FooterTodoItem, FooterView, StreamCommit } from "./types"
-
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-})
 
 type Tokens = {
   input?: number
@@ -131,11 +125,14 @@ function modelKey(provider: string, model: string): string {
   return `${provider}/${model}`
 }
 
-function formatUsage(
-  tokens: Tokens | undefined,
-  limit: number | undefined,
-  cost: number | undefined,
-): string | undefined {
+// Structured usage numbers for the footer's statusline info pills (P3). Kept
+// separate from formatting/rendering, which is the view's job (footer.view.tsx).
+type UsageMetrics = {
+  tokens: number
+  percent: number | null
+}
+
+function usageMetrics(tokens: Tokens | undefined, limit: number | undefined): UsageMetrics {
   const total =
     (tokens?.input ?? 0) +
     (tokens?.output ?? 0) +
@@ -143,21 +140,10 @@ function formatUsage(
     (tokens?.cache?.read ?? 0) +
     (tokens?.cache?.write ?? 0)
 
-  if (total <= 0) {
-    if (typeof cost === "number" && cost > 0) {
-      return money.format(cost)
-    }
-    return undefined
+  return {
+    tokens: total,
+    percent: limit && limit > 0 ? Math.round((total / limit) * 100) : null,
   }
-
-  const text =
-    limit && limit > 0 ? `${Locale.number(total)} (${Math.round((total / limit) * 100)}%)` : Locale.number(total)
-
-  if (typeof cost === "number" && cost > 0) {
-    return `${text} · ${money.format(cost)}`
-  }
-
-  return text
 }
 
 export function formatError(error: {
@@ -795,6 +781,7 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
 //   permission.*         → manage the permission queue, drive footer view
 //   question.*           → manage the question queue, drive footer view
 //   session.error        → emit error scrollback entry
+//   session.diff         → update the ✎ modified-file pill count
 export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
   const commits: SessionCommit[] = []
   const data = input.data
@@ -868,15 +855,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       next = { status: "assistant responding" }
     }
 
-    const usage = formatUsage(
-      info.tokens,
-      input.limits[modelKey(info.providerID, info.modelID)],
-      typeof info.cost === "number" ? info.cost : undefined,
-    )
-    if (usage) {
+    const metrics = usageMetrics(info.tokens, input.limits[modelKey(info.providerID, info.modelID)])
+    const cost = typeof info.cost === "number" ? info.cost : undefined
+    if (metrics.tokens > 0 || (typeof cost === "number" && cost > 0)) {
       next = {
         ...next,
-        usage,
+        contextTokens: metrics.tokens,
+        contextPercent: metrics.percent,
+        cost: cost ?? 0,
       }
     }
 
@@ -1136,6 +1122,16 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       source: "system",
     })
     return out(data, commits)
+  }
+
+  // Modified-file count for the ✎ pill (P3). Subagent sessions also emit
+  // session.diff, but we only surface the bound session's count.
+  if (event.type === "session.diff") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    return out(data, commits, patch({ modified: event.properties.diff.length }))
   }
 
   return out(data, commits)

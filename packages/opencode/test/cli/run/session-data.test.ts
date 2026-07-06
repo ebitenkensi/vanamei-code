@@ -13,6 +13,16 @@ function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thin
   })
 }
 
+function reduceWithLimits(data: ReturnType<typeof createSessionData>, event: unknown, limits: Record<string, number>) {
+  return reduceSessionData({
+    data,
+    event: event as Event,
+    sessionID: "session-1",
+    thinking: true,
+    limits,
+  })
+}
+
 function assistant(id: string, extra: Record<string, unknown> = {}) {
   return {
     type: "message.updated",
@@ -589,5 +599,64 @@ describe("run session data", () => {
         text: "permission denied",
       }),
     ])
+  })
+
+  test("emits structured context/cost numbers for the statusline pills", () => {
+    const out = reduceWithLimits(
+      createSessionData(),
+      assistant("msg-1", {
+        cost: 0.5,
+        tokens: { input: 100, output: 50, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+      { "openai/gpt-5": 300 },
+    )
+
+    expect(out.footer?.patch).toEqual(
+      expect.objectContaining({
+        contextTokens: 150,
+        contextPercent: 50,
+        cost: 0.5,
+      }),
+    )
+  })
+
+  test("reports a null context percent when the model's limit is unknown", () => {
+    const out = reduce(
+      createSessionData(),
+      assistant("msg-1", {
+        tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+    )
+
+    expect(out.footer?.patch).toEqual(
+      expect.objectContaining({
+        contextTokens: 15,
+        contextPercent: null,
+      }),
+    )
+  })
+
+  test("updates the modified-file pill count from session.diff for the bound session", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.diff",
+      properties: {
+        sessionID: "session-1",
+        diff: [{ file: "a.ts" }, { file: "b.ts" }],
+      },
+    })
+
+    expect(out.footer?.patch).toEqual({ modified: 2 })
+  })
+
+  test("ignores session.diff events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.diff",
+      properties: {
+        sessionID: "session-2",
+        diff: [{ file: "a.ts" }],
+      },
+    })
+
+    expect(out.footer).toBeUndefined()
   })
 })

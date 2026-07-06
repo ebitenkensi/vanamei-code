@@ -12,6 +12,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { registerOpencodeSpinner } from "@opencode-ai/tui/component/register-spinner"
 import { createColors, createFrames } from "@opencode-ai/tui/ui/spinner"
+import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
   RunCommandMenuBody,
@@ -60,6 +61,11 @@ import type { RunFooterTheme, RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
+
+const money = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+})
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -268,7 +274,11 @@ export function RunFooterView(props: RunFooterViewProps) {
   const armed = createMemo(() => props.state().interrupt > 0)
   const exiting = createMemo(() => props.state().exit > 0)
   const queue = createMemo(() => props.state().queue)
-  const usage = createMemo(() => props.state().usage)
+  const contextTokens = createMemo(() => props.state().contextTokens)
+  const contextPercent = createMemo(() => props.state().contextPercent)
+  const cost = createMemo(() => props.state().cost)
+  const modifiedCount = createMemo(() => props.state().modified)
+  const todoCount = createMemo(() => (props.todos?.() ?? []).filter((item) => item.status !== "completed").length)
   const interruptLabel = createMemo(() => {
     if (!interrupt()) {
       return
@@ -455,12 +465,52 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return shell() ? "Shell mode" : ""
   })
-  const activityMeta = createMemo(() => {
-    if (!responsive().statusline.showActivityMeta || usage().length === 0) {
-      return ""
+  // Statusline info pills (P3): ctx% > cost > todos > modified, in that
+  // priority order. All of them hide together below the `compact` breakpoint
+  // (same as the raw-usage string they replace); above that, footerWidthPolicy
+  // drops the lower-priority pills first as width shrinks.
+  const ctxColor = createMemo(() => {
+    const percent = contextPercent()
+    if (percent === null) {
+      return theme().muted
+    }
+    if (percent >= 95) {
+      return theme().error
+    }
+    if (percent >= 80) {
+      return theme().warning
+    }
+    return theme().muted
+  })
+  const pills = createMemo(() => {
+    const stats = responsive().statusline
+    if (!stats.showPills) {
+      return []
     }
 
-    return usage()
+    const items: Array<{ text: string; color: ReturnType<typeof theme>["muted"] }> = []
+    const percent = contextPercent()
+    const tokens = contextTokens()
+    if (percent !== null) {
+      const text = stats.pills.ctxFull ? `◆ ${Locale.number(tokens)} (${percent}%)` : `◆ ${percent}%`
+      items.push({ text, color: ctxColor() })
+    } else if (tokens > 0) {
+      items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
+    }
+
+    if (stats.pills.cost && cost() > 0) {
+      items.push({ text: money.format(cost()), color: theme().muted })
+    }
+
+    if (stats.pills.todos && todoCount() > 0) {
+      items.push({ text: `☐ ${todoCount()}`, color: theme().warning })
+    }
+
+    if (stats.pills.modified && modifiedCount() > 0) {
+      items.push({ text: `✎ ${modifiedCount()}`, color: theme().success })
+    }
+
+    return items
   })
   const modelStatus = createMemo(() => {
     const current = props.currentModel()
@@ -491,7 +541,7 @@ export function RunFooterView(props: RunFooterViewProps) {
     return theme().muted
   })
   const statuslineBackground = createMemo(() => theme().status)
-  const hasActivityMeta = createMemo(() => activityMeta().length > 0)
+  const hasPills = createMemo(() => pills().length > 0)
   const hasModelStatus = createMemo(() => responsive().statusline.showModel && Boolean(modelStatus()))
   const contextHints = createMemo(() => {
     if (!prompt() || shell() || !responsive().statusline.showContextHints) {
@@ -912,10 +962,19 @@ export function RunFooterView(props: RunFooterViewProps) {
                   </text>
                 </box>
 
-                <Show when={activityMeta().length > 0}>
+                <Show when={hasPills()}>
                   <box paddingRight={1} backgroundColor="transparent" flexShrink={1}>
-                    <text fg={theme().muted} wrapMode="none" truncate>
-                      {activityMeta()}
+                    <text wrapMode="none" truncate>
+                      <For each={pills()}>
+                        {(pill, index) => (
+                          <>
+                            <Show when={index() > 0}>
+                              <span style={{ fg: theme().muted }}> · </span>
+                            </Show>
+                            <span style={{ fg: pill.color }}>{pill.text}</span>
+                          </>
+                        )}
+                      </For>
                     </text>
                   </box>
                 </Show>
@@ -944,7 +1003,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                   {(hint, index) => (
                     <box paddingRight={1} backgroundColor="transparent" flexShrink={0} maxWidth={24}>
                       <text fg={theme().text} wrapMode="none" truncate>
-                        <Show when={index() > 0 || ((hasActivityMeta() || hasModelStatus()) && index() === 0)}>
+                        <Show when={index() > 0 || ((hasPills() || hasModelStatus()) && index() === 0)}>
                           {sectionSeparator()}
                         </Show>
                         <span style={{ fg: theme().text }}>{hint.key}</span>{" "}
@@ -958,7 +1017,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                   {(hint) => (
                     <box paddingRight={1} backgroundColor="transparent" flexShrink={0} maxWidth={18}>
                       <text fg={theme().text} wrapMode="none" truncate>
-                        <Show when={hasActivityMeta() || hasModelStatus() || hasContextHints()}>
+                        <Show when={hasPills() || hasModelStatus() || hasContextHints()}>
                           {sectionSeparator()}
                         </Show>
                         <span style={{ fg: theme().text }}>{hint().key}</span>{" "}

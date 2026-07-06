@@ -2360,4 +2360,72 @@ describe("run stream transport", () => {
       await transport.close()
     }
   })
+
+  test("routes session.diff events for the bound session into a modified-count patch", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({
+        stream: src.stream,
+      }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      footer: ui.api,
+    })
+
+    try {
+      src.push({
+        id: "evt-diff-1",
+        type: "session.diff",
+        properties: {
+          sessionID: "session-1",
+          diff: [{ file: "a.ts" }, { file: "b.ts" }],
+        },
+      } as SdkEvent)
+
+      const event = await waitFor(() =>
+        ui.events.find(
+          (item): item is Extract<FooterEvent, { type: "stream.patch" }> =>
+            item.type === "stream.patch" && item.patch.modified !== undefined,
+        ),
+      )
+
+      expect(event).toEqual({ type: "stream.patch", patch: { modified: 2 } })
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
+
+  test("ignores session.diff events for sessions outside the tracked tree", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({
+        stream: src.stream,
+      }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      footer: ui.api,
+    })
+
+    try {
+      src.push({
+        id: "evt-diff-2",
+        type: "session.diff",
+        properties: {
+          sessionID: "session-other",
+          diff: [{ file: "a.ts" }],
+        },
+      } as SdkEvent)
+
+      await Bun.sleep(50)
+      expect(ui.events.some((item) => item.type === "stream.patch" && item.patch.modified !== undefined)).toBe(false)
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
 })

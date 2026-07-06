@@ -252,7 +252,10 @@ export class RunFooter implements FooterApi {
       queue: 0,
       model: options.modelLabel,
       duration: "",
-      usage: "",
+      contextTokens: 0,
+      contextPercent: null,
+      cost: 0,
+      modified: 0,
       first: options.first,
       interrupt: 0,
       exit: 0,
@@ -529,7 +532,10 @@ export class RunFooter implements FooterApi {
       queue: typeof next.queue === "number" ? Math.max(0, next.queue) : prev.queue,
       model: typeof next.model === "string" ? next.model : prev.model,
       duration: typeof next.duration === "string" ? next.duration : prev.duration,
-      usage: typeof next.usage === "string" ? next.usage : prev.usage,
+      contextTokens: typeof next.contextTokens === "number" ? next.contextTokens : prev.contextTokens,
+      contextPercent: "contextPercent" in next ? (next.contextPercent ?? null) : prev.contextPercent,
+      cost: typeof next.cost === "number" ? next.cost : prev.cost,
+      modified: typeof next.modified === "number" ? Math.max(0, next.modified) : prev.modified,
       first: typeof next.first === "boolean" ? next.first : prev.first,
       interrupt:
         typeof next.interrupt === "number" && Number.isFinite(next.interrupt)

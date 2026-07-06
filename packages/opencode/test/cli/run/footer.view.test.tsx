@@ -144,7 +144,10 @@ function footerState(input: Partial<FooterState> = {}) {
     queue: 0,
     model: "gpt-5",
     duration: "",
-    usage: "",
+    contextTokens: 0,
+    contextPercent: null,
+    cost: 0,
+    modified: 0,
     first: false,
     interrupt: 0,
     exit: 0,
@@ -1015,7 +1018,10 @@ test("direct footer shows editable prompts and additional queued work while runn
     queue: 3,
     model: "gpt-5",
     duration: "",
-    usage: "",
+    contextTokens: 0,
+    contextPercent: null,
+    cost: 0,
+    modified: 0,
     first: false,
     interrupt: 0,
     exit: 0,
@@ -1201,18 +1207,166 @@ test("direct footer omits interrupt key hint when interrupt is unbound", async (
   }
 })
 
-test("direct footer shows full usage metadata when room is available", async () => {
+test("direct footer renders all four info pills separated by middots", async () => {
   const app = await renderFooter({
-    state: { usage: "159.6K (16%) · $4.23" },
+    width: 130,
+    state: { contextTokens: 159_600, contextPercent: 42, cost: 4.23, modified: 3 },
+    todos: () => [
+      { status: "pending", content: "one" },
+      { status: "completed", content: "two" },
+    ],
   })
 
   try {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("159.6K (16%) · $4.23")
+    expect(frame).toContain("◆ 42%")
+    expect(frame).toContain("$4.23")
+    expect(frame).toContain("☐ 1")
+    expect(frame).toContain("✎ 3")
+    expect(frame).toContain("◆ 42% · $4.23 · ☐ 1 · ✎ 3")
   } finally {
     app.cleanup()
+  }
+})
+
+test("direct footer shows the full context form once spacious", async () => {
+  const app = await renderFooter({
+    width: 150,
+    state: { contextTokens: 159_600, contextPercent: 16 },
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    expect(frame).toContain("◆ 159.6K (16%)")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer colors the ctx% pill by threshold", async () => {
+  const app = await renderFooter({ width: 130, state: { contextTokens: 1000, contextPercent: 50 } })
+
+  try {
+    await app.renderOnce()
+    expect(findSpan(app.captureSpans(), "50%")?.fg.toInts()).toEqual((RUN_THEME_FALLBACK.footer.muted as RGBA).toInts())
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer colors the ctx% pill warning at 80% and error at 95%", async () => {
+  const warn = await renderFooter({ width: 130, state: { contextTokens: 1000, contextPercent: 80 } })
+  try {
+    await warn.renderOnce()
+    expect(findSpan(warn.captureSpans(), "80%")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
+    )
+  } finally {
+    warn.cleanup()
+  }
+
+  const error = await renderFooter({ width: 130, state: { contextTokens: 1000, contextPercent: 95 } })
+  try {
+    await error.renderOnce()
+    expect(findSpan(error.captureSpans(), "95%")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.error as RGBA).toInts(),
+    )
+  } finally {
+    error.cleanup()
+  }
+})
+
+test("direct footer hides zero-value pills", async () => {
+  const app = await renderFooter({
+    width: 130,
+    state: { contextTokens: 1000, contextPercent: 10, cost: 0, modified: 0 },
+    todos: () => [],
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    expect(frame).toContain("◆ 10%")
+    expect(frame).not.toContain("$")
+    expect(frame).not.toContain("☐")
+    expect(frame).not.toContain("✎")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer drops info pills by priority as width shrinks", async () => {
+  const state = {
+    contextTokens: 1000,
+    contextPercent: 42,
+    cost: 4.23,
+    modified: 3,
+  } satisfies Partial<FooterState>
+  const todos = () => [{ status: "pending", content: "one" }]
+
+  const full = await renderFooter({ width: 130, state, todos })
+  try {
+    await full.renderOnce()
+    const frame = full.captureCharFrame()
+    expect(frame).toContain("◆ 42%")
+    expect(frame).toContain("$4.23")
+    expect(frame).toContain("☐ 1")
+    expect(frame).toContain("✎ 3")
+  } finally {
+    full.cleanup()
+  }
+
+  const noModified = await renderFooter({ width: 110, state, todos })
+  try {
+    await noModified.renderOnce()
+    const frame = noModified.captureCharFrame()
+    expect(frame).toContain("◆ 42%")
+    expect(frame).toContain("$4.23")
+    expect(frame).toContain("☐ 1")
+    expect(frame).not.toContain("✎")
+  } finally {
+    noModified.cleanup()
+  }
+
+  const noTodos = await renderFooter({ width: 95, state, todos })
+  try {
+    await noTodos.renderOnce()
+    const frame = noTodos.captureCharFrame()
+    expect(frame).toContain("◆ 42%")
+    expect(frame).toContain("$4.23")
+    expect(frame).not.toContain("☐")
+    expect(frame).not.toContain("✎")
+  } finally {
+    noTodos.cleanup()
+  }
+
+  const noCost = await renderFooter({ width: 85, state, todos })
+  try {
+    await noCost.renderOnce()
+    const frame = noCost.captureCharFrame()
+    expect(frame).toContain("◆ 42%")
+    expect(frame).not.toContain("$")
+    expect(frame).not.toContain("☐")
+    expect(frame).not.toContain("✎")
+  } finally {
+    noCost.cleanup()
+  }
+
+  const hidden = await renderFooter({ width: 79, state, todos })
+  try {
+    await hidden.renderOnce()
+    const frame = hidden.captureCharFrame()
+    expect(frame).not.toContain("◆")
+    expect(frame).not.toContain("$")
+    expect(frame).not.toContain("☐")
+    expect(frame).not.toContain("✎")
+  } finally {
+    hidden.cleanup()
   }
 })
 

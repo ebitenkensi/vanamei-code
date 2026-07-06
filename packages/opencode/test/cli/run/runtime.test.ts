@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { OpencodeClient } from "@opencode-ai/sdk/v2"
 import { runInteractiveMode } from "@/cli/cmd/run/runtime"
-import type { FooterApi, RunProvider } from "@/cli/cmd/run/types"
+import type { FooterApi, FooterEvent, RunProvider, RunPrompt } from "@/cli/cmd/run/types"
 
 type SessionMessage = NonNullable<Awaited<ReturnType<OpencodeClient["session"]["messages"]>>["data"]>[number]
 
@@ -130,6 +130,89 @@ function footer(): FooterApi {
   }
 }
 
+// Like footer() above, but records emitted events and exposes the registered
+// prompt handler so a test can simulate the user submitting "/new".
+function recordingFooter() {
+  let closed = false
+  const closes = new Set<() => void>()
+  const events: FooterEvent[] = []
+  let promptHandler: ((input: RunPrompt) => void) | undefined
+
+  const notify = () => {
+    for (const fn of [...closes]) fn()
+  }
+
+  const api: FooterApi = {
+    get isClosed() {
+      return closed
+    },
+    onPrompt(fn) {
+      promptHandler = fn
+      return () => {
+        if (promptHandler === fn) {
+          promptHandler = undefined
+        }
+      }
+    },
+    onQueuedRemove: () => () => {},
+    onClose(fn) {
+      if (closed) {
+        fn()
+        return () => {}
+      }
+
+      closes.add(fn)
+      return () => {
+        closes.delete(fn)
+      }
+    },
+    event(next) {
+      events.push(next)
+    },
+    append() {},
+    idle() {
+      return Promise.resolve()
+    },
+    close() {
+      if (closed) {
+        return
+      }
+
+      closed = true
+      notify()
+    },
+    destroy() {
+      if (closed) {
+        return
+      }
+
+      closed = true
+      notify()
+    },
+  }
+
+  return {
+    api,
+    events,
+    submit(text: string) {
+      promptHandler?.({ text, parts: [] })
+    },
+  }
+}
+
+async function waitFor(check: () => boolean, timeout = 1_000): Promise<void> {
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    if (check()) {
+      return
+    }
+
+    await Bun.sleep(10)
+  }
+
+  throw new Error("timed out waiting for condition")
+}
+
 afterEach(() => {
   mock.restore()
   transportProviders.length = 0
@@ -234,5 +317,84 @@ describe("run interactive runtime", () => {
     await task
 
     expect(transportProviders).toEqual([[provider]])
+  })
+
+  test("/new resets todos and the modified-file pill instead of keeping the old session's state", async () => {
+    const ui = recordingFooter()
+    let createCalls = 0
+
+    const sdk = new OpencodeClient()
+    spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
+    spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
+    spyOn(sdk.command, "list").mockImplementation(() => ok([]))
+    spyOn(sdk.config, "providers").mockImplementation(() => ok({ providers: [], default: {} }))
+    spyOn(sdk.session, "todo").mockImplementation(() =>
+      ok([{ status: "pending", content: "old todo", priority: "low" }]),
+    )
+    spyOn(sdk.session, "diff").mockImplementation(() => ok([{ file: "old.ts", additions: 1, deletions: 0 }]))
+
+    const task = runInteractiveMode(
+      {
+        sdk,
+        directory: "/tmp",
+        sessionID: "ses-1",
+        sessionTitle: "Session",
+        resume: false,
+        agent: "build",
+        model: undefined,
+        variant: undefined,
+        files: [],
+        thinking: true,
+        backgroundSubagents: false,
+        createSession: async () => {
+          createCalls += 1
+          return { id: "ses-2", title: "New" }
+        },
+      },
+      {
+        createRuntimeLifecycle: async () => ({
+          footer: ui.api,
+          onResize: () => () => {},
+          refreshTheme: () => {},
+          resetForReplay: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+        }),
+        streamTransport: Promise.resolve({
+          createSessionTransport: async (input: { providers?: () => RunProvider[]; footer: FooterApi }) => {
+            transportProviders.push(input.providers?.() ?? [])
+            return {
+              runPromptTurn: async () => {},
+              selectSubagent: () => {},
+              replayOnResize: async () => false,
+              close: async () => {},
+            }
+          },
+          formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        }),
+      },
+    )
+
+    // Wait for the first session's eager todo/diff fetch before triggering /new.
+    await waitFor(() =>
+      ui.events.some(
+        (event) => event.type === "stream.todo" && event.todos.some((item) => item.content === "old todo"),
+      ),
+    )
+
+    ui.submit("/new")
+
+    await waitFor(() => createCalls === 1)
+    await waitFor(() => ui.events.some((event) => event.type === "stream.todo" && event.todos.length === 0))
+    await waitFor(() => ui.events.some((event) => event.type === "stream.patch" && event.patch.modified === 0))
+
+    ui.api.close()
+    await task
+
+    const todoResetIndex = ui.events.findIndex((event) => event.type === "stream.todo" && event.todos.length === 0)
+    const oldTodoIndex = ui.events.findIndex(
+      (event) => event.type === "stream.todo" && event.todos.some((item) => item.content === "old todo"),
+    )
+    expect(oldTodoIndex).toBeGreaterThanOrEqual(0)
+    expect(todoResetIndex).toBeGreaterThan(oldTodoIndex)
   })
 })
