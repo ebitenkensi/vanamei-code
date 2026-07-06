@@ -15,6 +15,7 @@ import { createColors, createFrames } from "@/cli/ui/spinner"
 import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
+  RunAgentSelectBody,
   RunCommandMenuBody,
   RunModelSelectBody,
   RunQueuedPromptSelectBody,
@@ -103,7 +104,7 @@ type RunFooterViewProps = {
   tuiConfig: RunTuiConfig
   backgroundSubagents: boolean
   history?: RunPrompt[]
-  agent: string
+  currentAgent: () => string
   onSubmit: (input: RunPrompt) => boolean
   onPermissionReply: (input: PermissionReply) => void | Promise<void>
   onQuestionReply: (input: QuestionReply) => void | Promise<void>
@@ -117,6 +118,7 @@ type RunFooterViewProps = {
   onRequestExit?: (fn: (() => boolean) | undefined) => void
   onExit: () => void
   onModelSelect: (model: NonNullable<RunInput["model"]>) => void
+  onAgentSelect: (agent: string) => void
   onVariantSelect: (variant: string | undefined) => void
   onRows: (rows: number) => void
   onLayout: (input: { route: FooterPromptRoute; autocomplete: boolean; subagentRows: number }) => void
@@ -170,6 +172,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const commanding = createMemo(() => active().type === "prompt" && route().type === "command")
   const skilling = createMemo(() => active().type === "prompt" && route().type === "skill")
   const modeling = createMemo(() => active().type === "prompt" && route().type === "model")
+  const agenting = createMemo(() => active().type === "prompt" && route().type === "agent")
   const varianting = createMemo(() => active().type === "prompt" && route().type === "variant")
   const selectingSession = createMemo(() => active().type === "prompt" && route().type === "sessions")
   const panel = createMemo(
@@ -181,6 +184,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       commanding() ||
       skilling() ||
       modeling() ||
+      agenting() ||
       varianting() ||
       selectingSession(),
   )
@@ -332,6 +336,11 @@ export function RunFooterView(props: RunFooterViewProps) {
     props.onSubagentSelect?.(undefined)
   }
 
+  const openAgent = () => {
+    setRoute({ type: "agent" })
+    props.onSubagentSelect?.(undefined)
+  }
+
   const openSkillMenu = () => {
     if (props.commands() && skills().length === 0) {
       return
@@ -437,7 +446,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       return "EXIT"
     }
 
-    return shell() ? "SHELL" : "BUILD"
+    return shell() ? "SHELL" : props.state().agent.toUpperCase()
   })
   const modeColor = createMemo(() => {
     if (exiting()) {
@@ -692,6 +701,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       current.type !== "command" &&
       current.type !== "skill" &&
       current.type !== "model" &&
+      current.type !== "agent" &&
       current.type !== "variant" &&
       current.type !== "queued-menu" &&
       current.type !== "subagent-menu" &&
@@ -796,12 +806,14 @@ export function RunFooterView(props: RunFooterViewProps) {
                           <RunCommandMenuBody
                             theme={theme}
                             commands={props.commands}
+                            agents={props.agents}
                             subagents={tabs}
                             queued={queuedPrompts}
                             variants={props.variants}
                             variantCycle={variantCycle()}
                             onClose={closePanel}
                             onModel={openModel}
+                            onAgent={openAgent}
                             onEditor={() => {
                               closePanel()
                               void composer.openEditor()
@@ -852,6 +864,18 @@ export function RunFooterView(props: RunFooterViewProps) {
                             onClose={closePanel}
                             onSelect={(model) => {
                               props.onModelSelect(model)
+                              closePanel()
+                            }}
+                          />
+                        </Match>
+                        <Match when={agenting()}>
+                          <RunAgentSelectBody
+                            theme={theme}
+                            agents={props.agents}
+                            current={props.currentAgent}
+                            onClose={closePanel}
+                            onSelect={(agent) => {
+                              props.onAgentSelect(agent)
                               closePanel()
                             }}
                           />

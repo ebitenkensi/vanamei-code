@@ -70,6 +70,11 @@ type CycleResult = {
   variants?: string[]
 }
 
+type AgentSelectResult = {
+  agentLabel?: string
+  status?: string
+}
+
 type RunFooterOptions = {
   directory: string
   findFiles: (query: string) => Promise<string[]>
@@ -78,6 +83,7 @@ type RunFooterOptions = {
   commands?: RunCommand[]
   wrote?: boolean
   sessionID: () => string | undefined
+  agent: string
   agentLabel: string
   modelLabel: string
   model: RunInput["model"]
@@ -94,6 +100,7 @@ type RunFooterOptions = {
   onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycleVariant?: () => CycleResult | void
   onModelSelect?: (model: NonNullable<RunInput["model"]>) => CycleResult | void | Promise<CycleResult | void>
+  onAgentSelect?: (agent: string) => AgentSelectResult | void | Promise<AgentSelectResult | void>
   onVariantSelect?: (variant: string | undefined) => CycleResult | void | Promise<CycleResult | void>
   onInterrupt?: () => void
   onBackground?: () => void
@@ -111,6 +118,7 @@ const COMMAND_ROWS = RUN_COMMAND_PANEL_ROWS
 const SKILL_ROWS = RUN_COMMAND_PANEL_ROWS
 const SUBAGENT_ROWS = RUN_SUBAGENT_PANEL_ROWS
 const MODEL_ROWS = RUN_COMMAND_PANEL_ROWS
+const AGENT_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
 const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
@@ -194,6 +202,8 @@ export class RunFooter implements FooterApi {
   private setProviders: Setter<RunProvider[] | undefined>
   private currentModel: Accessor<RunInput["model"]>
   private setCurrentModel: Setter<RunInput["model"]>
+  private currentAgent: Accessor<string>
+  private setCurrentAgent: Setter<string>
   private variants: Accessor<string[]>
   private setVariants: Setter<string[]>
   private currentVariant: Accessor<string | undefined>
@@ -251,6 +261,7 @@ export class RunFooter implements FooterApi {
       status: "",
       queue: 0,
       model: options.modelLabel,
+      agent: options.agentLabel,
       duration: "",
       contextTokens: 0,
       contextPercent: null,
@@ -280,6 +291,9 @@ export class RunFooter implements FooterApi {
     const [currentModel, setCurrentModel] = createSignal<RunInput["model"]>(options.model)
     this.currentModel = currentModel
     this.setCurrentModel = setCurrentModel
+    const [currentAgent, setCurrentAgent] = createSignal(options.agent)
+    this.currentAgent = currentAgent
+    this.setCurrentAgent = setCurrentAgent
     const [variants, setVariants] = createSignal<string[]>([])
     this.variants = variants
     this.setVariants = setVariants
@@ -344,7 +358,7 @@ export class RunFooter implements FooterApi {
               tuiConfig: options.tuiConfig,
               backgroundSubagents: options.backgroundSubagents,
               history: options.history,
-              agent: options.agentLabel,
+              currentAgent: footer.currentAgent,
               onSubmit: footer.handlePrompt,
               onPermissionReply: footer.handlePermissionReply,
               onQuestionReply: footer.handleQuestionReply,
@@ -358,6 +372,7 @@ export class RunFooter implements FooterApi {
               onRequestExit: footer.setRequestExitHandler,
               onExit: () => footer.close(),
               onModelSelect: footer.handleModelSelect,
+              onAgentSelect: footer.handleAgentSelect,
               onVariantSelect: footer.handleVariantSelect,
               onRows: footer.syncRows,
               onLayout: footer.syncLayout,
@@ -418,7 +433,7 @@ export class RunFooter implements FooterApi {
       this.flushing = this.flushing
         .then(() =>
           this.scrollback.writeTurnSummary({
-            agent: this.options.agentLabel,
+            agent: this.state().agent,
             model: current ? modelInfo(this.providers(), current).model : this.state().model,
             duration: next.duration,
           }),
@@ -531,6 +546,7 @@ export class RunFooter implements FooterApi {
       status: typeof next.status === "string" ? next.status : prev.status,
       queue: typeof next.queue === "number" ? Math.max(0, next.queue) : prev.queue,
       model: typeof next.model === "string" ? next.model : prev.model,
+      agent: typeof next.agent === "string" ? next.agent : prev.agent,
       duration: typeof next.duration === "string" ? next.duration : prev.duration,
       contextTokens: typeof next.contextTokens === "number" ? next.contextTokens : prev.contextTokens,
       contextPercent: "contextPercent" in next ? (next.contextPercent ?? null) : prev.contextPercent,
@@ -764,17 +780,19 @@ export class RunFooter implements FooterApi {
               ? 1 + SKILL_ROWS
               : this.promptRoute.type === "model"
                 ? 1 + MODEL_ROWS
-                : this.promptRoute.type === "variant"
-                  ? 1 + VARIANT_ROWS
-                  : this.promptRoute.type === "sessions"
-                    ? 1 + SESSIONS_ROWS
-                    : this.promptRoute.type === "queued-menu"
-                      ? 1 + this.subagentMenuRows
-                      : this.promptRoute.type === "subagent-menu"
+                : this.promptRoute.type === "agent"
+                  ? 1 + AGENT_ROWS
+                  : this.promptRoute.type === "variant"
+                    ? 1 + VARIANT_ROWS
+                    : this.promptRoute.type === "sessions"
+                      ? 1 + SESSIONS_ROWS
+                      : this.promptRoute.type === "queued-menu"
                         ? 1 + this.subagentMenuRows
-                        : this.promptRoute.type === "subagent"
-                          ? this.base + SUBAGENT_INSPECTOR_ROWS
-                          : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
+                        : this.promptRoute.type === "subagent-menu"
+                          ? 1 + this.subagentMenuRows
+                          : this.promptRoute.type === "subagent"
+                            ? this.base + SUBAGENT_INSPECTOR_ROWS
+                            : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
     const total = height + this.todoPanelRows()
     if (total !== this.renderer.footerHeight) {
@@ -915,6 +933,34 @@ export class RunFooter implements FooterApi {
         }
 
         if (patch.model) {
+          this.patch(patch)
+        }
+        if (result.status) {
+          this.setNotice(result.status)
+        }
+      })
+      .catch(() => {})
+  }
+
+  private handleAgentSelect = (agent: string): void => {
+    if (this.isClosed) {
+      return
+    }
+
+    this.setCurrentAgent(agent)
+    void Promise.resolve()
+      .then(() => this.options.onAgentSelect?.(agent))
+      .then((result) => {
+        if (!result || this.isClosed || this.currentAgent() !== agent) {
+          return
+        }
+
+        const patch: FooterPatch = {}
+        if (result.agentLabel) {
+          patch.agent = result.agentLabel
+        }
+
+        if (patch.agent) {
           this.patch(patch)
         }
         if (result.status) {

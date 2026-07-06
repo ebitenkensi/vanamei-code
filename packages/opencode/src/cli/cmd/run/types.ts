@@ -85,6 +85,7 @@ export type FooterState = {
   status: string
   queue: number
   model: string
+  agent: string
   duration: string
   // Structured usage numbers for the statusline info pills (P3). contextPercent
   // is null when the current model's context limit is unknown -- the ctx% pill
@@ -194,6 +195,7 @@ export type FooterPromptRoute =
   | { type: "command" }
   | { type: "skill" }
   | { type: "model" }
+  | { type: "agent" }
   | { type: "variant" }
   | { type: "sessions" }
 

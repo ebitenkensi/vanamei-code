@@ -3,9 +3,10 @@ import { TextAttributes, type InputRenderable, type KeyEvent } from "@opentui/co
 import { useKeyboard, type JSX } from "@opentui/solid"
 import fuzzysort from "fuzzysort"
 import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
+import * as Locale from "@/util/locale"
 import { RunFooterMenu, createFooterMenuState, type RunFooterMenuItem } from "./footer.menu"
 import type { RunFooterTheme } from "./theme"
-import type { FooterQueuedPrompt, FooterSubagentTab, RunCommand, RunInput, RunProvider } from "./types"
+import type { FooterQueuedPrompt, FooterSubagentTab, RunAgent, RunCommand, RunInput, RunProvider } from "./types"
 
 export type PanelEntry = RunFooterMenuItem & {
   category: string
@@ -14,6 +15,7 @@ export type PanelEntry = RunFooterMenuItem & {
 
 type CommandEntry =
   | (PanelEntry & { action: "model" })
+  | (PanelEntry & { action: "agent" })
   | (PanelEntry & { action: "editor" })
   | (PanelEntry & { action: "skill" })
   | (PanelEntry & { action: "queued" })
@@ -28,6 +30,11 @@ type ModelEntry = PanelEntry & {
   providerID: string
   modelID: string
   providerName: string
+  current: boolean
+}
+
+type AgentEntry = PanelEntry & {
+  name: string
   current: boolean
 }
 
@@ -123,6 +130,12 @@ function subagentStatusLabel(status: FooterSubagentTab["status"]) {
   }
 
   return "running"
+}
+
+// Agents the switcher offers -- subagents are only invocable via @mention,
+// never as the session's active turn agent.
+export function primaryAgents(agents: RunAgent[]): RunAgent[] {
+  return agents.filter((item) => item.mode !== "subagent")
 }
 
 export function handleKey(input: {
@@ -335,12 +348,14 @@ export function PanelShell(props: {
 export function RunCommandMenuBody(props: {
   theme: Accessor<RunFooterTheme>
   commands: Accessor<RunCommand[] | undefined>
+  agents: Accessor<RunAgent[]>
   subagents: Accessor<FooterSubagentTab[]>
   queued: Accessor<FooterQueuedPrompt[]>
   variants: Accessor<string[]>
   variantCycle: string
   onClose: () => void
   onModel: () => void
+  onAgent: () => void
   onEditor: () => void
   onSkill: () => void
   onSubagent: () => void
@@ -417,6 +432,15 @@ export function RunCommandMenuBody(props: {
         category: "Agent",
         display: "Switch model",
       },
+      {
+        action: "agent",
+        category: "Agent",
+        display: "Switch agent",
+        footer: "/agents",
+        keywords: `agent plan build ${primaryAgents(props.agents())
+          .map((item) => item.name)
+          .join(" ")}`.trim(),
+      },
       ...(props.queued().length > 0
         ? [
             {
@@ -480,6 +504,11 @@ export function RunCommandMenuBody(props: {
   const pick = (item: CommandEntry) => {
     if (item.action === "model") {
       props.onModel()
+      return
+    }
+
+    if (item.action === "agent") {
+      props.onAgent()
       return
     }
 
@@ -1072,6 +1101,99 @@ export function RunModelSelectBody(props: {
         grouped={!query().trim()}
         background
         headerColor={props.theme().muted}
+      />
+    </PanelShell>
+  )
+}
+
+export function RunAgentSelectBody(props: {
+  theme: Accessor<RunFooterTheme>
+  agents: Accessor<RunAgent[]>
+  current: Accessor<string>
+  onClose: () => void
+  onSelect: (agent: string) => void
+}) {
+  let field: InputRenderable | undefined
+  const [query, setQuery] = createSignal("")
+  const entries = createMemo<AgentEntry[]>(() =>
+    primaryAgents(props.agents()).map((item) => {
+      const current = props.current() === item.name
+      return {
+        category: "",
+        display: Locale.titlecase(item.name),
+        footer: current ? "current" : item.description,
+        keywords: `${item.name} ${item.description ?? ""}`,
+        name: item.name,
+        current,
+      }
+    }),
+  )
+  const items = createMemo<AgentEntry[]>(() => match(query(), entries()))
+  const menu = createFooterMenuState({ count: () => items().length, limit: PANEL_LIST_ROWS })
+  const pick = (item: AgentEntry) => {
+    props.onSelect(item.name)
+  }
+  const select = () => {
+    const item = items()[menu.selected()]
+    if (!item) {
+      return
+    }
+
+    pick(item)
+  }
+
+  createEffect(() => {
+    query()
+    menu.reset()
+  })
+
+  createEffect(() => {
+    if (query().trim()) {
+      return
+    }
+
+    const index = items().findIndex((item) => item.current)
+    if (index !== -1) {
+      menu.reveal(index)
+    }
+  })
+
+  useKeyboard((event) => {
+    if (event.defaultPrevented) {
+      return
+    }
+
+    handleKey({ event, menu, field: () => field, setQuery, select, close: props.onClose })
+  })
+
+  return (
+    <PanelShell
+      title="Select agent"
+      query={query()}
+      count={items().length}
+      total={entries().length}
+      placeholder="Search"
+      theme={props.theme}
+      inputRef={(input) => {
+        field = input
+      }}
+      onQuery={setQuery}
+      dark
+      chrome="minimal"
+    >
+      <RunFooterMenu
+        theme={props.theme}
+        items={items}
+        selected={menu.selected}
+        offset={menu.offset}
+        rows={() => PANEL_LIST_ROWS}
+        limit={PANEL_LIST_ROWS}
+        empty="No agents found"
+        border={false}
+        paddingLeft={PANEL_PAD}
+        paddingRight={PANEL_PAD}
+        grouped={false}
+        background
       />
     </PanelShell>
   )

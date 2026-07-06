@@ -15,6 +15,7 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { MessageID } from "@/session/schema"
+import * as Locale from "@/util/locale"
 import { createRunDemo } from "./demo"
 import { resolveModelInfo, resolveRunTuiConfig, resolveSessionInfo } from "./runtime.boot"
 import { createRuntimeLifecycle } from "./runtime.lifecycle"
@@ -340,6 +341,20 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         modelLabel: formatModelLabel(state.model, state.activeVariant, state.providers),
         variant: state.activeVariant,
         variants: state.variants,
+      }
+    },
+    // Agent switch, mirroring onModelSelect: takes effect on the next prompt
+    // turn (state.agent is read fresh in run()), no idle guard needed since
+    // switching agents doesn't tear down the stream.
+    onAgentSelect: (agent) => {
+      if (state.agent === agent) {
+        return
+      }
+
+      state.agent = agent
+      return {
+        agentLabel: Locale.titlecase(agent),
+        status: `agent ${agent}`,
       }
     },
     onInterrupt: () => {

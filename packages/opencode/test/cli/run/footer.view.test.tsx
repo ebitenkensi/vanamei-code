@@ -25,6 +25,7 @@ import type {
   FooterSubagentTab,
   FooterTodoItem,
   FooterView,
+  RunAgent,
   RunCommand,
   RunInput,
   RunPrompt,
@@ -137,12 +138,23 @@ function subagent(input: {
   } satisfies FooterSubagentTab
 }
 
+function agent(input: { name: string; mode: RunAgent["mode"]; description?: string }): RunAgent {
+  return {
+    name: input.name,
+    description: input.description,
+    mode: input.mode,
+    permission: [],
+    options: {},
+  } satisfies RunAgent
+}
+
 function footerState(input: Partial<FooterState> = {}) {
   return createSignal<FooterState>({
     phase: "idle",
     status: "",
     queue: 0,
     model: "gpt-5",
+    agent: "build",
     duration: "",
     contextTokens: 0,
     contextPercent: null,
@@ -171,6 +183,9 @@ async function renderFooter(
     state?: Partial<FooterState>
     onCycle?: () => void
     onSubmit?: (prompt: RunPrompt) => boolean
+    agents?: RunAgent[]
+    currentAgent?: string
+    onAgentSelect?: (agent: string) => void
   } = {},
 ) {
   const [view] = createSignal<FooterView>({ type: "prompt" })
@@ -191,7 +206,7 @@ async function renderFooter(
         <RunFooterView
           directory="/tmp"
           findFiles={async () => []}
-          agents={() => []}
+          agents={() => input.agents ?? []}
           resources={() => []}
           commands={() => input.commands ?? []}
           providers={() => input.providers}
@@ -205,7 +220,7 @@ async function renderFooter(
           theme={input.theme ?? (() => RUN_THEME_FALLBACK)}
           tuiConfig={config}
           backgroundSubagents={input.backgroundSubagents ?? true}
-          agent="opencode"
+          currentAgent={() => input.currentAgent ?? "build"}
           onSubmit={input.onSubmit ?? (() => true)}
           onPermissionReply={() => {}}
           onQuestionReply={() => {}}
@@ -216,6 +231,7 @@ async function renderFooter(
           onInputClear={() => {}}
           onExit={() => {}}
           onModelSelect={() => {}}
+          onAgentSelect={input.onAgentSelect ?? (() => {})}
           onVariantSelect={() => {}}
           onRows={() => {}}
           onLayout={() => {}}
@@ -377,12 +393,14 @@ test("direct command panel renders grouped command palette", async () => {
         <RunCommandMenuBody
           theme={() => RUN_THEME_FALLBACK.footer}
           commands={commands}
+          agents={() => []}
           subagents={subagents}
           queued={() => []}
           variants={variants}
           variantCycle="ctrl+t"
           onClose={() => {}}
           onModel={() => {}}
+          onAgent={() => {}}
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
@@ -441,12 +459,14 @@ test("direct command panel lists resume session and finds it by either keyword",
           <RunCommandMenuBody
             theme={() => RUN_THEME_FALLBACK.footer}
             commands={commands}
+            agents={() => []}
             subagents={subagents}
             queued={() => []}
             variants={variants}
             variantCycle="ctrl+t"
             onClose={() => {}}
             onModel={() => {}}
+            onAgent={() => {}}
             onEditor={() => {}}
             onSkill={() => {}}
             onSubagent={() => {}}
@@ -492,12 +512,14 @@ test("direct command panel selecting resume session dispatches onSessions", asyn
         <RunCommandMenuBody
           theme={() => RUN_THEME_FALLBACK.footer}
           commands={commands}
+          agents={() => []}
           subagents={subagents}
           queued={() => []}
           variants={variants}
           variantCycle="ctrl+t"
           onClose={() => {}}
           onModel={() => {}}
+          onAgent={() => {}}
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
@@ -618,12 +640,14 @@ test("direct command panel shows subagent entry when available", async () => {
         <RunCommandMenuBody
           theme={() => RUN_THEME_FALLBACK.footer}
           commands={commands}
+          agents={() => []}
           subagents={subagents}
           queued={() => []}
           variants={variants}
           variantCycle="ctrl+t"
           onClose={() => {}}
           onModel={() => {}}
+          onAgent={() => {}}
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
@@ -667,12 +691,14 @@ test("direct command panel keeps completed subagents available", async () => {
         <RunCommandMenuBody
           theme={() => RUN_THEME_FALLBACK.footer}
           commands={commands}
+          agents={() => []}
           subagents={subagents}
           queued={() => []}
           variants={variants}
           variantCycle="ctrl+t"
           onClose={() => {}}
           onModel={() => {}}
+          onAgent={() => {}}
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
@@ -1017,6 +1043,7 @@ test("direct footer shows editable prompts and additional queued work while runn
     status: "",
     queue: 3,
     model: "gpt-5",
+    agent: "build",
     duration: "",
     contextTokens: 0,
     contextPercent: null,
@@ -1063,7 +1090,7 @@ test("direct footer shows editable prompts and additional queued work while runn
           theme={() => RUN_THEME_FALLBACK}
           tuiConfig={tuiConfig}
           backgroundSubagents={true}
-          agent="opencode"
+          currentAgent={() => "build"}
           onSubmit={() => true}
           onPermissionReply={() => {}}
           onQuestionReply={() => {}}
@@ -1074,6 +1101,7 @@ test("direct footer shows editable prompts and additional queued work while runn
           onInputClear={() => {}}
           onExit={() => {}}
           onModelSelect={() => {}}
+          onAgentSelect={() => {}}
           onVariantSelect={() => {}}
           onRows={() => {}}
           onLayout={() => {}}
@@ -1382,6 +1410,57 @@ test("direct footer mode label keeps left padding without a status pill", async 
 
     expect(statusline).toBeDefined()
     expect(statusline?.startsWith(" BUILD ")).toBe(true)
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer mode label reflects a custom agent", async () => {
+  const app = await renderFooter({ state: { agent: "plan" } })
+
+  try {
+    await app.renderOnce()
+    const statusline = app
+      .captureCharFrame()
+      .split("\n")
+      .find((line) => line.includes("PLAN") && line.includes("cmd"))
+
+    expect(statusline).toBeDefined()
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer command panel selecting an agent dispatches onAgentSelect", async () => {
+  const selected: string[] = []
+  const app = await renderFooter({
+    height: RUN_COMMAND_PANEL_ROWS + 8,
+    agents: [agent({ name: "build", mode: "primary" }), agent({ name: "plan", mode: "primary" })],
+    onAgentSelect: (next) => {
+      selected.push(next)
+    },
+  })
+
+  try {
+    await app.renderOnce()
+    app.mockInput.pressKey("p", { ctrl: true })
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("Switch agent")
+
+    // Open editor, Resume session, New session, Switch model precede the
+    // Agent category's Switch agent entry -- four steps down from the
+    // initial selection.
+    Array.from({ length: 4 }).forEach(() => app.mockInput.pressKey("ARROW_DOWN"))
+    app.mockInput.pressEnter()
+    await app.renderOnce()
+
+    expect(app.captureCharFrame()).toContain("Select agent")
+
+    app.mockInput.pressKey("ARROW_DOWN")
+    app.mockInput.pressEnter()
+    await app.renderOnce()
+
+    expect(selected).toEqual(["plan"])
   } finally {
     app.cleanup()
   }

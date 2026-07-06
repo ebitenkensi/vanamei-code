@@ -46,7 +46,13 @@ type CycleResult = {
   variants?: string[]
 }
 
+type AgentSelectResult = {
+  agentLabel?: string
+  status?: string
+}
+
 type FooterLabels = {
+  agent: string
   agentLabel: string
   modelLabel: string
 }
@@ -71,6 +77,7 @@ export type LifecycleInput = {
   onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycleVariant?: () => CycleResult | void
   onModelSelect?: (model: NonNullable<RunInput["model"]>) => CycleResult | void | Promise<CycleResult | void>
+  onAgentSelect?: (agent: string) => AgentSelectResult | void | Promise<AgentSelectResult | void>
   onVariantSelect?: (variant: string | undefined) => CycleResult | void | Promise<CycleResult | void>
   onInterrupt?: () => void
   onBackground?: () => void
@@ -124,16 +131,19 @@ function splashInfo(title: string | undefined, history: RunPrompt[]) {
 }
 
 function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): FooterLabels {
-  const agentLabel = Locale.titlecase(input.agent ?? "build")
+  const agent = input.agent ?? "build"
+  const agentLabel = Locale.titlecase(agent)
 
   if (!input.model) {
     return {
+      agent,
       agentLabel,
       modelLabel: "Model default",
     }
   }
 
   return {
+    agent,
     agentLabel,
     modelLabel: formatModelLabel(input.model, input.variant),
   }
@@ -253,6 +263,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       onQuestionReject: input.onQuestionReject,
       onCycleVariant: input.onCycleVariant,
       onModelSelect: input.onModelSelect,
+      onAgentSelect: input.onAgentSelect,
       onVariantSelect: input.onVariantSelect,
       onInterrupt: input.onInterrupt,
       onBackground: input.onBackground,
