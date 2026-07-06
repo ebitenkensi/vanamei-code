@@ -248,7 +248,7 @@ export function Prompt(props: PromptProps) {
 
   createEffect(() => {
     if (!input || input.isDestroyed) return
-    if (props.disabled) input.cursorColor = theme.backgroundElement
+    if (props.disabled) input.cursorColor = theme.background
     if (!props.disabled) input.cursorColor = theme.text
   })
 
@@ -1284,10 +1284,10 @@ export function Prompt(props: PromptProps) {
   }
 
   const highlight = createMemo(() => {
-    if (leader()) return theme.border
+    if (leader()) return theme.borderActive
     if (store.mode === "shell") return theme.primary
     const agent = local.agent.current()
-    if (!agent) return theme.border
+    if (!agent) return theme.borderActive
     return local.agent.color(agent.name)
   })
 
@@ -1332,20 +1332,8 @@ export function Prompt(props: PromptProps) {
   return (
     <>
       <box ref={(r: BoxRenderable) => (anchor = r)} visible={props.visible !== false} width="100%">
-        <box
-          width="100%"
-          border={["top", "bottom"]}
-          borderStyle="rounded"
-          borderColor={theme.border}
-        >
-          <box
-            paddingLeft={2}
-            paddingRight={2}
-            paddingTop={1}
-            flexShrink={0}
-            flexGrow={1}
-            width="100%"
-          >
+        <box width="100%" border={["top", "bottom"]} borderStyle="rounded" borderColor={theme.borderActive}>
+          <box paddingLeft={2} paddingRight={2} paddingTop={1} flexShrink={0} flexGrow={1} width="100%">
             <box flexDirection="row" gap={1} width="100%">
               <text fg={status().type !== "idle" ? fadeColor(pointerColor(), 0.5) : pointerColor()}>❯</text>
               <textarea
@@ -1446,10 +1434,7 @@ export function Prompt(props: PromptProps) {
                   <Show when={store.mode === "normal"}>
                     <box flexDirection="row" gap={1}>
                       <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                      <text
-                        flexShrink={0}
-                        fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
-                      >
+                      <text flexShrink={0} fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}>
                         {local.model.parsed().model}
                       </text>
                       <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
@@ -1484,7 +1469,9 @@ export function Prompt(props: PromptProps) {
               >
                 <box flexShrink={0} flexDirection="row" gap={1}>
                   <box marginLeft={1}>
-                    <Spinner color={theme.primary} textColor={theme.text}>{verb()}</Spinner>
+                    <Spinner color={theme.primary} textColor={theme.text}>
+                      {verb()}
+                    </Spinner>
                   </box>
                   <box flexDirection="row" gap={1} flexShrink={0}>
                     {(() => {
