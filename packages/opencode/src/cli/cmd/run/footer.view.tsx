@@ -10,8 +10,8 @@
 /** @jsxImportSource @opentui/solid */
 import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import { registerOpencodeSpinner } from "@opencode-ai/tui/component/register-spinner"
-import { createColors, createFrames } from "@opencode-ai/tui/ui/spinner"
+import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
+import { createColors, createFrames } from "@/cli/ui/spinner"
 import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
@@ -36,7 +36,7 @@ import {
   useBindings,
   useKeymapSelector,
   type OpenTuiKeymap,
-} from "@opencode-ai/tui/keymap"
+} from "@/cli/ui/keymap"
 import type {
   FooterPromptRoute,
   FooterQueuedPrompt,
@@ -1017,9 +1017,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                   {(hint) => (
                     <box paddingRight={1} backgroundColor="transparent" flexShrink={0} maxWidth={18}>
                       <text fg={theme().text} wrapMode="none" truncate>
-                        <Show when={hasPills() || hasModelStatus() || hasContextHints()}>
-                          {sectionSeparator()}
-                        </Show>
+                        <Show when={hasPills() || hasModelStatus() || hasContextHints()}>{sectionSeparator()}</Show>
                         <span style={{ fg: theme().text }}>{hint().key}</span>{" "}
                         <span style={{ fg: theme().muted }}>{hint().label}</span>
                       </text>
