@@ -40,6 +40,7 @@ import type {
   FooterQueuedPrompt,
   FooterState,
   FooterSubagentState,
+  FooterTodoItem,
   FooterView,
   PermissionReply,
   QuestionReject,
@@ -53,7 +54,7 @@ import type {
   RunResource,
   RunTuiConfig,
 } from "./types"
-import type { RunTheme } from "./theme"
+import type { RunFooterTheme, RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
@@ -86,6 +87,7 @@ type RunFooterViewProps = {
   view?: () => FooterView
   subagent?: () => FooterSubagentState
   queuedPrompts?: () => FooterQueuedPrompt[]
+  todos?: () => FooterTodoItem[]
   theme: () => RunTheme
   diffStyle?: RunDiffStyle
   tuiConfig: RunTuiConfig
@@ -114,6 +116,20 @@ type RunFooterViewProps = {
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
+
+export const MAX_TODO_ROWS = 6
+
+// Rows the todo panel needs: one per visible todo, plus one more when the
+// list is truncated (for the "… +N more" summary row). Shared with
+// RunFooter.applyHeight() so the reserved footer height always matches what
+// RunFooterTodoPanel actually renders.
+export function todoPanelRowCount(todos: FooterTodoItem[]): number {
+  if (todos.length === 0) {
+    return 0
+  }
+
+  return Math.min(todos.length, MAX_TODO_ROWS) + (todos.length > MAX_TODO_ROWS ? 1 : 0)
+}
 
 export function RunFooterView(props: RunFooterViewProps) {
   const term = useTerminalDimensions()
@@ -814,6 +830,10 @@ export function RunFooterView(props: RunFooterViewProps) {
               />
             </Show>
 
+            <Show when={!panel() && !menu() && (props.todos?.() ?? []).length > 0}>
+              <RunFooterTodoPanel todos={props.todos!} theme={theme} />
+            </Show>
+
             <Show when={!panel() && !menu()}>
               <box
                 width="100%"
@@ -938,6 +958,55 @@ export function RunFooterView(props: RunFooterViewProps) {
             onCycle={cycleTab}
             onClose={closeTab}
           />
+        </box>
+      </Show>
+    </box>
+  )
+}
+
+function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme }) {
+  function glyph(status: string) {
+    if (status === "completed") return "✓"
+    if (status === "in_progress") return "●"
+    return "○"
+  }
+
+  function color(status: string) {
+    if (status === "completed") return props.theme().success
+    if (status === "in_progress") return props.theme().warning
+    return props.theme().muted
+  }
+
+  const visible = createMemo(() => props.todos().slice(0, MAX_TODO_ROWS))
+  const overflow = createMemo(() => props.todos().length - MAX_TODO_ROWS)
+
+  return (
+    <box
+      width="100%"
+      height={todoPanelRowCount(props.todos())}
+      flexShrink={0}
+      flexDirection="column"
+      backgroundColor="transparent"
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <For each={visible()}>
+        {(item) => (
+          <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+            <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
+              {glyph(item.status)}
+            </text>
+            <text fg={props.theme().text} wrapMode="none" truncate flexGrow={1}>
+              {item.content}
+            </text>
+          </box>
+        )}
+      </For>
+      <Show when={overflow() > 0}>
+        <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
+          <text fg={props.theme().muted} wrapMode="none" truncate>
+            … +{overflow()} more
+          </text>
         </box>
       </Show>
     </box>

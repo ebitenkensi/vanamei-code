@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import { BoxRenderable, RGBA, type RootRenderable } from "@opentui/core"
+import { BoxRenderable, RGBA, type CapturedFrame, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
@@ -23,6 +23,7 @@ import type {
   FooterState,
   FooterSubagentState,
   FooterSubagentTab,
+  FooterTodoItem,
   FooterView,
   RunCommand,
   RunInput,
@@ -160,6 +161,7 @@ async function renderFooter(
     currentModel?: RunInput["model"]
     currentVariant?: string
     subagents?: FooterSubagentState
+    todos?: () => FooterTodoItem[]
     backgroundSubagents?: boolean
     width?: number
     height?: number
@@ -196,6 +198,7 @@ async function renderFooter(
           state={state}
           view={view}
           subagent={subagents}
+          todos={input.todos ?? (() => [])}
           theme={input.theme ?? (() => RUN_THEME_FALLBACK)}
           tuiConfig={config}
           backgroundSubagents={input.backgroundSubagents ?? true}
@@ -1371,5 +1374,105 @@ test("direct variant panel renders current variant selector", async () => {
     expectPaletteList(list, 1)
   } finally {
     app.renderer.destroy()
+  }
+})
+
+function capturedSpans(frame: CapturedFrame) {
+  return frame.lines.flatMap((line, row) => line.spans.map((span) => ({ ...span, row })))
+}
+
+function findSpan(frame: CapturedFrame, text: string) {
+  return capturedSpans(frame).find((span) => span.text.includes(text))
+}
+
+function glyphColorForContent(frame: CapturedFrame, content: string) {
+  const spans = capturedSpans(frame)
+  const contentSpan = spans.find((span) => span.text.includes(content))
+  if (!contentSpan) return undefined
+
+  const rowSpans = spans.filter((span) => span.row === contentSpan.row)
+  const contentIndex = rowSpans.findIndex((span) => span === contentSpan)
+  const glyphSpan = rowSpans.slice(0, contentIndex).findLast((span) => /[✓●○]/.test(span.text))
+  return glyphSpan?.fg
+}
+
+test("direct footer todo panel renders todos with status glyphs and colors", async () => {
+  const [todos, setTodos] = createSignal<FooterTodoItem[]>([
+    { status: "completed", content: "Set up project" },
+    { status: "in_progress", content: "Implement feature" },
+    { status: "pending", content: "Write tests" },
+  ])
+
+  const app = await renderFooter({ todos, height: 12 })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    expect(frame).toContain("Set up project")
+    expect(frame).toContain("Implement feature")
+    expect(frame).toContain("Write tests")
+
+    const spans = app.captureSpans()
+    expect(findSpan(spans, "✓")).toBeDefined()
+    expect(findSpan(spans, "●")).toBeDefined()
+    expect(findSpan(spans, "○")).toBeDefined()
+
+    expect(glyphColorForContent(spans, "Set up project")?.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.success as RGBA).toInts(),
+    )
+    expect(glyphColorForContent(spans, "Implement feature")?.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
+    )
+    expect(glyphColorForContent(spans, "Write tests")?.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
+    )
+
+    setTodos([])
+    await app.renderOnce()
+    const emptyFrame = app.captureCharFrame()
+    expect(emptyFrame).not.toContain("Set up project")
+    expect(emptyFrame).not.toContain("Implement feature")
+    expect(emptyFrame).not.toContain("Write tests")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer todo panel is hidden when empty", async () => {
+  const app = await renderFooter({ height: 12 })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    expect(frame).not.toContain("✓")
+    expect(frame).not.toContain("●")
+    expect(frame).not.toContain("○")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer todo panel shows an overflow row past the max", async () => {
+  const todos: FooterTodoItem[] = Array.from({ length: 8 }, (_, index) => ({
+    status: "pending",
+    content: `Task ${index + 1}`,
+  }))
+
+  const app = await renderFooter({ todos: () => todos, height: 12 })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    for (let index = 1; index <= 6; index += 1) {
+      expect(frame).toContain(`Task ${index}`)
+    }
+    expect(frame).not.toContain("Task 7")
+    expect(frame).not.toContain("Task 8")
+    expect(frame).toContain("+2 more")
+  } finally {
+    app.cleanup()
   }
 })

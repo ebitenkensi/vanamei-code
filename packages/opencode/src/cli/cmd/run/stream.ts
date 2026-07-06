@@ -161,6 +161,14 @@ export function writeSessionOutput(input: OutputInput, out: StreamOutput): void 
     })
   }
 
+  if (out.footer?.todos) {
+    input.trace?.write("ui.todo", { todos: out.footer.todos })
+    input.footer.event({
+      type: "stream.todo",
+      todos: out.footer.todos,
+    })
+  }
+
   if (!out.footer?.view) {
     return
   }

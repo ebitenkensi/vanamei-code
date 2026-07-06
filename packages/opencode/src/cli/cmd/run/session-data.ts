@@ -27,7 +27,7 @@
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
-import type { FooterOutput, FooterPatch, FooterView, StreamCommit } from "./types"
+import type { FooterOutput, FooterPatch, FooterTodoItem, FooterView, StreamCommit } from "./types"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -740,6 +740,31 @@ function failTool(part: ToolPart, text: string): SessionCommit {
   })
 }
 
+function extractTodos(input: unknown): FooterTodoItem[] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined
+  }
+
+  const todos = Reflect.get(input, "todos")
+  if (!Array.isArray(todos)) {
+    return undefined
+  }
+
+  return todos.flatMap((item): FooterTodoItem[] => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return []
+    }
+
+    const content = typeof Reflect.get(item, "content") === "string" ? Reflect.get(item, "content") : ""
+    if (!content) {
+      return []
+    }
+
+    const status = typeof Reflect.get(item, "status") === "string" ? Reflect.get(item, "status") : ""
+    return [{ status, content }]
+  })
+}
+
 // Emits "interrupted" final entries for all in-flight parts. Called when a turn is aborted.
 export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
   for (const partID of data.part.keys()) {
@@ -939,7 +964,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           commits.push(startTool(part))
         }
 
-        return out(data, commits, view ?? patch({ status: toolStatus(part) }))
+        const todos = part.tool === "todowrite" ? extractTodos(part.state.input) : undefined
+        const footer = view || todos ? { ...view, todos } : undefined
+        return out(data, commits, footer ?? patch({ status: toolStatus(part) }))
       }
 
       if (part.state.status === "completed") {
@@ -976,7 +1003,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           commits.push(doneTool(part))
         }
 
-        return out(data, commits, view)
+        const todos = part.tool === "todowrite" ? extractTodos(part.state.input) : undefined
+        const footer = view || todos ? { ...view, todos } : undefined
+        return out(data, commits, footer)
       }
 
       if (part.state.status === "error") {

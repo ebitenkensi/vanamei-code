@@ -33,7 +33,7 @@ import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
-import { RunFooterView } from "./footer.view"
+import { RunFooterView, todoPanelRowCount } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
@@ -45,6 +45,7 @@ import type {
   FooterQueuedPrompt,
   FooterState,
   FooterSubagentState,
+  FooterTodoItem,
   FooterView,
   PermissionReply,
   QuestionReject,
@@ -202,6 +203,8 @@ export class RunFooter implements FooterApi {
   private setSubagent: (next: FooterSubagentState) => void
   private queuedPrompts: Accessor<FooterQueuedPrompt[]>
   private setQueuedPrompts: Setter<FooterQueuedPrompt[]>
+  private todos: Accessor<FooterTodoItem[]>
+  private setTodos: Setter<FooterTodoItem[]>
   private promptRoute: FooterPromptRoute = { type: "composer" }
   private subagentMenuRows = SUBAGENT_ROWS
   private autocomplete = false
@@ -288,6 +291,9 @@ export class RunFooter implements FooterApi {
     const [queuedPrompts, setQueuedPrompts] = createSignal<FooterQueuedPrompt[]>([])
     this.queuedPrompts = queuedPrompts
     this.setQueuedPrompts = setQueuedPrompts
+    const [todos, setTodos] = createSignal<FooterTodoItem[]>([])
+    this.todos = todos
+    this.setTodos = setTodos
     this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
     this.scrollback = this.createScrollback(options.wrote ?? false)
 
@@ -309,6 +315,7 @@ export class RunFooter implements FooterApi {
               view: footer.view,
               subagent: footer.subagent,
               queuedPrompts: footer.queuedPrompts,
+              todos: footer.todos,
               findFiles: options.findFiles,
               agents: footer.agents,
               resources: footer.resources,
@@ -465,6 +472,16 @@ export class RunFooter implements FooterApi {
       }
 
       this.setSubagent(next.state)
+      this.applyHeight()
+      return
+    }
+
+    if (next.type === "stream.todo") {
+      if (this.isGone) {
+        return
+      }
+
+      this.setTodos(next.todos)
       this.applyHeight()
       return
     }
@@ -691,6 +708,18 @@ export class RunFooter implements FooterApi {
     this.patch({ interrupt: 0, exit: 0 })
   }
 
+  private todoPanelVisible(): boolean {
+    return this.view().type === "prompt" && this.promptRoute.type === "composer" && !this.autocomplete
+  }
+
+  private todoPanelRows(): number {
+    if (!this.todoPanelVisible()) {
+      return 0
+    }
+
+    return todoPanelRowCount(this.todos())
+  }
+
   // Resizes the footer to fit the current view. Permission and question views
   // get fixed extra rows; the prompt view scales with textarea line count.
   private applyHeight(): void {
@@ -716,8 +745,9 @@ export class RunFooter implements FooterApi {
                         ? this.base + SUBAGENT_INSPECTOR_ROWS
                         : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
-    if (height !== this.renderer.footerHeight) {
-      this.renderer.footerHeight = height
+    const total = height + this.todoPanelRows()
+    if (total !== this.renderer.footerHeight) {
+      this.renderer.footerHeight = total
     }
   }
 
@@ -1102,6 +1132,7 @@ export class RunFooter implements FooterApi {
     this.prompts.clear()
     this.queuedRemoves.clear()
     this.closes.clear()
+    this.setTodos([])
     this.scrollback.destroy()
     for (const theme of [...this.themes]) this.destroyTheme(theme)
   }

@@ -399,6 +399,30 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     })
   }
 
+  const loadTodos = async (): Promise<void> => {
+    if (footer.isClosed) {
+      return
+    }
+
+    const response = await ctx.sdk.session.todo({ sessionID: state.sessionID }).catch(() => undefined)
+    if (!response || footer.isClosed) {
+      return
+    }
+
+    const todos = response.data
+    if (!todos) {
+      return
+    }
+
+    footer.event({
+      type: "stream.todo",
+      todos: todos.map((item) => ({
+        status: item.status,
+        content: item.content,
+      })),
+    })
+  }
+
   void footer
     .idle()
     .then(loadCatalog)
@@ -697,6 +721,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       }
 
       await ensureStream()
+      await loadTodos().catch(() => {})
     }
 
     if (!eager && input.resolveSession) {

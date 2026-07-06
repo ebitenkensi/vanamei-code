@@ -132,12 +132,16 @@ export type ToolTaskSnapshot = {
   tail: string
 }
 
+export type FooterTodoItem = {
+  status: string
+  content: string
+}
+
+export type FooterTodoState = FooterTodoItem[]
+
 export type ToolTodoSnapshot = {
   kind: "todo"
-  items: Array<{
-    status: string
-    content: string
-  }>
+  items: FooterTodoItem[]
   tail: string
 }
 
@@ -215,6 +219,7 @@ export type FooterOutput = {
   patch?: FooterPatch
   view?: FooterView
   subagent?: FooterSubagentState
+  todos?: FooterTodoState
 }
 
 // Typed messages sent to RunFooter.event(). The prompt queue and stream
@@ -278,6 +283,10 @@ export type FooterEvent =
   | {
       type: "stream.subagent"
       state: FooterSubagentState
+    }
+  | {
+      type: "stream.todo"
+      todos: FooterTodoState
     }
 
 export type PermissionReply = Parameters<OpencodeClient["permission"]["reply"]>[0]
