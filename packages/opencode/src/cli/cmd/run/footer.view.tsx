@@ -22,6 +22,7 @@ import {
   RunVariantSelectBody,
 } from "./footer.command"
 import { FOOTER_MENU_ROWS, RunFooterMenu } from "./footer.menu"
+import { canOpenSessionsMenu, RunSessionSelectBody } from "./footer.sessions"
 import { RunFooterSubagentBody } from "./footer.subagent"
 import { RunPromptBody, createPromptState } from "./footer.prompt"
 import { RunPermissionBody } from "./footer.permission"
@@ -38,6 +39,7 @@ import {
 import type {
   FooterPromptRoute,
   FooterQueuedPrompt,
+  FooterSessionTab,
   FooterState,
   FooterSubagentState,
   FooterTodoItem,
@@ -88,6 +90,8 @@ type RunFooterViewProps = {
   subagent?: () => FooterSubagentState
   queuedPrompts?: () => FooterQueuedPrompt[]
   todos?: () => FooterTodoItem[]
+  sessions?: () => FooterSessionTab[]
+  sessionID?: () => string | undefined
   theme: () => RunTheme
   diffStyle?: RunDiffStyle
   tuiConfig: RunTuiConfig
@@ -113,6 +117,8 @@ type RunFooterViewProps = {
   onStatus: (text: string) => void
   onSubagentSelect?: (sessionID: string | undefined) => void
   onQueuedRemove: (messageID: string) => Promise<boolean>
+  onSessionSelect?: (sessionID: string, title: string | undefined) => void
+  onSessionsOpen?: () => void
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
@@ -149,6 +155,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const [route, setRoute] = createSignal<FooterPromptRoute>({ type: "composer" })
   const [subagentMenuRows, setSubagentMenuRows] = createSignal(RUN_SUBAGENT_PANEL_ROWS)
   const queuedPrompts = createMemo(() => props.queuedPrompts?.() ?? [])
+  const sessions = createMemo(() => props.sessions?.() ?? [])
   const skills = createMemo(() => (props.commands() ?? []).filter((item) => item.source === "skill"))
   const prompt = createMemo(() => active().type === "prompt" && route().type === "composer")
   const selectingSubagent = createMemo(() => active().type === "prompt" && route().type === "subagent-menu")
@@ -158,6 +165,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const skilling = createMemo(() => active().type === "prompt" && route().type === "skill")
   const modeling = createMemo(() => active().type === "prompt" && route().type === "model")
   const varianting = createMemo(() => active().type === "prompt" && route().type === "variant")
+  const selectingSession = createMemo(() => active().type === "prompt" && route().type === "sessions")
   const panel = createMemo(
     () =>
       active().type === "permission" ||
@@ -167,7 +175,8 @@ export function RunFooterView(props: RunFooterViewProps) {
       commanding() ||
       skilling() ||
       modeling() ||
-      varianting(),
+      varianting() ||
+      selectingSession(),
   )
   const selected = createMemo(() => {
     const current = route()
@@ -340,6 +349,20 @@ export function RunFooterView(props: RunFooterViewProps) {
     if (queuedPrompts().length === 0) return
     setRoute({ type: "queued-menu" })
     props.onSubagentSelect?.(undefined)
+  }
+
+  // Idle-only guard: a switch mid-turn would tear down the stream the active
+  // turn is running on, so refuse to even open the list and surface a notice
+  // through the same status-patch mechanism as other footer notices.
+  const openSessionsMenu = () => {
+    if (!canOpenSessionsMenu(props.state())) {
+      props.onStatus("finish the current turn before switching sessions")
+      return
+    }
+
+    setRoute({ type: "sessions" })
+    props.onSubagentSelect?.(undefined)
+    props.onSessionsOpen?.()
   }
 
   const closePanel = () => {
@@ -621,7 +644,8 @@ export function RunFooterView(props: RunFooterViewProps) {
       current.type !== "model" &&
       current.type !== "variant" &&
       current.type !== "queued-menu" &&
-      current.type !== "subagent-menu"
+      current.type !== "subagent-menu" &&
+      current.type !== "sessions"
     ) {
       return
     }
@@ -734,6 +758,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                             }}
                             onSkill={openSkillMenu}
                             onSubagent={openSubagentMenu}
+                            onSessions={openSessionsMenu}
                             onQueued={openQueuedMenu}
                             onVariant={openVariant}
                             onVariantCycle={() => {
@@ -789,6 +814,18 @@ export function RunFooterView(props: RunFooterViewProps) {
                             onClose={closePanel}
                             onSelect={(variant) => {
                               props.onVariantSelect(variant)
+                              closePanel()
+                            }}
+                          />
+                        </Match>
+                        <Match when={selectingSession()}>
+                          <RunSessionSelectBody
+                            theme={theme}
+                            sessions={sessions}
+                            current={props.sessionID ?? (() => undefined)}
+                            onClose={closePanel}
+                            onSelect={(sessionID, title) => {
+                              props.onSessionSelect?.(sessionID, title)
                               closePanel()
                             }}
                           />

@@ -7,7 +7,7 @@ import { RunFooterMenu, createFooterMenuState, type RunFooterMenuItem } from "./
 import type { RunFooterTheme } from "./theme"
 import type { FooterQueuedPrompt, FooterSubagentTab, RunCommand, RunInput, RunProvider } from "./types"
 
-type PanelEntry = RunFooterMenuItem & {
+export type PanelEntry = RunFooterMenuItem & {
   category: string
   keywords?: string
 }
@@ -18,6 +18,7 @@ type CommandEntry =
   | (PanelEntry & { action: "skill" })
   | (PanelEntry & { action: "queued" })
   | (PanelEntry & { action: "subagent" })
+  | (PanelEntry & { action: "sessions" })
   | (PanelEntry & { action: "variant.cycle" })
   | (PanelEntry & { action: "variant.list" })
   | (PanelEntry & { action: "slash"; name: string })
@@ -50,9 +51,9 @@ type QueuedEntry = PanelEntry & {
 
 type MenuState = ReturnType<typeof createFooterMenuState>
 
-const PANEL_PAD = 2
-const PANEL_LIST_ROWS = 10
-const PANEL_FRAME_ROWS = 6
+export const PANEL_PAD = 2
+export const PANEL_LIST_ROWS = 10
+export const PANEL_FRAME_ROWS = 6
 export const RUN_COMMAND_PANEL_ROWS = PANEL_LIST_ROWS + PANEL_FRAME_ROWS
 const SUBAGENT_LIST_ROWS = 12
 export const RUN_SUBAGENT_PANEL_ROWS = SUBAGENT_LIST_ROWS + PANEL_FRAME_ROWS
@@ -124,7 +125,7 @@ function subagentStatusLabel(status: FooterSubagentTab["status"]) {
   return "running"
 }
 
-function handleKey(input: {
+export function handleKey(input: {
   event: KeyEvent
   menu: MenuState
   field: () => InputRenderable | undefined
@@ -190,7 +191,7 @@ function handleKey(input: {
   }
 }
 
-function match<T extends PanelEntry>(query: string, entries: T[]) {
+export function match<T extends PanelEntry>(query: string, entries: T[]) {
   const text = query.trim()
   if (!text) {
     return entries
@@ -201,7 +202,7 @@ function match<T extends PanelEntry>(query: string, entries: T[]) {
     .map((item) => item.obj)
 }
 
-function PanelShell(props: {
+export function PanelShell(props: {
   title: string
   countVisible?: boolean
   query: string
@@ -343,6 +344,7 @@ export function RunCommandMenuBody(props: {
   onEditor: () => void
   onSkill: () => void
   onSubagent: () => void
+  onSessions: () => void
   onQueued: () => void
   onVariant: () => void
   onVariantCycle: () => void
@@ -379,6 +381,13 @@ export function RunCommandMenuBody(props: {
             },
           ]
         : []),
+      {
+        action: "sessions" as const,
+        category: "Session",
+        display: "Resume session",
+        footer: "/sessions",
+        keywords: "sessions resume switch session",
+      },
       {
         action: "slash",
         category: "Session",
@@ -486,6 +495,11 @@ export function RunCommandMenuBody(props: {
 
     if (item.action === "subagent") {
       props.onSubagent()
+      return
+    }
+
+    if (item.action === "sessions") {
+      props.onSessions()
       return
     }
 

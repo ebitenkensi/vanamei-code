@@ -188,6 +188,7 @@ export type FooterPromptRoute =
   | { type: "skill" }
   | { type: "model" }
   | { type: "variant" }
+  | { type: "sessions" }
 
 export type FooterSubagentTab = {
   sessionID: string
@@ -212,6 +213,16 @@ export type FooterSubagentState = {
   details: Record<string, FooterSubagentDetail>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
+}
+
+// A project session as listed for the /sessions (resume) panel. parentID is
+// carried through so the panel can exclude subagent/child sessions from the
+// switch target list.
+export type FooterSessionTab = {
+  sessionID: string
+  parentID?: string
+  title?: string
+  updated: number
 }
 
 // The reducer emits this alongside scrollback commits so the footer can update in the same frame.
@@ -287,6 +298,10 @@ export type FooterEvent =
   | {
       type: "stream.todo"
       todos: FooterTodoState
+    }
+  | {
+      type: "sessions"
+      sessions: FooterSessionTab[]
     }
 
 export type PermissionReply = Parameters<OpencodeClient["permission"]["reply"]>[0]

@@ -134,6 +134,10 @@ type RuntimeState = {
   selectSubagent?: (sessionID: string | undefined) => void
   session?: Promise<void>
   stream?: Promise<StreamState>
+  // Whether the next prompt turn should re-attach the initial file mentions.
+  // Lives on state (rather than a local closure in runQueue) so both
+  // onNewSession and switchSession can reset it from outside that scope.
+  includeFiles: boolean
 }
 
 function hasSession(input: RunRuntimeInput, state: RuntimeState) {
@@ -207,6 +211,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     localRows: [],
     sessionTitle: ctx.sessionTitle,
     agent: ctx.agent,
+    includeFiles: true,
   }
   const ensureSession = () => {
     if (!input.resolveSession || state.sessionID) {
@@ -362,6 +367,12 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         sessionID,
       })
     },
+    onSessionsOpen: () => {
+      void loadSessions()
+    },
+    onSessionSelect: (sessionID, title) => {
+      void switchSession(sessionID, title)
+    },
   })
   const footer = shell.footer
   const rememberLocal = (commit: StreamCommit, after?: LocalReplayAnchor) => {
@@ -419,6 +430,33 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       todos: todos.map((item) => ({
         status: item.status,
         content: item.content,
+      })),
+    })
+  }
+
+  // Refreshes the /sessions panel's list. Fetched fresh on every panel open
+  // (rather than cached alongside the startup catalog) so "updated" times
+  // stay accurate across a long-running footer.
+  const loadSessions = async (): Promise<void> => {
+    if (footer.isClosed) {
+      return
+    }
+
+    const list = await ctx.sdk.session
+      .list({ directory: ctx.directory })
+      .then((x) => x.data ?? [])
+      .catch(() => [])
+    if (footer.isClosed) {
+      return
+    }
+
+    footer.event({
+      type: "sessions",
+      sessions: list.map((item) => ({
+        sessionID: item.id,
+        parentID: item.parentID,
+        title: item.title,
+        updated: item.time.updated,
       })),
     })
   }
@@ -525,6 +563,94 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     return next
   }
 
+  // /sessions (resume): tear down the current session's subscription and
+  // rebind to the chosen one, mirroring onNewSession's reset below except
+  // that an existing session has real history to restore. resolveSessionInfo
+  // (the same helper --continue uses at boot) gives us that session's actual
+  // `first`/`history` so state.shown and the footer's "first" placeholder
+  // reflect the resumed session instead of behaving like a blank new one --
+  // and ensureStream() (not resetForReplay, which is reserved for resize)
+  // replays it into scrollback via the existing bootstrap path.
+  const switchSession = async (sessionID: string, title: string | undefined): Promise<void> => {
+    if (sessionID === state.sessionID) {
+      return
+    }
+
+    try {
+      await state.switching?.catch(() => {})
+      await footer.idle().catch(() => {})
+      await state.stream?.then((item) => item.handle.close()).catch(() => {})
+      state.stream = undefined
+      state.session = undefined
+      state.selectSubagent = undefined
+      state.sessionID = sessionID
+      state.sessionTitle = title
+      state.localRows = []
+      state.includeFiles = true
+
+      const info = await resolveSessionInfo(ctx.sdk, sessionID, state.model)
+      state.shown = !info.first
+      state.history = info.history
+
+      state.demo = input.demo
+        ? createRunDemo({
+            footer,
+            sessionID: state.sessionID,
+            thinking: input.thinking,
+            limits: () => state.limits,
+          })
+        : undefined
+      log?.write("session.switch", {
+        sessionID: state.sessionID,
+      })
+      footer.event({
+        type: "stream.subagent",
+        state: {
+          tabs: [],
+          details: {},
+          permissions: [],
+          questions: [],
+        },
+      })
+      footer.event({ type: "stream.view", view: { type: "prompt" } })
+      footer.event({
+        type: "stream.patch",
+        patch: {
+          phase: "idle",
+          duration: "",
+          usage: "",
+          first: info.first,
+        },
+      })
+      footer.append({
+        kind: "system",
+        text: `resume session ${state.sessionID}`,
+        phase: "final",
+        source: "system",
+      })
+      await ensureStream()
+      await loadTodos().catch(() => {})
+      await state.demo?.start()
+    } catch (error) {
+      footer.event({
+        type: "stream.patch",
+        patch: {
+          phase: "idle",
+          status: "failed to switch session",
+        },
+      })
+      const commit = {
+        kind: "error",
+        text: error instanceof Error ? error.message : String(error),
+        phase: "start",
+        source: "system",
+        messageID: MessageID.ascending(),
+      } as const
+      rememberLocal(commit)
+      footer.append(commit)
+    }
+  }
+
   let resizeTimer: ReturnType<typeof setTimeout> | undefined
   const offResize = shell.onResize(() => {
     if (resizeTimer) {
@@ -559,7 +685,6 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
   })
 
   const runQueue = async () => {
-    let includeFiles = true
     if (state.demo) {
       await state.demo.start()
     }
@@ -603,7 +728,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
               state.agent = created.agent ?? state.agent
               state.history = []
               state.localRows = []
-              includeFiles = true
+              state.includeFiles = true
               state.demo = input.demo
                 ? createRunDemo({
                     footer,
@@ -677,7 +802,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
             variant: state.activeVariant,
             prompt,
             files: input.files,
-            includeFiles,
+            includeFiles: state.includeFiles,
             onVisibleOutput: (anchor) => {
               outputAnchor = anchor
             },
@@ -688,7 +813,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
               (row) => row.commit.kind !== "user" || row.commit.messageID !== prompt.messageID,
             )
           }
-          includeFiles = false
+          state.includeFiles = false
         } catch (error) {
           if (signal.aborted || footer.isClosed) {
             return

@@ -31,6 +31,7 @@ import { createComponent, createSignal, type Accessor, type Setter } from "solid
 import { createStore, reconcile } from "solid-js/store"
 import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
+import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { RunFooterView, todoPanelRowCount } from "./footer.view"
@@ -43,6 +44,7 @@ import type {
   FooterPatch,
   FooterPromptRoute,
   FooterQueuedPrompt,
+  FooterSessionTab,
   FooterState,
   FooterSubagentState,
   FooterTodoItem,
@@ -98,6 +100,8 @@ type RunFooterOptions = {
   onEditorOpen: (input: { value: string }) => Promise<string | undefined>
   onExit?: () => void
   onSubagentSelect?: (sessionID: string | undefined) => void
+  onSessionSelect?: (sessionID: string, title: string | undefined) => void
+  onSessionsOpen?: () => void
   treeSitterClient?: TreeSitterClient
 }
 
@@ -108,6 +112,7 @@ const SKILL_ROWS = RUN_COMMAND_PANEL_ROWS
 const SUBAGENT_ROWS = RUN_SUBAGENT_PANEL_ROWS
 const MODEL_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
+const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
 const THEME_REFRESH_DELAYS = [1000, 1000] as const
 
@@ -205,6 +210,8 @@ export class RunFooter implements FooterApi {
   private setQueuedPrompts: Setter<FooterQueuedPrompt[]>
   private todos: Accessor<FooterTodoItem[]>
   private setTodos: Setter<FooterTodoItem[]>
+  private sessions: Accessor<FooterSessionTab[]>
+  private setSessions: Setter<FooterSessionTab[]>
   private promptRoute: FooterPromptRoute = { type: "composer" }
   private subagentMenuRows = SUBAGENT_ROWS
   private autocomplete = false
@@ -294,6 +301,9 @@ export class RunFooter implements FooterApi {
     const [todos, setTodos] = createSignal<FooterTodoItem[]>([])
     this.todos = todos
     this.setTodos = setTodos
+    const [sessions, setSessions] = createSignal<FooterSessionTab[]>([])
+    this.sessions = sessions
+    this.setSessions = setSessions
     this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
     this.scrollback = this.createScrollback(options.wrote ?? false)
 
@@ -316,6 +326,8 @@ export class RunFooter implements FooterApi {
               subagent: footer.subagent,
               queuedPrompts: footer.queuedPrompts,
               todos: footer.todos,
+              sessions: footer.sessions,
+              sessionID: options.sessionID,
               findFiles: options.findFiles,
               agents: footer.agents,
               resources: footer.resources,
@@ -349,6 +361,8 @@ export class RunFooter implements FooterApi {
               onStatus: footer.setStatus,
               onSubagentSelect: options.onSubagentSelect,
               onQueuedRemove: footer.handleQueuedRemove,
+              onSessionSelect: options.onSessionSelect,
+              onSessionsOpen: options.onSessionsOpen,
             })
           },
         }),
@@ -483,6 +497,15 @@ export class RunFooter implements FooterApi {
 
       this.setTodos(next.todos)
       this.applyHeight()
+      return
+    }
+
+    if (next.type === "sessions") {
+      if (this.isGone) {
+        return
+      }
+
+      this.setSessions(next.sessions)
       return
     }
 
@@ -737,13 +760,15 @@ export class RunFooter implements FooterApi {
                 ? 1 + MODEL_ROWS
                 : this.promptRoute.type === "variant"
                   ? 1 + VARIANT_ROWS
-                  : this.promptRoute.type === "queued-menu"
-                    ? 1 + this.subagentMenuRows
-                    : this.promptRoute.type === "subagent-menu"
+                  : this.promptRoute.type === "sessions"
+                    ? 1 + SESSIONS_ROWS
+                    : this.promptRoute.type === "queued-menu"
                       ? 1 + this.subagentMenuRows
-                      : this.promptRoute.type === "subagent"
-                        ? this.base + SUBAGENT_INSPECTOR_ROWS
-                        : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
+                      : this.promptRoute.type === "subagent-menu"
+                        ? 1 + this.subagentMenuRows
+                        : this.promptRoute.type === "subagent"
+                          ? this.base + SUBAGENT_INSPECTOR_ROWS
+                          : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
     const total = height + this.todoPanelRows()
     if (total !== this.renderer.footerHeight) {

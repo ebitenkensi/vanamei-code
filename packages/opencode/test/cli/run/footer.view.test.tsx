@@ -383,6 +383,7 @@ test("direct command panel renders grouped command palette", async () => {
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
+          onSessions={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
           onVariantCycle={() => {}}
@@ -420,6 +421,105 @@ test("direct command panel renders grouped command palette", async () => {
     expect(frame).not.toContain("Cycle reasoning effort for future turns")
     expect(frame).not.toContain("Review code")
     expect(frame).not.toContain("Commands 8")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("direct command panel lists resume session and finds it by either keyword", async () => {
+  const [commands] = createSignal<RunCommand[] | undefined>([])
+  const [subagents] = createSignal([])
+  const [variants] = createSignal<string[]>([])
+
+  for (const query of ["resume", "sessions"]) {
+    const app = await testRender(
+      () => (
+        <box width={100} height={RUN_COMMAND_PANEL_ROWS}>
+          <RunCommandMenuBody
+            theme={() => RUN_THEME_FALLBACK.footer}
+            commands={commands}
+            subagents={subagents}
+            queued={() => []}
+            variants={variants}
+            variantCycle="ctrl+t"
+            onClose={() => {}}
+            onModel={() => {}}
+            onEditor={() => {}}
+            onSkill={() => {}}
+            onSubagent={() => {}}
+            onSessions={() => {}}
+            onQueued={() => {}}
+            onVariant={() => {}}
+            onVariantCycle={() => {}}
+            onCommand={() => {}}
+            onNew={() => {}}
+            onExit={() => {}}
+          />
+        </box>
+      ),
+      { width: 100, height: RUN_COMMAND_PANEL_ROWS },
+    )
+
+    try {
+      await app.renderOnce()
+      expect(app.captureCharFrame()).toContain("Resume session")
+      expect(app.captureCharFrame()).toContain("/sessions")
+
+      query.split("").forEach((key) => app.mockInput.pressKey(key))
+      await app.renderOnce()
+
+      const frame = app.captureCharFrame()
+      expect(frame).toContain("Resume session")
+      expect(frame).not.toContain("New session")
+    } finally {
+      app.renderer.destroy()
+    }
+  }
+})
+
+test("direct command panel selecting resume session dispatches onSessions", async () => {
+  const [commands] = createSignal<RunCommand[] | undefined>([])
+  const [subagents] = createSignal([])
+  const [variants] = createSignal<string[]>([])
+  let calls = 0
+
+  const app = await testRender(
+    () => (
+      <box width={100} height={RUN_COMMAND_PANEL_ROWS}>
+        <RunCommandMenuBody
+          theme={() => RUN_THEME_FALLBACK.footer}
+          commands={commands}
+          subagents={subagents}
+          queued={() => []}
+          variants={variants}
+          variantCycle="ctrl+t"
+          onClose={() => {}}
+          onModel={() => {}}
+          onEditor={() => {}}
+          onSkill={() => {}}
+          onSubagent={() => {}}
+          onSessions={() => {
+            calls++
+          }}
+          onQueued={() => {}}
+          onVariant={() => {}}
+          onVariantCycle={() => {}}
+          onCommand={() => {}}
+          onNew={() => {}}
+          onExit={() => {}}
+        />
+      </box>
+    ),
+    { width: 100, height: RUN_COMMAND_PANEL_ROWS },
+  )
+
+  try {
+    await app.renderOnce()
+    "resume".split("").forEach((key) => app.mockInput.pressKey(key))
+    await app.renderOnce()
+    app.mockInput.pressEnter()
+
+    expect(calls).toBe(1)
   } finally {
     app.renderer.destroy()
   }
@@ -524,6 +624,7 @@ test("direct command panel shows subagent entry when available", async () => {
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
+          onSessions={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
           onVariantCycle={() => {}}
@@ -572,6 +673,7 @@ test("direct command panel keeps completed subagents available", async () => {
           onEditor={() => {}}
           onSkill={() => {}}
           onSubagent={() => {}}
+          onSessions={() => {}}
           onQueued={() => {}}
           onVariant={() => {}}
           onVariantCycle={() => {}}

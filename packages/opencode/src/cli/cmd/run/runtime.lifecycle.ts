@@ -75,6 +75,8 @@ export type LifecycleInput = {
   onInterrupt?: () => void
   onBackground?: () => void
   onSubagentSelect?: (sessionID: string | undefined) => void
+  onSessionSelect?: (sessionID: string, title: string | undefined) => void
+  onSessionsOpen?: () => void
 }
 
 export type Lifecycle = {
@@ -276,6 +278,8 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
         }
       },
       onSubagentSelect: input.onSubagentSelect,
+      onSessionSelect: input.onSessionSelect,
+      onSessionsOpen: input.onSessionsOpen,
     })
 
     const sigint = () => {
