@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import path from "path"
 import yargs from "yargs"
 import { tmpdir } from "../../fixture/fixture"
-import { TuiThreadCommand, resolveThreadDirectory } from "../../../src/cli/cmd/tui"
+import { TuiCommand, TuiThreadCommand, resolveThreadDirectory } from "../../../src/cli/cmd/tui"
 import { cliIt } from "../../lib/cli-process"
 
 describe("tui thread", () => {
@@ -57,23 +57,43 @@ describe("tui thread", () => {
     }
   })
 
-  test("preserves boolean negation for existing options", async () => {
+  test("routes to the fullscreen tui subcommand with a project positional", async () => {
+    let received: string | undefined
+    const args = await yargs([])
+      .command({ ...TuiCommand, handler: (a: any) => (received = a.project) })
+      .command({ ...TuiThreadCommand, handler: () => {} })
+      .exitProcess(false)
+      .parse(["tui", "someproject"])
+
+    expect(args._).toEqual(["tui"])
+    expect(received).toBe("someproject")
+  })
+
+  test("accepts --attach, --port, and --continue on bare invocation", async () => {
     const args = await yargs([])
       .command({ ...TuiThreadCommand, handler: () => {} })
       .exitProcess(false)
-      .parse(["--mdns", "--no-mdns"])
+      .parse(["--attach", "http://x", "--port", "4096", "--continue"])
 
-    expect(args.mdns).toBe(false)
+    expect(args.attach).toBe("http://x")
+    expect(args.port).toBe(4096)
+    expect(args.continue).toBe(true)
   })
 
-  cliIt.live("rejects mini-only options without --mini", ({ opencode }) =>
-    Effect.gen(function* () {
-      const result = yield* opencode.spawn(["--replay-limit", "10"])
+  test("rejects unknown network options on bare invocation", async () => {
+    let failure: string | undefined
+    await yargs([])
+      .command({ ...TuiThreadCommand, handler: () => {} })
+      .strict()
+      .exitProcess(false)
+      .fail((msg, err) => {
+        failure = msg ?? err?.message
+      })
+      .parse(["--hostname", "x"])
 
-      opencode.expectExit(result, 1)
-      expect(result.stderr).toContain("--replay-limit requires --mini")
-    }),
-  )
+    expect(failure).toBeDefined()
+    expect(failure).toContain("hostname")
+  })
 
   cliIt.live("routes attached sessions to mini mode", ({ opencode }) =>
     Effect.gen(function* () {
@@ -81,15 +101,6 @@ describe("tui thread", () => {
 
       opencode.expectExit(result, 1)
       expect(result.stderr).toContain("--mini requires a TTY stdout")
-    }),
-  )
-
-  cliIt.live("rejects network options in mini mode", ({ opencode }) =>
-    Effect.gen(function* () {
-      const result = yield* opencode.spawn(["--mini", "--port", "4096"])
-
-      opencode.expectExit(result, 1)
-      expect(result.stderr).toContain("--port cannot be used with --mini")
     }),
   )
 })

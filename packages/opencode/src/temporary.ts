@@ -1,5 +1,5 @@
 import yargs from "yargs"
-import { TuiThreadCommand } from "./cli/cmd/tui"
+import { TuiCommand, TuiThreadCommand } from "./cli/cmd/tui"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { hideBin } from "yargs/helpers"
 const cli = yargs(hideBin(process.argv))
@@ -28,4 +28,5 @@ const cli = yargs(hideBin(process.argv))
     if (opts.logLevel) process.env.OPENCODE_LOG_LEVEL = opts.logLevel
   })
   .command(TuiThreadCommand)
+  .command(TuiCommand)
   .parse()

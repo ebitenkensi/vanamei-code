@@ -969,6 +969,7 @@ type MiniCommandInput = {
   model?: string
   agent?: string
   prompt?: string
+  port?: number
   replay?: boolean
   replayLimit?: number
   demo?: boolean
@@ -994,7 +995,7 @@ export async function runMini(input: MiniCommandInput) {
     password: input.password,
     username: input.username,
     dir: input.directory,
-    port: undefined,
+    port: input.port,
     variant: undefined,
     thinking: undefined,
     mini: true,
