@@ -453,7 +453,7 @@ test("inserts spacers for new visible groups", async () => {
     try {
       expect(commits).toHaveLength(2)
       expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).trim()).toBe("› use subagent to explore run.ts")
+      expect(renderCommit(commits[1]!).trim()).toBe("❯ use subagent to explore run.ts")
     } finally {
       destroy(commits)
     }
@@ -488,7 +488,7 @@ test("inserts spacers for new visible groups", async () => {
     try {
       expect(commits).toHaveLength(2)
       expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe('✱ Glob "**/run.ts"')
+      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe('⏺ ✱ Glob "**/run.ts"')
     } finally {
       destroy(commits)
     }
@@ -560,9 +560,9 @@ test.skipIf(process.platform === "win32")(
       take()
 
       const output = lines.join("\n")
-      expect(output).toContain("› Hello you")
+      expect(output).toContain("❯ Hello you")
       expect(output).toContain("Say hello.")
-      expect(output).toContain("Hello.")
+      expect(output).toContain("⏺\n\nHello.")
     } finally {
       out.scrollback.destroy()
     }
@@ -580,7 +580,7 @@ test("coalesces same-line tool progress into one snapshot", async () => {
     const commits = claim(out.renderer)
     try {
       expect(commits).toHaveLength(1)
-      expect(render(commits)).toContain("abcdef")
+      expect(render(commits)).toContain("⏺ abcdef")
     } finally {
       destroy(commits)
     }
@@ -611,7 +611,7 @@ test("omits the current directory from bash titles", async () => {
 
     const commits = claim(out.renderer)
     try {
-      expect(render(commits)).toContain("$ pwd")
+      expect(render(commits)).toContain("⏺ $ pwd")
       expect(render(commits)).not.toContain("Running in .")
     } finally {
       destroy(commits)
@@ -675,10 +675,10 @@ test("renders completed bash output with one blank line after the command and be
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("# Running in /tmp/demo\n$ git status")
-    expect(output).toContain("$ git status\n\nOn branch demo")
-    expect(output).toContain("nothing to commit, working tree clean\n\noc-run-dev ahead 1")
-    expect(output).not.toContain("nothing to commit, working tree clean\n\n\noc-run-dev ahead 1")
+    expect(output).toContain("⏺ # Running in /tmp/demo\n$ git status")
+    expect(output).toContain("$ git status\n\n⎿ On branch demo")
+    expect(output).toContain("⎿ nothing to commit, working tree clean\n\n⏺\n\noc-run-dev ahead 1")
+    expect(output).not.toContain("⎿ nothing to commit, working tree clean\n\n\n⏺\n\noc-run-dev ahead 1")
   } finally {
     out.scrollback.destroy()
   }
@@ -754,7 +754,7 @@ test("inserts a spacer before the next tool after completed multiline bash outpu
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain('total 4\n\n✱ Glob "**/*tool*" in src/cli/cmd')
+    expect(output).toContain('⎿ total 4\n\n⏺ ✱ Glob "**/*tool*" in src/cli/cmd')
   } finally {
     out.scrollback.destroy()
   }
@@ -846,8 +846,8 @@ test("does not double-space before completed bash output when inline tool header
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain('✱ Grep "tool" in src/cli/cmd/run\n\ndemo.ts')
-    expect(output).not.toContain('✱ Grep "tool" in src/cli/cmd/run\n\n\ndemo.ts')
+    expect(output).toContain('⏺ ✱ Grep "tool" in src/cli/cmd/run\n\n⎿ demo.ts')
+    expect(output).not.toContain('⏺ ✱ Grep "tool" in src/cli/cmd/run\n\n\n⎿ demo.ts')
   } finally {
     out.scrollback.destroy()
   }
@@ -943,10 +943,10 @@ test("does not emit blank patch snapshots between edit and task", async () => {
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("+ Created README-demo.md")
+    expect(output).toContain("⏺ + Created README-demo.md")
     expect(output).not.toContain("~ Patched src/demo-format.ts")
-    expect(output).toContain("+ Created README-demo.md\n\n# Explore Task")
-    expect(output).not.toContain("+ Created README-demo.md\n\n\n# Explore Task")
+    expect(output).toContain("⏺ + Created README-demo.md\n\n# Explore Task")
+    expect(output).not.toContain("⏺ + Created README-demo.md\n\n\n# Explore Task")
   } finally {
     out.scrollback.destroy()
   }
@@ -978,9 +978,9 @@ test("renders plain errors with one blank line before and after the error block"
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("› /fmt error\n\ndemo error event")
-    expect(output).toContain("demo error event\n\nnext line")
-    expect(output).not.toContain("demo error event\n\n\nnext line")
+    expect(output).toContain("❯ /fmt error\n\ndemo error event")
+    expect(output).toContain("demo error event\n\n⏺\n\nnext line")
+    expect(output).not.toContain("demo error event\n\n\n⏺\n\nnext line")
   } finally {
     out.scrollback.destroy()
   }

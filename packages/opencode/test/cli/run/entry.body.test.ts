@@ -103,7 +103,7 @@ describe("run entry body", () => {
       ),
     ).toEqual({
       type: "text",
-      content: "› Inspect footer tabs",
+      content: "❯ Inspect footer tabs",
     })
   })
 
