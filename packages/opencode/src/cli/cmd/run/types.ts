@@ -13,6 +13,7 @@
 //         → OpenTUI split-footer renderer writes to terminal
 import type { OpencodeClient, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import type { TuiConfig } from "@/cli/ui/config"
+import type { PermissionMode } from "./mode.shared"
 
 export type RunFilePart = {
   type: "file"
@@ -98,6 +99,9 @@ export type FooterState = {
   first: boolean
   interrupt: number
   exit: number
+  // Permission mode cycle state (P1). P3 will also surface judging state here.
+  permissionMode: PermissionMode
+  judging: boolean
 }
 
 // A partial update to FooterState. The footer merges this onto the current state.
@@ -180,7 +184,7 @@ export type RunEntryBody =
 // "prompt".
 export type FooterView =
   | { type: "prompt" }
-  | { type: "permission"; request: PermissionRequest }
+  | { type: "permission"; request: PermissionRequest; judgeReason?: string }
   | { type: "question"; request: QuestionRequest }
 
 export type FooterPromptRoute =

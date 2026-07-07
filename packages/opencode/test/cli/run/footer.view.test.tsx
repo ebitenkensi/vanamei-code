@@ -149,12 +149,12 @@ function agent(input: { name: string; mode: RunAgent["mode"]; description?: stri
 }
 
 function footerState(input: Partial<FooterState> = {}) {
-  return createSignal<FooterState>({
+  const [state] = createSignal<FooterState>({
     phase: "idle",
     status: "",
     queue: 0,
-    model: "gpt-5",
-    agent: "build",
+    model: "",
+    agent: "opencode",
     duration: "",
     contextTokens: 0,
     contextPercent: null,
@@ -163,8 +163,11 @@ function footerState(input: Partial<FooterState> = {}) {
     first: false,
     interrupt: 0,
     exit: 0,
+    permissionMode: "normal",
+    judging: false,
     ...input,
-  })[0]
+  })
+  return state
 }
 
 async function renderFooter(
@@ -1052,6 +1055,8 @@ test("direct footer shows editable prompts and additional queued work while runn
     first: false,
     interrupt: 0,
     exit: 0,
+    permissionMode: "normal",
+    judging: false,
   })
   const [view] = createSignal<FooterView>({ type: "prompt" })
   const [subagents] = createSignal<FooterSubagentState>({

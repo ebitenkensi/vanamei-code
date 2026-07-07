@@ -41,6 +41,11 @@ import {
   useKeymapSelector,
   type OpenTuiKeymap,
 } from "@/cli/ui/keymap"
+import {
+  modeCycle,
+  modeIndicator,
+  type PermissionMode,
+} from "./mode.shared"
 import type {
   FooterPromptRoute,
   FooterQueuedPrompt,
@@ -110,6 +115,7 @@ type RunFooterViewProps = {
   currentAgent: () => string
   onSubmit: (input: RunPrompt) => boolean
   onPermissionReply: (input: PermissionReply) => void | Promise<void>
+  onPermissionModeCycle?: () => void
   onQuestionReply: (input: QuestionReply) => void | Promise<void>
   onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycle: () => void
@@ -304,6 +310,8 @@ export function RunFooterView(props: RunFooterViewProps) {
     const view = active()
     return view.type === "question" ? view : undefined
   })
+  const permissionMode = createMemo<PermissionMode>(() => props.state().permissionMode)
+  const permissionModeIndicator = createMemo(() => modeIndicator(permissionMode()))
   const promptView = createMemo(() => {
     if (active().type !== "prompt") {
       return active().type
@@ -599,6 +607,21 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   useBindings(() => ({
     mode: OPENCODE_BASE_MODE,
+    enabled: true,
+    priority: -1,
+    commands: [
+      {
+        name: "permission.mode.cycle",
+        title: "Cycle permission mode",
+        category: "Permission",
+        run: () => props.onPermissionModeCycle?.(),
+      },
+    ],
+    bindings: props.tuiConfig.keybinds.get("permission_mode_cycle"),
+  }))
+
+  useBindings(() => ({
+    mode: OPENCODE_BASE_MODE,
     enabled: active().type === "prompt" && route().type === "composer" && foregroundSubagents(),
     priority: 1,
     commands: [
@@ -884,15 +907,16 @@ export function RunFooterView(props: RunFooterViewProps) {
                             }}
                           />
                         </Match>
-                        <Match when={active().type === "permission"}>
-                          <RunPermissionBody
-                            request={permission()!.request}
-                            theme={theme()}
-                            block={block()}
-                            diffStyle={props.diffStyle}
-                            onReply={props.onPermissionReply}
-                          />
-                        </Match>
+              <Match when={active().type === "permission"}>
+                <RunPermissionBody
+                  request={permission()!.request}
+                  theme={theme()}
+                  block={block()}
+                  diffStyle={props.diffStyle}
+                  judgeReason={permission()!.judgeReason}
+                  onReply={props.onPermissionReply}
+                />
+              </Match>
                         <Match when={active().type === "question"}>
                           <RunQuestionBody
                             request={question()!.request}
@@ -936,6 +960,14 @@ export function RunFooterView(props: RunFooterViewProps) {
                     <span style={{ fg: theme().highlight, bold: true }}>{modeLabel()}</span>
                   </text>
                 </box>
+
+                <Show when={permissionModeIndicator().visible}>
+                  <box paddingRight={1} flexShrink={0}>
+                    <text fg={theme().warning} wrapMode="none" truncate flexShrink={0}>
+                      {permissionModeIndicator().label}
+                    </text>
+                  </box>
+                </Show>
 
                 <box
                   flexDirection="row"

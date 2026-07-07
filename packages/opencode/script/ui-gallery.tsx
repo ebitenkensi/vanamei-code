@@ -174,7 +174,8 @@ function footerState(input: Partial<FooterState> = {}): FooterState {
     first: false,
     interrupt: 0,
     exit: 0,
-    ...input,
+    permissionMode: input.permissionMode ?? "normal",
+    judging: false,
   }
 }
 
@@ -1265,6 +1266,17 @@ const CASES: GalleryCase[] = [
         height,
         subagent: { tabs: SAMPLE_SUBAGENT_TREE_TABS, details: {}, permissions: [], questions: [] },
         interact: typeShortPrompt,
+      }),
+  },
+  {
+    name: "footer.statusline.accept-edits",
+    description: "Statusline with the accept-edits permission mode pill visible beside a prompt composer.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        state: { permissionMode: "accept-edits" },
       }),
   },
   {

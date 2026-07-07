@@ -128,7 +128,11 @@ export const Definitions = {
   console_org_switch: keybind("none", "Switch console organization"),
   agent_list: keybind("<leader>a", "List agents"),
   agent_cycle: keybind("tab", "Next agent"),
+  // agent_cycle_reverse is shift+tab but is not wired into the mini footer
+  // today, so there is no real conflict. If mini agent-cycle is wired in the
+  // future, rebind one of them.
   agent_cycle_reverse: keybind("shift+tab", "Previous agent"),
+  permission_mode_cycle: keybind("shift+tab", "Cycle permission mode"),
   variant_cycle: keybind("ctrl+t", "Cycle model variants"),
   variant_list: keybind("none", "List model variants"),
 
@@ -335,6 +339,7 @@ export const CommandMap = {
   agent_list: "agent.list",
   agent_cycle: "agent.cycle",
   agent_cycle_reverse: "agent.cycle.reverse",
+  permission_mode_cycle: "permission.mode.cycle",
   variant_cycle: "variant.cycle",
   variant_list: "variant.list",
   messages_page_up: "session.page.up",

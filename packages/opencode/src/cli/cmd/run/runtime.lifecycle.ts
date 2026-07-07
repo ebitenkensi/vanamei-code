@@ -76,6 +76,7 @@ export type LifecycleInput = {
   tuiConfig: RunTuiConfig
   backgroundSubagents: boolean
   onPermissionReply: (input: PermissionReply) => void | Promise<void>
+  onPermissionModeCycle?: () => void
   onQuestionReply: (input: QuestionReply) => void | Promise<void>
   onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycleVariant?: () => CycleResult | void
@@ -261,7 +262,9 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       tuiConfig: input.tuiConfig,
       backgroundSubagents: input.backgroundSubagents,
       diffStyle: input.tuiConfig.diff_style ?? "auto",
+      permissionMode: "normal",
       onPermissionReply: input.onPermissionReply,
+      onPermissionModeCycle: input.onPermissionModeCycle,
       onQuestionReply: input.onQuestionReply,
       onQuestionReject: input.onQuestionReject,
       onCycleVariant: input.onCycleVariant,

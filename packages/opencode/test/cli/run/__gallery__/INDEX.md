@@ -33,6 +33,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.subagent.w120.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
 | `footer.subagent-tree.w80.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
 | `footer.subagent-tree.w120.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
+| `footer.statusline.accept-edits.w80.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
+| `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `panel.command-menu.w80.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.command-menu.w120.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.model-select.w80.txt` | Standalone model picker body with a current selection and a deprecated model hidden. |

@@ -102,6 +102,7 @@ type RunFooterOptions = {
   onModelSelect?: (model: NonNullable<RunInput["model"]>) => CycleResult | void | Promise<CycleResult | void>
   onAgentSelect?: (agent: string) => AgentSelectResult | void | Promise<AgentSelectResult | void>
   onVariantSelect?: (variant: string | undefined) => CycleResult | void | Promise<CycleResult | void>
+  permissionMode?: "normal" | "accept-edits"
   onInterrupt?: () => void
   onBackground?: () => void
   onEditorOpen: (input: { value: string }) => Promise<string | undefined>
@@ -109,6 +110,7 @@ type RunFooterOptions = {
   onSubagentSelect?: (sessionID: string | undefined) => void
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
+  onPermissionModeCycle?: () => void
   treeSitterClient?: TreeSitterClient
 }
 
@@ -270,6 +272,8 @@ export class RunFooter implements FooterApi {
       first: options.first,
       interrupt: 0,
       exit: 0,
+      permissionMode: options.permissionMode ?? "normal",
+      judging: false,
     })
     this.state = state
     this.setState = setState
@@ -361,6 +365,7 @@ export class RunFooter implements FooterApi {
               currentAgent: footer.currentAgent,
               onSubmit: footer.handlePrompt,
               onPermissionReply: footer.handlePermissionReply,
+              onPermissionModeCycle: options.onPermissionModeCycle,
               onQuestionReply: footer.handleQuestionReply,
               onQuestionReject: footer.handleQuestionReject,
               onCycle: footer.handleCycle,
@@ -542,6 +547,11 @@ export class RunFooter implements FooterApi {
           : prev.interrupt,
       exit:
         typeof next.exit === "number" && Number.isFinite(next.exit) ? Math.max(0, Math.floor(next.exit)) : prev.exit,
+      permissionMode:
+        next.permissionMode === "normal" || next.permissionMode === "accept-edits"
+          ? next.permissionMode
+          : prev.permissionMode,
+      judging: typeof next.judging === "boolean" ? next.judging : prev.judging,
     }
 
     if (state.phase === "idle") {

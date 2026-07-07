@@ -1192,6 +1192,8 @@ export function createRunDemo(input: Input) {
     return false
   }
 
+  const permissionModeCycle = (): boolean => false
+
   const permission = (input: PermissionReply): boolean => {
     const item = state.perms.get(input.requestID)
     if (!item || !input.reply) {
@@ -1268,6 +1270,7 @@ export function createRunDemo(input: Input) {
     start,
     prompt,
     permission,
+    permissionModeCycle,
     questionReply,
     questionReject,
   }

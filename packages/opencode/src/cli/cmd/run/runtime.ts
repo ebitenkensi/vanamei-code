@@ -17,11 +17,13 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { MessageID } from "@/session/schema"
 import * as Locale from "@/util/locale"
 import { createRunDemo } from "./demo"
+import { modeCycle, modeDecision } from "./mode.shared"
 import { resolveModelInfo, resolveRunTuiConfig, resolveSessionInfo } from "./runtime.boot"
 import { createRuntimeLifecycle } from "./runtime.lifecycle"
 import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
-import type { LocalReplayAnchor, LocalReplayRow, RunInput, RunPrompt, RunProvider, StreamCommit } from "./types"
+import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { FooterView, LocalReplayAnchor, LocalReplayRow, PermissionReply, RunInput, RunPrompt, RunProvider, StreamCommit } from "./types"
 
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
@@ -139,6 +141,8 @@ type RuntimeState = {
   // Lives on state (rather than a local closure in runQueue) so both
   // onNewSession and switchSession can reset it from outside that scope.
   includeFiles: boolean
+  permissionMode: import("./mode.shared").PermissionMode
+  pendingPermission?: PermissionRequest
 }
 
 function hasSession(input: RunRuntimeInput, state: RuntimeState) {
@@ -213,6 +217,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     sessionTitle: ctx.sessionTitle,
     agent: ctx.agent,
     includeFiles: true,
+    permissionMode: "normal",
   }
   const ensureSession = () => {
     if (!input.resolveSession || state.sessionID) {
@@ -257,6 +262,25 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
 
       log?.write("send.permission.reply", next)
       await ctx.sdk.permission.reply(next)
+    },
+    onPermissionModeCycle: async () => {
+      if (state.demo?.permissionModeCycle()) {
+        return
+      }
+
+      state.permissionMode = modeCycle(state.permissionMode)
+      footer.event({ type: "stream.patch", patch: { permissionMode: state.permissionMode } })
+      log?.write("permission.mode.cycle", { permissionMode: state.permissionMode })
+
+      const pending = state.pendingPermission
+      if (!pending || modeDecision(state.permissionMode, pending) !== "allow") {
+        return
+      }
+
+      log?.write("permission.auto.allow", { requestID: pending.id, permission: pending.permission })
+      state.pendingPermission = undefined
+      await ctx.sdk.permission.reply({ requestID: pending.id, reply: "once" })
+      footer.event({ type: "stream.view", view: { type: "prompt" } })
     },
     onQuestionReply: async (next) => {
       if (state.demo?.questionReply(next)) {
@@ -583,6 +607,20 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         providers: () => state.providers,
         footer,
         trace: log,
+        permissionMode: () => state.permissionMode,
+        onPermissionAsked: (request) => {
+          state.pendingPermission = request
+        },
+        onPermissionAutoAllow: ({ requestID }) => {
+          if (state.pendingPermission?.id === requestID) {
+            state.pendingPermission = undefined
+          }
+        },
+        onPermissionResolved: (requestID) => {
+          if (state.pendingPermission?.id === requestID) {
+            state.pendingPermission = undefined
+          }
+        },
       })
       if (footer.isClosed) {
         await handle.close()

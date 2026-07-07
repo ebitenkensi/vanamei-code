@@ -15,9 +15,10 @@
 // The tick counter prevents stale idle events from resolving the wrong turn.
 // We also re-check live session status before resolving an idle event so a
 // delayed idle from an older turn cannot complete a newer busy turn.
-import type { Event, GlobalEvent, OpencodeClient } from "@opencode-ai/sdk/v2"
+import type { Event, GlobalEvent, OpencodeClient, PermissionRequest } from "@opencode-ai/sdk/v2"
 import { Context, Deferred, Effect, Exit, Layer, Scope, Stream } from "effect"
 import { makeRuntime } from "@/effect/run-service"
+import { modeDecision } from "./mode.shared"
 import {
   blockerStatus,
   bootstrapSessionData,
@@ -78,6 +79,10 @@ type StreamInput = {
   footer: FooterApi
   trace?: Trace
   signal?: AbortSignal
+  permissionMode?: () => import("./mode.shared").PermissionMode
+  onPermissionAsked?: (request: PermissionRequest) => void | Promise<void>
+  onPermissionAutoAllow?: (request: { requestID: string; permission: string }) => void | Promise<void>
+  onPermissionResolved?: (requestID: string) => void | Promise<void>
 }
 
 type Wait = {
@@ -490,6 +495,36 @@ function createLayer(input: StreamInput) {
           seedBlocker(event.properties.id)
         }
 
+        const maybeAutoAllowPermission = (event: Event) => {
+          if (event.type !== "permission.asked") {
+            return
+          }
+
+          if (event.properties.sessionID !== input.sessionID && !state.subagent.tabs.has(event.properties.sessionID)) {
+            return
+          }
+
+          const mode = input.permissionMode?.()
+          if (!mode) {
+            return
+          }
+
+          const request = event.properties
+          input.onPermissionAsked?.(request)
+          if (modeDecision(mode, request) !== "allow") {
+            return
+          }
+
+          input.trace?.write("transport.auto.allow", {
+            requestID: request.id,
+            permission: request.permission,
+          })
+          void input.sdk.permission.reply({ requestID: request.id, reply: "once" }).then(
+            () => input.onPermissionAutoAllow?.({ requestID: request.id, permission: request.permission }),
+            () => {},
+          )
+        }
+
         const releaseBlocker = (event: Event) => {
           if (
             event.type !== "permission.replied" &&
@@ -500,6 +535,9 @@ function createLayer(input: StreamInput) {
           }
 
           state.blockers.delete(event.properties.requestID)
+          if (event.type === "permission.replied") {
+            input.onPermissionResolved?.(event.properties.requestID)
+          }
         }
 
         const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState) => {
@@ -894,6 +932,7 @@ function createLayer(input: StreamInput) {
           }
 
           trackBlocker(event)
+          maybeAutoAllowPermission(event)
 
           const prev = event.type === "message.part.updated" ? listSubagentTabs(state.subagent) : undefined
           const next = reduceSessionData({
