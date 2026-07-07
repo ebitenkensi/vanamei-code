@@ -71,6 +71,7 @@ export type Event =
   | EventLspUpdated
   | EventPermissionAsked
   | EventPermissionReplied
+  | EventPermissionDenied
   | EventTuiPromptAppend2
   | EventTuiCommandExecute2
   | EventTuiToastShow2
@@ -1402,6 +1403,19 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "permission.denied"
+        properties: {
+          sessionID: string
+          permission: string
+          patterns: Array<string>
+          tool?: {
+            messageID: string
+            callID: string
+          }
+        }
+      }
+    | {
+        id: string
         type: "tui.prompt.append"
         properties: {
           text: string
@@ -1705,6 +1719,10 @@ export type AgentConfig = {
   color?: string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
   steps?: number
   maxSteps?: number
+  budget?: {
+    soft?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    hard?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
   permission?: PermissionConfig
   [key: string]:
     | unknown
@@ -1729,6 +1747,10 @@ export type AgentConfig = {
     | "error"
     | "info"
     | number
+    | {
+        soft?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        hard?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      }
     | PermissionConfig
     | undefined
 }
@@ -2362,6 +2384,10 @@ export type Agent = {
     [key: string]: unknown
   }
   steps?: number
+  budget?: {
+    soft?: number
+    hard?: number
+  }
 }
 
 export type LspStatus = {
@@ -2914,6 +2940,7 @@ export type V2Event =
   | LspUpdated
   | PermissionAsked
   | PermissionReplied
+  | PermissionDenied
   | TuiPromptAppend
   | TuiCommandExecute
   | TuiToastShow
@@ -5735,6 +5762,29 @@ export type PermissionReplied = {
   }
 }
 
+export type PermissionDenied = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "permission.denied"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    permission: string
+    patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
 export type TuiPromptAppend = {
   id: string
   metadata?: {
@@ -6877,6 +6927,20 @@ export type EventPermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
+  }
+}
+
+export type EventPermissionDenied = {
+  id: string
+  type: "permission.denied"
+  properties: {
+    sessionID: string
+    permission: string
+    patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
   }
 }
 

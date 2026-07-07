@@ -1,4 +1,5 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { EventV2 } from "@opencode-ai/core/event"
 import { test, expect } from "bun:test"
 import os from "os"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
@@ -553,6 +554,68 @@ test("disabled - specific allow overrides wildcard deny", () => {
   expect(result.has("read")).toBe(true)
 })
 
+// appendStatusRule tests (permission.ask plugin hook status -> ruleset translation)
+
+test("appendStatusRule - undefined status leaves ruleset unchanged", () => {
+  const ruleset: PermissionV1.Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }]
+  const result = Permission.appendStatusRule(ruleset, "bash", undefined)
+  expect(result).toBe(ruleset)
+  expect(result).toEqual([{ permission: "bash", pattern: "*", action: "allow" }])
+})
+
+test("appendStatusRule - allow appends an allow rule at the end", () => {
+  const result = Permission.appendStatusRule([{ permission: "bash", pattern: "*", action: "deny" }], "bash", "allow")
+  expect(result).toEqual([
+    { permission: "bash", pattern: "*", action: "deny" },
+    { permission: "bash", pattern: "*", action: "allow" },
+  ])
+})
+
+test("appendStatusRule - deny appends a deny rule at the end", () => {
+  const result = Permission.appendStatusRule([{ permission: "bash", pattern: "*", action: "allow" }], "bash", "deny")
+  expect(result).toEqual([
+    { permission: "bash", pattern: "*", action: "allow" },
+    { permission: "bash", pattern: "*", action: "deny" },
+  ])
+})
+
+test("appendStatusRule - ask appends an ask rule at the end", () => {
+  const result = Permission.appendStatusRule([{ permission: "bash", pattern: "*", action: "allow" }], "bash", "ask")
+  expect(result).toEqual([
+    { permission: "bash", pattern: "*", action: "allow" },
+    { permission: "bash", pattern: "*", action: "ask" },
+  ])
+})
+
+test("appendStatusRule - does not mutate the input ruleset", () => {
+  const ruleset: PermissionV1.Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }]
+  Permission.appendStatusRule(ruleset, "bash", "deny")
+  expect(ruleset).toEqual([{ permission: "bash", pattern: "*", action: "allow" }])
+})
+
+test("appendStatusRule - hook deny overrides an earlier config allow via evaluate", () => {
+  const ruleset = Permission.appendStatusRule([{ permission: "bash", pattern: "*", action: "allow" }], "bash", "deny")
+  expect(Permission.evaluate("bash", "rm -rf /", ruleset).action).toBe("deny")
+})
+
+test("appendStatusRule - hook allow overrides an earlier config deny via evaluate", () => {
+  const ruleset = Permission.appendStatusRule([{ permission: "bash", pattern: "*", action: "deny" }], "bash", "allow")
+  expect(Permission.evaluate("bash", "ls", ruleset).action).toBe("allow")
+})
+
+test("appendStatusRule - hook rule only affects the matching permission", () => {
+  const ruleset = Permission.appendStatusRule(
+    [
+      { permission: "bash", pattern: "*", action: "allow" },
+      { permission: "edit", pattern: "*", action: "allow" },
+    ],
+    "bash",
+    "deny",
+  )
+  expect(Permission.evaluate("bash", "rm -rf /", ruleset).action).toBe("deny")
+  expect(Permission.evaluate("edit", "foo.ts", ruleset).action).toBe("allow")
+})
+
 // ask tests
 
 it.instance(
@@ -690,6 +753,113 @@ it.instance(
 
       yield* rejectAll()
       yield* Fiber.await(fiber)
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - publishes denied event on ruleset deny",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2Bridge.Service
+      const seen = yield* Deferred.make<EventV2.Data<typeof Permission.Event.Denied>>()
+      const unsub = yield* events.listen((event) => {
+        if (event.type === Permission.Event.Denied.type)
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data as EventV2.Data<typeof Permission.Event.Denied>))
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      const err = yield* fail(
+        ask({
+          sessionID: SessionID.make("session_test"),
+          permission: "bash",
+          patterns: ["rm -rf /"],
+          metadata: {},
+          always: [],
+          tool: {
+            messageID: MessageID.make("msg_test"),
+            callID: "call_test",
+          },
+          ruleset: [{ permission: "bash", pattern: "*", action: "deny" }],
+        }),
+      )
+      expect(err).toBeInstanceOf(PermissionV1.DeniedError)
+
+      expect(
+        yield* Deferred.await(seen).pipe(
+          Effect.timeoutOrElse({
+            duration: "1 second",
+            orElse: () => Effect.fail(new Error("timed out waiting for permission denied event")),
+          }),
+        ),
+      ).toEqual({
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["rm -rf /"],
+        tool: {
+          messageID: MessageID.make("msg_test"),
+          callID: "call_test",
+        },
+      })
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - publishes denied event exactly once with full patterns, not once per pattern",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2Bridge.Service
+      const seen: unknown[] = []
+      const unsub = yield* events.listen((event) => {
+        if (event.type === Permission.Event.Denied.type) seen.push(event.data)
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      const err = yield* fail(
+        ask({
+          sessionID: SessionID.make("session_test"),
+          permission: "bash",
+          patterns: ["echo hello", "rm -rf /"],
+          metadata: {},
+          always: [],
+          ruleset: [
+            { permission: "bash", pattern: "*", action: "allow" },
+            { permission: "bash", pattern: "rm *", action: "deny" },
+          ],
+        }),
+      )
+      expect(err).toBeInstanceOf(PermissionV1.DeniedError)
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ permission: "bash", patterns: ["echo hello", "rm -rf /"] })
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - does not publish denied event when action is allow",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* EventV2Bridge.Service
+      const seen: unknown[] = []
+      const unsub = yield* events.listen((event) => {
+        if (event.type === Permission.Event.Denied.type) seen.push(event.data)
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      const result = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "bash", pattern: "*", action: "allow" }],
+      })
+      expect(result).toBeUndefined()
+      expect(seen).toHaveLength(0)
     }),
   { git: true },
 )

@@ -63,4 +63,13 @@ const Replied = define({
   type: "permission.replied",
   schema: { sessionID: SessionID, requestID: ID, reply: Reply },
 })
-export const Event = { Asked, Replied, Definitions: inventory(Asked, Replied) }
+const Denied = define({
+  type: "permission.denied",
+  schema: {
+    sessionID: SessionID,
+    permission: Schema.String,
+    patterns: Schema.Array(Schema.String),
+    tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
+  },
+})
+export const Event = { Asked, Replied, Denied, Definitions: inventory(Asked, Replied, Denied) }

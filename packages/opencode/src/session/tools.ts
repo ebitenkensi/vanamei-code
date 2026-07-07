@@ -1,5 +1,6 @@
 import { Agent } from "@/agent/agent"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { MCP } from "@/mcp"
@@ -79,14 +80,40 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         }
       }),
     ask: (req) =>
-      permission
-        .ask({
+      Effect.gen(function* () {
+        const ruleset = Permission.merge(input.agent.permission, input.session.permission ?? [])
+        // packages/plugin's declared permission.ask hook input/output types are
+        // upstream public API built on the pre-V1 Permission shape (type/pattern
+        // singular/title/time), not PermissionV1.Request. Adapt at this call site
+        // instead of reshaping the published hook contract.
+        const { status } = yield* plugin
+          .trigger(
+            "permission.ask",
+            {
+              id: PermissionV1.ID.ascending(),
+              type: req.permission,
+              pattern: [...req.patterns],
+              sessionID: input.session.id,
+              messageID: input.processor.message.id,
+              callID: options.toolCallId,
+              title: `Call tool ${req.permission}`,
+              metadata: req.metadata,
+              time: { created: Date.now() },
+            },
+            { status: undefined as PermissionV1.Action | undefined },
+          )
+          .pipe(
+            // A governance plugin bug in this hook must never deadlock permissioning:
+            // fail open (treat as if no status was returned) on throw/rejection.
+            Effect.catchCause(() => Effect.succeed({ status: undefined as PermissionV1.Action | undefined })),
+          )
+        yield* permission.ask({
           ...req,
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
+          ruleset: Permission.appendStatusRule(ruleset, req.permission, status),
         })
-        .pipe(Effect.orDie),
+      }).pipe(Effect.orDie),
   })
 
   for (const item of yield* registry.tools({
