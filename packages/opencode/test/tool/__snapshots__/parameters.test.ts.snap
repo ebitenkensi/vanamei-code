@@ -313,6 +313,13 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "description": "A short (3-5 words) description of the task",
       "type": "string",
     },
+    "files": {
+      "description": "Paths this task is allowed to edit (relative to the project root, globs allowed). When set, edit/write/apply_patch outside these paths is structurally denied. An empty array makes this a read-only delegate (edit tools are hidden). Omit to keep the current unscoped behavior.",
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
     "prompt": {
       "description": "The task for the agent to perform",
       "type": "string",

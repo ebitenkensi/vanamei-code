@@ -456,6 +456,58 @@ describe("tool.task", () => {
     },
   )
 
+  it.instance(
+    "execute scopes child edit permission to the task's files, resolved against the project root",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        const promptOps = stubOps()
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "reviewer",
+            files: ["src/foo.ts", "test/foo.test.ts"],
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        const child = yield* sessions.get(result.metadata.sessionId)
+        expect((child.permission ?? []).filter((rule) => rule.permission === "edit")).toEqual([
+          { permission: "edit", pattern: "*", action: "deny" },
+          { permission: "edit", pattern: "src/foo.ts", action: "allow" },
+          { permission: "edit", pattern: "src/foo.ts/**", action: "allow" },
+          { permission: "edit", pattern: "test/foo.test.ts", action: "allow" },
+          { permission: "edit", pattern: "test/foo.test.ts/**", action: "allow" },
+        ])
+      }),
+    {
+      config: {
+        agent: {
+          reviewer: {
+            mode: "subagent",
+            permission: {
+              task: "allow",
+            },
+          },
+        },
+      },
+    },
+  )
+
   it.instance("rejects background execution when the experiment is disabled", () =>
     Effect.gen(function* () {
       const { chat, assistant } = yield* seed()
