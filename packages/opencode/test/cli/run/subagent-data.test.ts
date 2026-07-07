@@ -401,7 +401,9 @@ describe("run subagent data", () => {
 
     const snapshot = snapshotSubagentData(data)
 
-    expect(snapshot.tabs).toEqual([expect.objectContaining({ sessionID: "child-1", status: "running" })])
+    expect(snapshot.tabs).toEqual([
+      expect.objectContaining({ sessionID: "child-1", status: "running", activity: "Bash(git status --short)" }),
+    ])
     expect(visible(snapshot.details["child-1"]?.commits ?? [])).toEqual([
       "❯ Inspect footer tabs",
       "_Thinking:_ planning next steps",
@@ -546,6 +548,77 @@ describe("run subagent data", () => {
         sessionID: "child-1",
         status: "cancelled",
       }),
+    ])
+  })
+
+  test("derives running tab activity from a child tool event and preserves it across syncTaskTab rebuilds", () => {
+    const data = createSubagentData()
+
+    bootstrapSubagentData({
+      data,
+      messages: [taskMessage("child-1", "running")],
+      children: [{ id: "child-1" }],
+      permissions: [],
+      questions: [],
+    })
+
+    reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-1",
+          messageID: "msg-assistant-1",
+          sessionID: "child-1",
+          type: "tool",
+          callID: "call-1",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: {
+              command: "git status --short",
+            },
+            time: { start: 1 },
+          },
+        },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs).toEqual([
+      expect.objectContaining({ sessionID: "child-1", activity: "Bash(git status --short)" }),
+    ])
+
+    // A subsequent task part update (e.g. a toolcalls bump) rebuilds the tab
+    // via syncTaskTab/taskTab -- the previously derived activity must survive
+    // that rebuild since taskTab() has no notion of child activity itself.
+    reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-child-1",
+          sessionID: "parent-1",
+          messageID: "msg-child-1",
+          type: "tool",
+          callID: "call-child-1",
+          tool: "task",
+          state: {
+            status: "running",
+            input: {
+              description: "Scan reducer paths",
+              subagent_type: "explore",
+            },
+            title: "Reducer touchpoints",
+            metadata: {
+              sessionId: "child-1",
+              toolcalls: 5,
+            },
+            time: { start: 1 },
+          },
+        },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs).toEqual([
+      expect.objectContaining({ sessionID: "child-1", toolCalls: 5, activity: "Bash(git status --short)" }),
     ])
   })
 })

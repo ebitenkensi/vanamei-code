@@ -145,6 +145,7 @@ function subagentTab(input: {
   label: string
   description: string
   status?: FooterSubagentTab["status"]
+  activity?: string
 }): FooterSubagentTab {
   return {
     sessionID: input.sessionID,
@@ -154,6 +155,7 @@ function subagentTab(input: {
     description: input.description,
     status: input.status ?? "running",
     lastUpdatedAt: 1,
+    activity: input.activity,
   }
 }
 
@@ -226,6 +228,21 @@ async function withFixedClock<T>(now: number, fn: () => Promise<T>): Promise<T> 
 
 const SAMPLE_SUBAGENT_TABS: FooterSubagentTab[] = [
   subagentTab({ sessionID: "sub-1", label: "Explore", description: "Inspect auth flow", status: "running" }),
+  subagentTab({ sessionID: "sub-2", label: "General", description: "Migrate config schema", status: "completed" }),
+]
+
+// Footer tree fixture: a running tab carrying an `activity` line (as the
+// footer tree derives from the child session's most recent tool commit) and a
+// completed tab, so the gallery shows both the spinner/activity row and the
+// static "Done" row.
+const SAMPLE_SUBAGENT_TREE_TABS: FooterSubagentTab[] = [
+  subagentTab({
+    sessionID: "sub-1",
+    label: "Explore",
+    description: "Inspect auth flow",
+    status: "running",
+    activity: 'Grep("SessionExecution")',
+  }),
   subagentTab({ sessionID: "sub-2", label: "General", description: "Migrate config schema", status: "completed" }),
 ]
 
@@ -744,6 +761,18 @@ const SCROLLBACK_PATCH_COMMIT: StreamCommit = {
   }),
 }
 
+const SCROLLBACK_TASK_RESULT = [
+  "Audited entry.body across all phase combinations for tool, text, and error commit kinds.",
+  "Start phase always renders the header line via headerBody regardless of view.output.",
+  "Progress phase is skipped entirely when view.output is false, matching todo and task tools.",
+  "Final phase branches on status: error takes the raw scroll path unconditionally.",
+  "Non-completed statuses print raw trimmed text without the structured snapshot.",
+  "Completed statuses route through the structured snapshot when the tool registers one.",
+  "Structured snapshots for code, diff, task, todo, and question each own their own truncation.",
+  "No overlapping phase combinations were found to double-render content.",
+  "Recommend adding a regression test for the completed-but-no-snapshot fallback path.",
+].join("\n")
+
 const SCROLLBACK_TASK_COMMIT: StreamCommit = {
   kind: "tool",
   text: "",
@@ -764,7 +793,7 @@ const SCROLLBACK_TASK_COMMIT: StreamCommit = {
         description: "Audit entry.body phase combinations for scrollback rendering",
         subagent_type: "explore",
       },
-      output: "",
+      output: `<task_result>\n${SCROLLBACK_TASK_RESULT}\n</task_result>`,
       title: "",
       metadata: { toolcalls: 4, sessionId: "sub-scrollback-task" },
       time: { start: 1, end: 2 },
@@ -887,7 +916,7 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
   {
     name: "scrollback.task",
     description:
-      'Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card.',
+      'Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent\'s final report truncated to 5 lines plus a muted "… +N lines" notice.',
     commits: [toolStartOf(SCROLLBACK_TASK_COMMIT), SCROLLBACK_TASK_COMMIT],
   },
   {
@@ -1163,6 +1192,13 @@ async function openSubagentInspector(app: TestRenderApp): Promise<void> {
   app.mockInput.pressEnter()
 }
 
+// Types a short prompt into the composer so the footer.subagent-tree case
+// shows the tree sitting above a live-looking draft, not an empty composer.
+async function typeShortPrompt(app: TestRenderApp): Promise<void> {
+  "check on that".split("").forEach((key) => app.mockInput.pressKey(key))
+  await app.renderOnce()
+}
+
 // ---------------------------------------------------------------------------
 // Catalog
 // ---------------------------------------------------------------------------
@@ -1216,6 +1252,19 @@ const CASES: GalleryCase[] = [
         subagent: { tabs: SAMPLE_SUBAGENT_TABS, details: SAMPLE_SUBAGENT_DETAILS, permissions: [], questions: [] },
         backgroundSubagents: false,
         interact: openSubagentInspector,
+      }),
+  },
+  {
+    name: "footer.subagent-tree",
+    description:
+      "RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline.",
+    height: 12,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        subagent: { tabs: SAMPLE_SUBAGENT_TREE_TABS, details: {}, permissions: [], questions: [] },
+        interact: typeShortPrompt,
       }),
   },
   {

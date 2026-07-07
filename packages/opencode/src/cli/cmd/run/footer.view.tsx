@@ -926,7 +926,7 @@ export function RunFooterView(props: RunFooterViewProps) {
             </Show>
 
             <Show when={!panel() && !menu() && tabs().length > 0}>
-              <RunSubagentTree tabs={tabs} theme={theme} mainStatus={stateStatus} />
+              <RunSubagentTree tabs={tabs} theme={theme} />
             </Show>
 
             <Show when={!panel() && !menu()}>
@@ -1037,17 +1037,7 @@ export function RunFooterView(props: RunFooterViewProps) {
           </box>
         }
       >
-        <box
-          width="100%"
-          flexGrow={1}
-          flexShrink={1}
-          border={["left"]}
-          borderColor={theme().highlight}
-          customBorderChars={{
-            ...EMPTY_BORDER,
-            vertical: "┃",
-          }}
-        >
+        <box width="100%" flexGrow={1} flexShrink={1}>
           <RunFooterSubagentBody
             active={inspecting}
             theme={runTheme}

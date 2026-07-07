@@ -308,11 +308,18 @@ export function RunEntryContent(props: {
             </text>
           ) : null}
           <box width="100%" flexDirection="column" gap={0} paddingLeft={5}>
-            {task_snapshot()!.rows.map((row) => (
-              <text width="100%" wrapMode="word" fg={theme().block.text}>
-                {row}
+            {task_snapshot()!
+              .rows.slice(0, TOOL_RESULT_TRUNCATE_LINES)
+              .map((row) => (
+                <text width="100%" wrapMode="word" fg={theme().block.text}>
+                  {row}
+                </text>
+              ))}
+            {task_snapshot()!.rows.length > TOOL_RESULT_TRUNCATE_LINES ? (
+              <text width="100%" wrapMode="word" fg={theme().block.muted}>
+                {`… +${task_snapshot()!.rows.length - TOOL_RESULT_TRUNCATE_LINES} lines`}
               </text>
-            ))}
+            ) : null}
             {task_snapshot()!.tail ? (
               <text width="100%" wrapMode="word" fg={theme().block.muted}>
                 {task_snapshot()!.tail}

@@ -3,7 +3,7 @@ import type { ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
 import { Show, createMemo, indexArray } from "solid-js"
-import { SPINNER_FRAMES } from "@/cli/ui/component/spinner"
+import { SPINNER_BRAILLE_FRAMES } from "@/cli/ui/component/spinner"
 import { RunEntryContent, separatorRows } from "./scrollback.writer"
 import type { FooterSubagentDetail, FooterSubagentTab, RunDiffStyle } from "./types"
 import type { RunFooterTheme, RunTheme } from "./theme"
@@ -12,7 +12,7 @@ registerOpencodeSpinner()
 
 export const SUBAGENT_INSPECTOR_ROWS = 14
 
-function statusColor(theme: RunFooterTheme, status: FooterSubagentTab["status"]) {
+export function statusColor(theme: RunFooterTheme, status: FooterSubagentTab["status"]) {
   if (status === "completed") {
     return theme.highlight
   }
@@ -26,22 +26,6 @@ function statusColor(theme: RunFooterTheme, status: FooterSubagentTab["status"])
   }
 
   return theme.highlight
-}
-
-function statusIcon(status: FooterSubagentTab["status"]) {
-  if (status === "completed") {
-    return "●"
-  }
-
-  if (status === "cancelled") {
-    return "○"
-  }
-
-  if (status === "error") {
-    return "◍"
-  }
-
-  return "◔"
 }
 
 export function RunFooterSubagentBody(props: {
@@ -128,17 +112,21 @@ export function RunFooterSubagentBody(props: {
             <box width="100%" flexDirection="row" gap={1} paddingBottom={1} flexShrink={0}>
               {current().status === "running" ? (
                 <box flexShrink={0}>
-                  <spinner frames={SPINNER_FRAMES} interval={80} color={statusColor(footer(), current().status)} />
+                  <spinner
+                    frames={SPINNER_BRAILLE_FRAMES}
+                    interval={80}
+                    color={statusColor(footer(), current().status)}
+                  />
                 </box>
               ) : (
                 <text fg={statusColor(footer(), current().status)} wrapMode="none" truncate flexShrink={0}>
-                  {statusIcon(current().status)}
+                  ⏺
                 </text>
               )}
               <text fg={footer().text} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
-                {title()}
+                {`Task(${title()})`}
                 <Show when={subtitle().length > 0}>
-                  <span style={{ fg: footer().muted }}>{"  " + subtitle()}</span>
+                  <span style={{ fg: footer().muted }}>{" " + subtitle()}</span>
                 </Show>
               </text>
               <Show when={props.total() > 1 && props.index() > 0}>
@@ -159,7 +147,7 @@ export function RunFooterSubagentBody(props: {
             scroll = item
           }}
         >
-          <box width="100%" flexDirection="column" gap={0}>
+          <box width="100%" flexDirection="column" gap={0} paddingLeft={2}>
             {commits().length > 0 ? (
               rows()
             ) : (

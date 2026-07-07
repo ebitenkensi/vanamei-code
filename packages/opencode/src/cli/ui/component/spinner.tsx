@@ -9,6 +9,9 @@ const GLYPHS = ["·", "✢", "✳", "✶", "✻", "✽"] as const
 const FRAMES = [...GLYPHS, ...GLYPHS.slice(1, -1).reverse()]
 /** @deprecated Use the Spinner component directly. Exported for legacy <spinner> element usage. */
 export const SPINNER_FRAMES = [...GLYPHS, ...GLYPHS.slice().reverse()]
+// Rotating braille dots, used for the subagent UI's <spinner> elements (Claude
+// Code convention). Exported for legacy <spinner> element usage.
+export const SPINNER_BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const GLYPH_MS = 120
 const SHIMMER_MS = 50
 const STALL_MS = 2000
@@ -33,20 +36,12 @@ function interpolateColor(a: RGBA, b: RGBA, t: number): RGBA {
   if (t >= 1) return b
   const [r1, g1, b1] = a.toInts()
   const [r2, g2, b2] = b.toInts()
-  return RGBA.fromInts(
-    Math.round(r1 + (r2 - r1) * t),
-    Math.round(g1 + (g2 - g1) * t),
-    Math.round(b1 + (b2 - b1) * t),
-  )
+  return RGBA.fromInts(Math.round(r1 + (r2 - r1) * t), Math.round(g1 + (g2 - g1) * t), Math.round(b1 + (b2 - b1) * t))
 }
 
 function lighten(color: RGBA, amount: number): RGBA {
   const [r, g, b] = color.toInts()
-  return RGBA.fromInts(
-    Math.min(255, r + amount),
-    Math.min(255, g + amount),
-    Math.min(255, b + amount),
-  )
+  return RGBA.fromInts(Math.min(255, r + amount), Math.min(255, g + amount), Math.min(255, b + amount))
 }
 
 // --- spinner component ---
@@ -96,7 +91,10 @@ export function Spinner(props: {
     if (!animationsEnabled()) return
     const id = setInterval(() => {
       const len = (props.message?.() ?? "").length
-      if (len < 4) { setShimPos(0); return }
+      if (len < 4) {
+        setShimPos(0)
+        return
+      }
       const dir = props.mode?.() === "requesting" ? 1 : -1
       setShimPos((p) => {
         const n = p + dir
@@ -111,10 +109,14 @@ export function Spinner(props: {
   // stall ramp interval
   createEffect(() => {
     if (!animationsEnabled()) return
-    const id = setInterval(() => setStallT((t) => {
-      const st = props.stalled?.() ?? false
-      return st ? Math.min(1, t + STALL_STEP) : Math.max(0, t - STALL_STEP)
-    }), 50)
+    const id = setInterval(
+      () =>
+        setStallT((t) => {
+          const st = props.stalled?.() ?? false
+          return st ? Math.min(1, t + STALL_STEP) : Math.max(0, t - STALL_STEP)
+        }),
+      50,
+    )
     onCleanup(() => clearInterval(id))
   })
 
@@ -148,9 +150,7 @@ export function Spinner(props: {
 
   return (
     <box flexDirection="row" gap={1}>
-      <text fg={glyphColor()}>
-        {animated() ? FRAMES[frame()] : pulse() % 2 === 0 ? "○" : "●"}
-      </text>
+      <text fg={glyphColor()}>{animated() ? FRAMES[frame()] : pulse() % 2 === 0 ? "○" : "●"}</text>
       <Show when={txt().length > 0}>
         <text>
           <span style={{ fg: glyphColor() }}>{parts().b}</span>

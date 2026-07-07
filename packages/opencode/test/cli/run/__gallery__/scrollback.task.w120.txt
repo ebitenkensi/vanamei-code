@@ -1,4 +1,9 @@
 ⏺ Task(Audit entry.body phase combinations for scrollback rendering) Explore
   ⎿  Done (1ms)
 
-     Audit entry.body phase combinations for scrollback rendering
+     Audited entry.body across all phase combinations for tool, text, and error commit kinds.
+     Start phase always renders the header line via headerBody regardless of view.output.
+     Progress phase is skipped entirely when view.output is false, matching todo and task tools.
+     Final phase branches on status: error takes the raw scroll path unconditionally.
+     Non-completed statuses print raw trimmed text without the structured snapshot.
+     … +4 lines

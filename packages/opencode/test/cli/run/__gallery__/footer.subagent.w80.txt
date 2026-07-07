@@ -1,16 +1,16 @@
 
-┃───────────────────────────────────────────────────────────────────────────────
-┃
-┃ ● Migrate config schema  General                                     2 of 2
-┃
-┃ ❯ Migrate config schema to v2
-┃
-┃ ⏺ $ bun test test/config/schema.test.ts
-┃
-┃ ⏺ Schema migrated; tests passing.
-┃
-┃
-┃
-┃
-┃
-┃
+────────────────────────────────────────────────────────────────────────────────
+
+ ⏺ Task(Migrate config schema) General                                 2 of 2
+
+   ❯ Migrate config schema to v2
+
+   ⏺ $ bun test test/config/schema.test.ts
+
+   ⏺ Schema migrated; tests passing.
+
+
+
+
+
+

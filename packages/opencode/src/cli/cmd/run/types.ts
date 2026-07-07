@@ -206,6 +206,10 @@ export type FooterSubagentTab = {
   title?: string
   toolCalls?: number
   lastUpdatedAt: number
+  // Single-line description of what a running subagent is currently doing,
+  // derived from its most recent shell/tool commit. Undefined until the
+  // first matching commit lands, and only meaningful while running.
+  activity?: string
 }
 
 export type FooterSubagentDetail = {

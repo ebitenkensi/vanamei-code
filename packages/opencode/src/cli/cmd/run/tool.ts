@@ -597,7 +597,8 @@ function snapPatch(p: ToolProps<typeof ApplyPatchTool>): ToolSnapshot | undefine
 function snapTask(p: ToolProps<typeof TaskTool>): ToolSnapshot {
   const desc = p.input.description
   const title = text(p.frame.state.title)
-  const rows = [desc || title].filter((item): item is string => Boolean(item))
+  const result = taskResult(text(p.frame.state.output))
+  const rows = result ? result.split("\n") : [desc || title].filter((item): item is string => Boolean(item))
   const time = span(p.frame.state)
 
   return {
@@ -1418,17 +1419,6 @@ function textBody(content: string): RunEntryBody | undefined {
   }
 }
 
-function markdownBody(content: string): RunEntryBody | undefined {
-  if (!content) {
-    return undefined
-  }
-
-  return {
-    type: "markdown",
-    content,
-  }
-}
-
 function structuredBody(commit: StreamCommit, raw: string): RunEntryBody | undefined {
   const snap = toolSnapshot(commit, raw)
   if (!snap) {
@@ -1477,13 +1467,6 @@ export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody |
 
   if (commit.phase === "start") {
     return headerBody(ctx)
-  }
-
-  if (ctx.name === "task" && commit.phase === "final" && ctx.status === "completed") {
-    const result = taskResult(text(ctx.state.output))
-    if (result) {
-      return markdownBody(result)
-    }
   }
 
   if (commit.phase === "progress" && !view.output) {

@@ -31,6 +31,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.question.custom.w120.txt` | Question dialog for a "custom" request. |
 | `footer.subagent.w80.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
 | `footer.subagent.w120.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
+| `footer.subagent-tree.w80.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
+| `footer.subagent-tree.w120.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
 | `panel.command-menu.w80.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.command-menu.w120.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.model-select.w80.txt` | Standalone model picker body with a current selection and a deprecated model hidden. |
@@ -63,8 +65,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `scrollback.edit.w120.txt` | Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
 | `scrollback.patch.w80.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
 | `scrollback.patch.w120.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
-| `scrollback.task.w80.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card. |
-| `scrollback.task.w120.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card. |
+| `scrollback.task.w80.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
+| `scrollback.task.w120.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
 | `scrollback.todo.w80.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
 | `scrollback.todo.w120.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
 | `scrollback.question.w80.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |

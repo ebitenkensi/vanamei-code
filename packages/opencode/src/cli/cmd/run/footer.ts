@@ -33,6 +33,7 @@ import { OpencodeKeymapProvider } from "@/cli/ui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
+import { subagentTreeRowCount } from "./footer.subagent-tree"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { RunFooterView, todoPanelRowCount } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
@@ -747,6 +748,14 @@ export class RunFooter implements FooterApi {
     return todoPanelRowCount(this.todos())
   }
 
+  private subagentTreeRows(): number {
+    if (!this.todoPanelVisible()) {
+      return 0
+    }
+
+    return subagentTreeRowCount(this.subagent().tabs)
+  }
+
   // Resizes the footer to fit the current view. Permission and question views
   // get fixed extra rows; the prompt view scales with textarea line count.
   private applyHeight(): void {
@@ -776,7 +785,7 @@ export class RunFooter implements FooterApi {
                             ? this.base + SUBAGENT_INSPECTOR_ROWS
                             : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
-    const total = height + this.todoPanelRows()
+    const total = height + this.todoPanelRows() + this.subagentTreeRows()
     if (total !== this.renderer.footerHeight) {
       this.renderer.footerHeight = total
     }

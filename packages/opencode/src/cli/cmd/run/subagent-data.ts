@@ -7,6 +7,7 @@ import {
   reduceSessionData,
   type SessionData,
 } from "./session-data"
+import { toolFrame, toolHeader } from "./tool"
 import type { FooterSubagentState, FooterSubagentTab, StreamCommit } from "./types"
 
 export const SUBAGENT_BOOTSTRAP_LIMIT = 200
@@ -86,7 +87,8 @@ export function sameSubagentTab(a: FooterSubagentTab | undefined, b: FooterSubag
     a.background === b.background &&
     a.title === b.title &&
     a.toolCalls === b.toolCalls &&
-    a.lastUpdatedAt === b.lastUpdatedAt
+    a.lastUpdatedAt === b.lastUpdatedAt &&
+    a.activity === b.activity
   )
 }
 
@@ -344,7 +346,7 @@ function syncTaskTab(data: SubagentData, part: ToolPart, children?: Set<string>)
     return false
   }
 
-  const next = taskTab(part, sessionID)
+  const next = { ...taskTab(part, sessionID), activity: data.tabs.get(sessionID)?.activity }
   if (sameSubagentTab(data.tabs.get(sessionID), next)) {
     ensureDetail(data, sessionID)
     return false
@@ -365,6 +367,48 @@ function frameKey(commit: StreamCommit) {
   }
 
   return `${commit.kind}:${commit.phase}:${commit.text}`
+}
+
+// A one-line label for a commit that represents an "action" a subagent took,
+// for the footer tree's activity line. Text/error/other commits return
+// undefined so deriveActivity keeps scanning further back.
+function activityLabel(commit: StreamCommit): string | undefined {
+  if (commit.shell) {
+    return `$ ${commit.shell.command}`
+  }
+
+  if (commit.kind === "tool") {
+    const header = toolHeader(toolFrame(commit, commit.text))
+    return header.suffix ? `${header.label} ${header.suffix}` : header.label
+  }
+
+  return undefined
+}
+
+function deriveActivity(detail: DetailState): string | undefined {
+  for (let index = detail.frames.length - 1; index >= 0; index--) {
+    const line = activityLabel(detail.frames[index].commit)?.split("\n")[0]?.trim()
+    if (line) {
+      return line
+    }
+  }
+
+  return undefined
+}
+
+function syncActivity(data: SubagentData, sessionID: string, detail: DetailState) {
+  const tab = data.tabs.get(sessionID)
+  if (!tab || tab.status !== "running") {
+    return false
+  }
+
+  const next = deriveActivity(detail)
+  if (next === tab.activity) {
+    return false
+  }
+
+  data.tabs.set(sessionID, { ...tab, activity: next })
+  return true
 }
 
 function limitFrames(detail: DetailState) {
@@ -838,39 +882,39 @@ export function reduceSubagentData(input: {
       return cancelled
     }
 
-    return (
-      appendCommits(detail, [
-        {
-          kind: "error",
-          text: event.properties.status.message,
-          phase: "start",
-          source: "system",
-          messageID: `retry:${event.properties.status.attempt}`,
-        },
-      ]) || cancelled
-    )
+    const appended = appendCommits(detail, [
+      {
+        kind: "error",
+        text: event.properties.status.message,
+        phase: "start",
+        source: "system",
+        messageID: `retry:${event.properties.status.attempt}`,
+      },
+    ])
+    const activity = syncActivity(input.data, sessionID, detail)
+    return appended || activity || cancelled
   }
 
   if (event.type === "session.error" && event.properties.error) {
-    return (
-      appendCommits(detail, [
-        {
-          kind: "error",
-          text: formatError(event.properties.error),
-          phase: "start",
-          source: "system",
-          messageID: `session.error:${event.properties.sessionID}:${formatError(event.properties.error)}`,
-        },
-      ]) || cancelled
-    )
+    const appended = appendCommits(detail, [
+      {
+        kind: "error",
+        text: formatError(event.properties.error),
+        phase: "start",
+        source: "system",
+        messageID: `session.error:${event.properties.sessionID}:${formatError(event.properties.error)}`,
+      },
+    ])
+    const activity = syncActivity(input.data, sessionID, detail)
+    return appended || activity || cancelled
   }
 
-  return (
-    applyChildEvent({
-      detail,
-      event,
-      thinking: input.thinking,
-      limits: input.limits,
-    }) || cancelled
-  )
+  const applied = applyChildEvent({
+    detail,
+    event,
+    thinking: input.thinking,
+    limits: input.limits,
+  })
+  const activity = syncActivity(input.data, sessionID, detail)
+  return applied || activity || cancelled
 }

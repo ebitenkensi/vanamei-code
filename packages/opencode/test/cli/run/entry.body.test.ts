@@ -224,9 +224,9 @@ describe("run entry body", () => {
     })
   })
 
-  test("promotes task results to markdown and falls back to structured task summaries", () => {
+  test("renders task results as structured task summaries, falling back to the description when empty", () => {
     expect(
-      entryBody(
+      structured(
         toolCommit({
           tool: "task",
           state: {
@@ -251,8 +251,10 @@ describe("run entry body", () => {
         }),
       ),
     ).toEqual({
-      type: "markdown",
-      content: "# Findings\n\n- Footer stays live",
+      kind: "task",
+      summary: "Done (1ms)",
+      rows: ["# Findings", "", "- Footer stays live"],
+      tail: "",
     })
 
     expect(
