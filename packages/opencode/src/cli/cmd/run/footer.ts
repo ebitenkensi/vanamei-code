@@ -37,7 +37,6 @@ import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { RunFooterView, todoPanelRowCount } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
-import { modelInfo } from "./variant.shared"
 import type {
   FooterApi,
   FooterEvent,
@@ -427,23 +426,6 @@ export class RunFooter implements FooterApi {
   }
 
   public event(next: FooterEvent): void {
-    if (next.type === "turn.duration") {
-      const current = this.currentModel()
-      this.flush()
-      this.flushing = this.flushing
-        .then(() =>
-          this.scrollback.writeTurnSummary({
-            agent: this.state().agent,
-            model: current ? modelInfo(this.providers(), current).model : this.state().model,
-            duration: next.duration,
-          }),
-        )
-        .catch((error) => {
-          this.flushError = error
-        })
-      return
-    }
-
     if (next.type === "catalog") {
       if (this.isGone) {
         return

@@ -79,13 +79,6 @@ function systemBody(raw: string, phase: StreamCommit["phase"]): RunEntryBody {
 }
 
 export function entryFlags(commit: StreamCommit): EntryFlags {
-  if (commit.summary) {
-    return {
-      startOnNewLine: true,
-      trailingNewline: false,
-    }
-  }
-
   if (commit.kind === "user") {
     return {
       startOnNewLine: true,
@@ -163,10 +156,6 @@ export function entryCanStream(commit: StreamCommit, body: RunEntryBody): boolea
 }
 
 export function entryBody(commit: StreamCommit): RunEntryBody {
-  if (commit.summary) {
-    return RUN_ENTRY_NONE
-  }
-
   const raw = cleanRunText(commit.text)
 
   if (commit.kind === "user") {

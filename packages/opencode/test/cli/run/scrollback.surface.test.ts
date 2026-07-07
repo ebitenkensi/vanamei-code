@@ -111,23 +111,6 @@ function reasoning(text: string, phase: StreamCommit["phase"] = "progress"): Str
   }
 }
 
-test("turn summary starts at the left edge", async () => {
-  const out = await setup()
-
-  try {
-    await out.scrollback.writeTurnSummary({ agent: "Build", model: "Little Frank", duration: "2.2s" })
-
-    const commits = claim(out.renderer)
-    try {
-      expect(renderRows(commits.at(-1)!)[0]).toBe("▣ Build · Little Frank · 2.2s")
-    } finally {
-      destroy(commits)
-    }
-  } finally {
-    out.scrollback.destroy()
-  }
-})
-
 test("theme swaps restyle active reasoning without resetting the stream", async () => {
   const previousSyntax = SyntaxStyle.fromStyles({ default: { fg: "#123456" } })
   const nextSyntax = SyntaxStyle.fromStyles({ default: { fg: "#abcdef" } })
@@ -324,11 +307,12 @@ test("holds markdown code blocks until final commit and keeps newline ownership"
 test("renders todo and question summaries without boilerplate footer copy", async () => {
   const cases = [
     {
-      title: "# Todos",
+      header: "⏺ Update Todos",
+      title: undefined,
       include: [
-        "[✓] List files under `run/`",
-        "[•] Count functions in each `run/` file",
-        "[ ] Mark each tracking item complete",
+        "☒ List files under `run/`",
+        "☐ Count functions in each `run/` file",
+        "☐ Mark each tracking item complete",
       ],
       exclude: ["Updating", "todos completed"],
       start: toolCommit({
@@ -366,9 +350,10 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
       }),
     },
     {
-      title: "# Questions",
+      header: "⏺ Question(1 question)",
+      title: undefined,
       include: ["What should I work on in the codebase next?", "Bug fix"],
-      exclude: ["Asked", "questions completed"],
+      exclude: ["Asked", "questions completed", "# Questions"],
       start: toolCommit({
         tool: "question",
         phase: "start",
@@ -418,7 +403,13 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
 
     try {
       await out.scrollback.append(item.start)
-      expect(claim(out.renderer)).toHaveLength(0)
+      const started = claim(out.renderer)
+      try {
+        expect(started).toHaveLength(1)
+        expect(render(started).replace(/ +/g, " ").trim()).toBe(item.header)
+      } finally {
+        destroy(started)
+      }
 
       await out.scrollback.append(item.final)
 
@@ -427,7 +418,9 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
         expect(commits).toHaveLength(1)
         const rows = renderRows(commits[0]!)
         const output = rows.join("\n")
-        expect(output).toContain(item.title)
+        if (item.title) {
+          expect(output).toContain(item.title)
+        }
         for (const line of item.include) {
           expect(output).toContain(line)
         }
@@ -488,7 +481,7 @@ test("inserts spacers for new visible groups", async () => {
     try {
       expect(commits).toHaveLength(2)
       expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe('⏺ ✱ Glob "**/run.ts"')
+      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe("⏺ Glob(**/run.ts)")
     } finally {
       destroy(commits)
     }
@@ -562,7 +555,7 @@ test.skipIf(process.platform === "win32")(
       const output = lines.join("\n")
       expect(output).toContain("❯ Hello you")
       expect(output).toContain("Say hello.")
-      expect(output).toContain("⏺\n\nHello.")
+      expect(output).toContain("⏺ Hello.")
     } finally {
       out.scrollback.destroy()
     }
@@ -575,12 +568,20 @@ test("coalesces same-line tool progress into one snapshot", async () => {
   try {
     await out.scrollback.append(toolCommit({ tool: "bash", phase: "progress", text: "abc" }))
     await out.scrollback.append(toolCommit({ tool: "bash", phase: "progress", text: "def" }))
-    await out.scrollback.append(toolCommit({ tool: "bash", phase: "final", text: "", toolState: "completed" }))
+    await out.scrollback.append(
+      toolCommit({
+        tool: "bash",
+        phase: "final",
+        text: "",
+        toolState: "completed",
+        state: { status: "completed", output: "abcdef" },
+      }),
+    )
 
     const commits = claim(out.renderer)
     try {
       expect(commits).toHaveLength(1)
-      expect(render(commits)).toContain("⏺ abcdef")
+      expect(render(commits)).toContain("abcdef")
     } finally {
       destroy(commits)
     }
@@ -611,8 +612,8 @@ test("omits the current directory from bash titles", async () => {
 
     const commits = claim(out.renderer)
     try {
-      expect(render(commits)).toContain("⏺ $ pwd")
-      expect(render(commits)).not.toContain("Running in .")
+      expect(render(commits)).toContain("⏺ Bash(pwd)")
+      expect(render(commits)).not.toContain("in .")
     } finally {
       destroy(commits)
     }
@@ -621,7 +622,7 @@ test("omits the current directory from bash titles", async () => {
   }
 })
 
-test("renders completed bash output with one blank line after the command and before the next group", async () => {
+test("renders completed bash output hanging under its header and before the next group", async () => {
   const out = await setup()
 
   try {
@@ -675,10 +676,9 @@ test("renders completed bash output with one blank line after the command and be
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("⏺ # Running in /tmp/demo\n$ git status")
-    expect(output).toContain("$ git status\n\n⎿ On branch demo")
-    expect(output).toContain("⎿ nothing to commit, working tree clean\n\n⏺\n\noc-run-dev ahead 1")
-    expect(output).not.toContain("⎿ nothing to commit, working tree clean\n\n\n⏺\n\noc-run-dev ahead 1")
+    expect(output).toContain("⏺ Bash(git status) in /tmp/demo\n  ⎿  On branch demo")
+    expect(output).toContain("nothing to commit, working tree clean\n\n⏺ oc-run-dev ahead 1")
+    expect(output).not.toContain("nothing to commit, working tree clean\n\n\n⏺ oc-run-dev ahead 1")
   } finally {
     out.scrollback.destroy()
   }
@@ -754,7 +754,7 @@ test("inserts a spacer before the next tool after completed multiline bash outpu
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain('⎿ total 4\n\n⏺ ✱ Glob "**/*tool*" in src/cli/cmd')
+    expect(output).toContain("     total 4\n\n⏺ Glob(**/*tool*) in src/cli/cmd")
   } finally {
     out.scrollback.destroy()
   }
@@ -846,8 +846,8 @@ test("does not double-space before completed bash output when inline tool header
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain('⏺ ✱ Grep "tool" in src/cli/cmd/run\n\n⎿ demo.ts')
-    expect(output).not.toContain('⏺ ✱ Grep "tool" in src/cli/cmd/run\n\n\n⎿ demo.ts')
+    expect(output).toContain("⏺ Grep(tool) in src/cli/cmd/run\n\n  ⎿  demo.ts")
+    expect(output).not.toContain("⏺ Grep(tool) in src/cli/cmd/run\n\n\n  ⎿  demo.ts")
   } finally {
     out.scrollback.destroy()
   }
@@ -943,10 +943,10 @@ test("does not emit blank patch snapshots between edit and task", async () => {
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("⏺ + Created README-demo.md")
+    expect(output).toContain("  ⎿  + Created README-demo.md")
     expect(output).not.toContain("~ Patched src/demo-format.ts")
-    expect(output).toContain("⏺ + Created README-demo.md\n\n# Explore Task")
-    expect(output).not.toContain("⏺ + Created README-demo.md\n\n\n# Explore Task")
+    expect(output).toContain("  ⎿  + Created README-demo.md\n\n  ⎿  Done (1ms)")
+    expect(output).not.toContain("  ⎿  + Created README-demo.md\n\n\n  ⎿  Done (1ms)")
   } finally {
     out.scrollback.destroy()
   }
@@ -979,8 +979,8 @@ test("renders plain errors with one blank line before and after the error block"
 
     const output = lines.join("\n")
     expect(output).toContain("❯ /fmt error\n\ndemo error event")
-    expect(output).toContain("demo error event\n\n⏺\n\nnext line")
-    expect(output).not.toContain("demo error event\n\n\n⏺\n\nnext line")
+    expect(output).toContain("demo error event\n\n⏺ next line")
+    expect(output).not.toContain("demo error event\n\n\n⏺ next line")
   } finally {
     out.scrollback.destroy()
   }
@@ -1007,7 +1007,13 @@ test("renders structured write finals once as code blocks", async () => {
         },
       }),
     )
-    expect(claim(out.renderer)).toHaveLength(0)
+    const started = claim(out.renderer)
+    try {
+      expect(started).toHaveLength(1)
+      expect(render(started)).toContain("⏺ Write(src/a.ts)")
+    } finally {
+      destroy(started)
+    }
 
     await out.scrollback.append(
       toolCommit({
@@ -1032,7 +1038,7 @@ test("renders structured write finals once as code blocks", async () => {
     try {
       expect(commits).toHaveLength(1)
       const output = render(commits[0] ? [commits[0]] : [])
-      expect(output).toContain("# Wrote src/a.ts")
+      expect(output).toContain("Wrote 2 lines")
       expect(output).toMatch(/1\s+const x = 1/)
       expect(output).toMatch(/2\s+const y = 2/)
     } finally {

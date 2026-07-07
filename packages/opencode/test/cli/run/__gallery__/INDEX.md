@@ -7,8 +7,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | --- | --- |
 | `footer.prompt.w80.txt` | Default RunFooterView composer with an empty prompt. |
 | `footer.prompt.w120.txt` | Default RunFooterView composer with an empty prompt. |
-| `footer.todos.w80.txt` | Footer todo panel with completed/in_progress/pending sample todos. |
-| `footer.todos.w120.txt` | Footer todo panel with completed/in_progress/pending sample todos. |
+| `footer.todos.w80.txt` | Footer todo panel with completed/in_progress/pending sample todos, using ☒/☐ glyphs. |
+| `footer.todos.w120.txt` | Footer todo panel with completed/in_progress/pending sample todos, using ☒/☐ glyphs. |
 | `footer.permission.edit.w80.txt` | Permission dialog for a "edit" request. |
 | `footer.permission.edit.w120.txt` | Permission dialog for a "edit" request. |
 | `footer.permission.bash.w80.txt` | Permission dialog for a "bash" request. |
@@ -45,27 +45,29 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `panel.queued.w120.txt` | Standalone queued-prompt picker body with two pending prompts. |
 | `panel.sessions.w80.txt` | Standalone resume-session picker body listing other sessions newest first. |
 | `panel.sessions.w120.txt` | Standalone resume-session picker body listing other sessions newest first. |
-| `scrollback.markdown.w80.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables. |
-| `scrollback.markdown.w120.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables. |
-| `scrollback.table.w80.txt` | Assistant reply containing only a compact table, for table-only rendering checks. |
-| `scrollback.table.w120.txt` | Assistant reply containing only a compact table, for table-only rendering checks. |
-| `scrollback.text.w80.txt` | Assistant reply with plain wrapped prose and no markdown syntax. |
-| `scrollback.text.w120.txt` | Assistant reply with plain wrapped prose and no markdown syntax. |
+| `scrollback.markdown.w80.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter. |
+| `scrollback.markdown.w120.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter. |
+| `scrollback.table.w80.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter. |
+| `scrollback.table.w120.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter. |
+| `scrollback.text.w80.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter. |
+| `scrollback.text.w120.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter. |
 | `scrollback.reasoning.w80.txt` | Reasoning entry rendered as a dimmed "_Thinking:_" markdown code block. |
 | `scrollback.reasoning.w120.txt` | Reasoning entry rendered as a dimmed "_Thinking:_" markdown code block. |
-| `scrollback.bash.w80.txt` | Completed bash tool entry with multi-line "⎿ "-prefixed block output. |
-| `scrollback.bash.w120.txt` | Completed bash tool entry with multi-line "⎿ "-prefixed block output. |
-| `scrollback.write.w80.txt` | Completed write tool entry with a structured code snapshot. |
-| `scrollback.write.w120.txt` | Completed write tool entry with a structured code snapshot. |
-| `scrollback.edit.w80.txt` | Completed edit tool entry with a structured unified diff. |
-| `scrollback.edit.w120.txt` | Completed edit tool entry with a structured unified diff. |
-| `scrollback.patch.w80.txt` | Completed apply_patch tool entry with two structured diff items (an update and a new file). |
-| `scrollback.patch.w120.txt` | Completed apply_patch tool entry with two structured diff items (an update and a new file). |
-| `scrollback.task.w80.txt` | Completed task tool entry rendered as a structured task summary card. |
-| `scrollback.task.w120.txt` | Completed task tool entry rendered as a structured task summary card. |
-| `scrollback.todo.w80.txt` | Completed todowrite tool entry rendered as a structured todo card. |
-| `scrollback.todo.w120.txt` | Completed todowrite tool entry rendered as a structured todo card. |
-| `scrollback.question.w80.txt` | Completed question tool entry rendered as a structured question/answer card. |
-| `scrollback.question.w120.txt` | Completed question tool entry rendered as a structured question/answer card. |
+| `scrollback.bash.w80.txt` | Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker. |
+| `scrollback.bash.w120.txt` | Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker. |
+| `scrollback.bash.long.w80.txt` | Completed bash tool entry with 8 output lines truncated to the first 5 plus a muted "… +N lines" notice. |
+| `scrollback.bash.long.w120.txt` | Completed bash tool entry with 8 output lines truncated to the first 5 plus a muted "… +N lines" notice. |
+| `scrollback.write.w80.txt` | Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
+| `scrollback.write.w120.txt` | Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
+| `scrollback.edit.w80.txt` | Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
+| `scrollback.edit.w120.txt` | Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
+| `scrollback.patch.w80.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
+| `scrollback.patch.w120.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
+| `scrollback.task.w80.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card. |
+| `scrollback.task.w120.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card. |
+| `scrollback.todo.w80.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
+| `scrollback.todo.w120.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
+| `scrollback.question.w80.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |
+| `scrollback.question.w120.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |
 | `scrollback.error.w80.txt` | Session error entry rendered in the scrollback. |
 | `scrollback.error.w120.txt` | Session error entry rendered in the scrollback. |

@@ -126,7 +126,7 @@ describe("run entry body", () => {
       }),
       snapshot: {
         kind: "code",
-        title: "# Wrote src/a.ts",
+        summary: "Wrote 1 line",
         content: "const x = 1\n",
         file: "src/a.ts",
       },
@@ -150,9 +150,9 @@ describe("run entry body", () => {
       }),
       snapshot: {
         kind: "diff",
+        summary: "+1 / -1",
         items: [
           {
-            title: "# Edited src/a.ts",
             diff: "@@ -1 +1 @@\n-old\n+new\n",
             file: "src/a.ts",
           },
@@ -199,7 +199,7 @@ describe("run entry body", () => {
     })
   }
 
-  test("keeps running task tool state out of scrollback", () => {
+  test("renders a task header at start instead of the running tool state", () => {
     expect(
       entryBody(
         toolCommit({
@@ -218,7 +218,9 @@ describe("run entry body", () => {
         }),
       ),
     ).toEqual({
-      type: "none",
+      type: "header",
+      label: "Task(Inspect reducer)",
+      suffix: "Explore",
     })
   })
 
@@ -276,7 +278,7 @@ describe("run entry body", () => {
       ),
     ).toEqual({
       kind: "task",
-      title: "# Explore Task",
+      summary: "Done (1ms)",
       rows: ["Inspect reducer"],
       tail: "",
     })
@@ -355,7 +357,7 @@ describe("run entry body", () => {
     })
   })
 
-  test("renders command-only bash starts without the shell header", () => {
+  test("renders a bash header at start instead of the running tool state", () => {
     expect(
       entryBody(
         toolCommit({
@@ -373,8 +375,8 @@ describe("run entry body", () => {
         }),
       ),
     ).toEqual({
-      type: "text",
-      content: "$ ls",
+      type: "header",
+      label: "Bash(ls)",
     })
   })
 

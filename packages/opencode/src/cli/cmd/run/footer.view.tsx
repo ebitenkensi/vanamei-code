@@ -930,15 +930,8 @@ export function RunFooterView(props: RunFooterViewProps) {
             </Show>
 
             <Show when={!panel() && !menu()}>
-              <box
-                width="100%"
-                height={1}
-                flexDirection="row"
-                gap={0}
-                flexShrink={0}
-                backgroundColor="transparent"
-              >
-                <box paddingLeft={1} paddingRight={1} border={["left"]} borderColor={theme().highlight} flexShrink={0}>
+              <box width="100%" height={1} flexDirection="row" gap={0} flexShrink={0} backgroundColor="transparent">
+                <box paddingRight={1} flexShrink={0}>
                   <text wrapMode="none" truncate>
                     <span style={{ fg: theme().highlight, bold: true }}>{modeLabel()}</span>
                   </text>
@@ -956,7 +949,11 @@ export function RunFooterView(props: RunFooterViewProps) {
                 >
                   <Show when={busy() && !exiting()}>
                     <Show when={interruptLabel()}>
-                      {(label) => <text flexShrink={0} fg={armed() ? statusColor() : theme().muted}>{label()} </text>}
+                      {(label) => (
+                        <text flexShrink={0} fg={armed() ? statusColor() : theme().muted}>
+                          {label()}{" "}
+                        </text>
+                      )}
                     </Show>
                     <box flexShrink={0}>
                       <Spinner
@@ -969,9 +966,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                   </Show>
 
                   <text fg={statusColor()} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
-                    <Show when={!busy() || exiting()}>
-                      {statusText()}
-                    </Show>
+                    <Show when={!busy() || exiting()}>{statusText()}</Show>
                   </text>
                 </box>
 
@@ -1073,9 +1068,8 @@ export function RunFooterView(props: RunFooterViewProps) {
 
 function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme }) {
   function glyph(status: string) {
-    if (status === "completed") return "✓"
-    if (status === "in_progress") return "●"
-    return "○"
+    if (status === "in_progress" || status === "pending") return "☐"
+    return "☒"
   }
 
   function color(status: string) {
@@ -1104,11 +1098,18 @@ function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () =>
               {glyph(item.status)}
             </text>
             <text wrapMode="none" truncate flexGrow={1}>
-              <span style={{
-                fg: item.status === "in_progress" ? props.theme().warning : item.status === "completed" ? props.theme().muted : props.theme().muted,
-                bold: item.status === "in_progress",
-                strikethrough: item.status === "completed",
-              }}>
+              <span
+                style={{
+                  fg:
+                    item.status === "in_progress"
+                      ? props.theme().warning
+                      : item.status === "completed"
+                        ? props.theme().muted
+                        : props.theme().muted,
+                  bold: item.status === "in_progress",
+                  strikethrough: item.status === "completed",
+                }}
+              >
                 {item.content}
               </span>
             </text>

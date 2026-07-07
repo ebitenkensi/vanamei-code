@@ -40,7 +40,7 @@ import {
 } from "@/cli/cmd/run/footer.command"
 import { RunSessionSelectBody } from "@/cli/cmd/run/footer.sessions"
 import { RunFooterView } from "@/cli/cmd/run/footer.view"
-import { entryLayout, needsDotPrefix, RunEntryContent } from "@/cli/cmd/run/scrollback.writer"
+import { RunEntryContent, toolResultBody } from "@/cli/cmd/run/scrollback.writer"
 import { RUN_THEME_FALLBACK } from "@/cli/cmd/run/theme"
 import type {
   FooterQueuedPrompt,
@@ -423,14 +423,15 @@ const QUESTION_REQUESTS: Record<string, QuestionRequest> = {
 // entryBody() phase trap (see entry.body.ts): "assistant" and "reasoning"
 // commits only render their text at phase "progress" -- phase "final" always
 // collapses to RUN_ENTRY_NONE unless `interrupted` is set. So markdown/table/
-// text/reasoning fixtures below all use phase "progress". Tool commits are
-// the opposite: write/edit/apply_patch/task/todowrite/question only render
-// their *structured* snapshot at phase "final" with toolState "completed"
-// (toolStructuredFinal() in tool.ts gates on exactly that combination). Bash
-// is a third shape again: a "completed" bash entry is conventionally modeled
-// at phase "progress" with toolState "completed" (see entry.body.test.ts),
-// which is also the one combination where entryLayout() promotes a bash
-// commit to "block" layout and gets the "⎿ " per-line prefix.
+// text/reasoning fixtures below all use phase "progress". Tool commits render
+// in two steps like real scrollback: the phase "start" commit becomes the
+// `⏺ ToolName(args)` header, and the completion commit hangs the result under
+// it -- write/edit/apply_patch/task/todowrite/question emit their structured
+// snapshot at phase "final" with toolState "completed" (toolStructuredFinal()
+// in tool.ts gates on exactly that combination), while a completed bash entry
+// is conventionally modeled at phase "progress" with toolState "completed"
+// (see entry.body.test.ts) and gets the "  ⎿  " hanging block. Tool cases
+// below therefore feed [start, completion] commit sequences to the renderer.
 // ---------------------------------------------------------------------------
 
 function toolPart(input: {
@@ -448,6 +449,36 @@ function toolPart(input: {
     callID: input.callID,
     tool: input.tool,
     state: input.state,
+  }
+}
+
+// Derives the phase "start" commit that precedes a tool completion commit in
+// real scrollback -- it renders the `⏺ ToolName(args)` header line. Reuses the
+// completion part's input (and metadata, which header functions like Patch's
+// file count read) with a running status.
+function toolStartOf(commit: StreamCommit): StreamCommit {
+  const part = commit.part!
+  return {
+    kind: "tool",
+    text: "",
+    phase: "start",
+    source: "tool",
+    tool: commit.tool,
+    toolState: "running",
+    messageID: commit.messageID,
+    partID: commit.partID,
+    part: toolPart({
+      id: part.id,
+      messageID: part.messageID,
+      callID: part.callID,
+      tool: part.tool,
+      state: {
+        status: "running",
+        input: "input" in part.state ? part.state.input : undefined,
+        metadata: "metadata" in part.state ? part.state.metadata : undefined,
+        time: { start: 1 },
+      } as ToolPart["state"],
+    }),
   }
 }
 
@@ -570,6 +601,41 @@ const SCROLLBACK_BASH_COMMIT: StreamCommit = {
       input: { command: SCROLLBACK_BASH_COMMAND, workdir: DEMO_ROOT, description: "Inspect worktree changes" },
       output: SCROLLBACK_BASH_RAW,
       title: SCROLLBACK_BASH_COMMAND,
+      metadata: { exitCode: 0 },
+      time: { start: 1, end: 2 },
+    },
+  }),
+}
+
+// Exercises the committed-text truncation path: 8 output lines collapse to the
+// first 5 plus a muted "… +3 lines" notice (see toolResultBody in
+// scrollback.writer.tsx).
+const SCROLLBACK_BASH_LONG_COMMAND = "git log --oneline -n 8"
+const SCROLLBACK_BASH_LONG_BODY = Array.from(
+  { length: 8 },
+  (_, i) => `${(1000 + i).toString(16)} commit ${i + 1}`,
+).join("\n")
+const SCROLLBACK_BASH_LONG_RAW = [SCROLLBACK_BASH_LONG_COMMAND, SCROLLBACK_BASH_LONG_BODY, ""].join("\n")
+
+const SCROLLBACK_BASH_LONG_COMMIT: StreamCommit = {
+  kind: "tool",
+  text: SCROLLBACK_BASH_LONG_RAW,
+  phase: "progress",
+  source: "tool",
+  tool: "bash",
+  toolState: "completed",
+  messageID: "msg-scrollback-bash-long",
+  partID: "part-scrollback-bash-long",
+  part: toolPart({
+    id: "part-scrollback-bash-long",
+    messageID: "msg-scrollback-bash-long",
+    callID: "call-scrollback-bash-long",
+    tool: "bash",
+    state: {
+      status: "completed",
+      input: { command: SCROLLBACK_BASH_LONG_COMMAND, description: "List recent commits" },
+      output: SCROLLBACK_BASH_LONG_RAW,
+      title: SCROLLBACK_BASH_LONG_COMMAND,
       metadata: { exitCode: 0 },
       time: { start: 1, end: 2 },
     },
@@ -765,66 +831,81 @@ const SCROLLBACK_ERROR_COMMIT: StreamCommit = {
   source: "system",
 }
 
-const SCROLLBACK_CASES: { name: string; description: string; commit: StreamCommit }[] = [
+const SCROLLBACK_CASES: { name: string; description: string; commits: StreamCommit[] }[] = [
   {
     name: "scrollback.markdown",
-    description: "Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables.",
-    commit: SCROLLBACK_MARKDOWN_COMMIT,
+    description:
+      "Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter.",
+    commits: [SCROLLBACK_MARKDOWN_COMMIT],
   },
   {
     name: "scrollback.table",
-    description: "Assistant reply containing only a compact table, for table-only rendering checks.",
-    commit: SCROLLBACK_TABLE_COMMIT,
+    description:
+      "Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter.",
+    commits: [SCROLLBACK_TABLE_COMMIT],
   },
   {
     name: "scrollback.text",
-    description: "Assistant reply with plain wrapped prose and no markdown syntax.",
-    commit: SCROLLBACK_TEXT_COMMIT,
+    description: "Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter.",
+    commits: [SCROLLBACK_TEXT_COMMIT],
   },
   {
     name: "scrollback.reasoning",
     description: 'Reasoning entry rendered as a dimmed "_Thinking:_" markdown code block.',
-    commit: SCROLLBACK_REASONING_COMMIT,
+    commits: [SCROLLBACK_REASONING_COMMIT],
   },
   {
     name: "scrollback.bash",
-    description: 'Completed bash tool entry with multi-line "⎿ "-prefixed block output.',
-    commit: SCROLLBACK_BASH_COMMIT,
+    description:
+      'Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker.',
+    commits: [toolStartOf(SCROLLBACK_BASH_COMMIT), SCROLLBACK_BASH_COMMIT],
+  },
+  {
+    name: "scrollback.bash.long",
+    description:
+      'Completed bash tool entry with 8 output lines truncated to the first 5 plus a muted "… +N lines" notice.',
+    commits: [toolStartOf(SCROLLBACK_BASH_LONG_COMMIT), SCROLLBACK_BASH_LONG_COMMIT],
   },
   {
     name: "scrollback.write",
-    description: "Completed write tool entry with a structured code snapshot.",
-    commit: SCROLLBACK_WRITE_COMMIT,
+    description:
+      'Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot.',
+    commits: [toolStartOf(SCROLLBACK_WRITE_COMMIT), SCROLLBACK_WRITE_COMMIT],
   },
   {
     name: "scrollback.edit",
-    description: "Completed edit tool entry with a structured unified diff.",
-    commit: SCROLLBACK_EDIT_COMMIT,
+    description:
+      'Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff.',
+    commits: [toolStartOf(SCROLLBACK_EDIT_COMMIT), SCROLLBACK_EDIT_COMMIT],
   },
   {
     name: "scrollback.patch",
-    description: "Completed apply_patch tool entry with two structured diff items (an update and a new file).",
-    commit: SCROLLBACK_PATCH_COMMIT,
+    description:
+      'Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading.',
+    commits: [toolStartOf(SCROLLBACK_PATCH_COMMIT), SCROLLBACK_PATCH_COMMIT],
   },
   {
     name: "scrollback.task",
-    description: "Completed task tool entry rendered as a structured task summary card.",
-    commit: SCROLLBACK_TASK_COMMIT,
+    description:
+      'Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the gutter-indented task card.',
+    commits: [toolStartOf(SCROLLBACK_TASK_COMMIT), SCROLLBACK_TASK_COMMIT],
   },
   {
     name: "scrollback.todo",
-    description: "Completed todowrite tool entry rendered as a structured todo card.",
-    commit: SCROLLBACK_TODO_COMMIT,
+    description:
+      'Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted).',
+    commits: [toolStartOf(SCROLLBACK_TODO_COMMIT), SCROLLBACK_TODO_COMMIT],
   },
   {
     name: "scrollback.question",
-    description: "Completed question tool entry rendered as a structured question/answer card.",
-    commit: SCROLLBACK_QUESTION_COMMIT,
+    description:
+      'Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line.',
+    commits: [toolStartOf(SCROLLBACK_QUESTION_COMMIT), SCROLLBACK_QUESTION_COMMIT],
   },
   {
     name: "scrollback.error",
     description: "Session error entry rendered in the scrollback.",
-    commit: SCROLLBACK_ERROR_COMMIT,
+    commits: [SCROLLBACK_ERROR_COMMIT],
   },
 ]
 
@@ -867,38 +948,13 @@ async function capturePanel(width: number, height: number, node: () => JSX.Eleme
   }
 }
 
-function bashBlockContent(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => (line ? `⎿ ${line}` : line))
-    .join("\n")
-}
-
-// Mirrors entryWriter()'s body adjustment (scrollback.writer.tsx) so a
-// standalone RunEntryContent capture looks like a real scrollback row: the
-// "⏺"/"⏺ " dot prefix for inline assistant/tool text, and the "⎿ " block
-// prefix for completed multi-line bash output. bashBlockContent() itself
-// isn't exported from scrollback.writer.tsx, so it's reproduced above.
+// Mirrors entryWriter()'s body handling (scrollback.writer.tsx) so a
+// standalone RunEntryContent capture looks like a real scrollback row.
+// RunEntryContent itself draws the hanging "⏺ " gutter for dotted bodies
+// (see needsDotPrefix), so this only needs the generic "⎿ " hanging-block
+// layout (with truncation) for committed tool text results.
 function scrollbackEntryBody(commit: StreamCommit): RunEntryBody {
-  const resolved = entryBody(commit)
-  const dotted =
-    needsDotPrefix(commit, resolved) && (resolved.type === "text" || resolved.type === "markdown")
-      ? {
-          ...resolved,
-          content: resolved.type === "markdown" ? `⏺\n${resolved.content}` : `⏺ ${resolved.content}`,
-        }
-      : resolved
-
-  if (
-    commit.kind === "tool" &&
-    commit.tool === "bash" &&
-    dotted.type === "text" &&
-    entryLayout(commit, dotted) === "block"
-  ) {
-    return { ...dotted, content: bashBlockContent(dotted.content) }
-  }
-
-  return dotted
+  return toolResultBody(commit, entryBody(commit))
 }
 
 // A "code" body (reasoning) and the blockquote/fenced-code portions of a
@@ -951,15 +1007,32 @@ async function captureSettledPanel(
   }
 }
 
-// Renders a single scrollback entry standalone (RunEntryContent, no
-// scrollback list around it). `probeHeight` is a generous upper bound: the
-// entry is first rendered at that height to discover how many rows its
-// content actually occupies, then re-rendered at that tight height so
-// neither the .txt frame nor the --visual PNG has dead trailing space.
-async function renderEntry(width: number, probeHeight: number, commit: StreamCommit): Promise<RenderResult> {
-  const body = scrollbackEntryBody(commit)
-  const node = () => <RunEntryContent commit={commit} body={body} theme={RUN_THEME_FALLBACK} width={width} />
-  const minSettleMs = body.type === "code" || body.type === "markdown" ? 800 : 0
+// Renders a scrollback entry sequence standalone (stacked RunEntryContent
+// rows, no scrollback list around it). Tool cases pass their [start,
+// completion] commits so the frame shows the `⏺ ToolName(args)` header with
+// the result hanging under it, exactly like real scrollback -- both commits
+// share one entry group, so no separator row appears between them.
+// `probeHeight` is a generous upper bound: the entry is first rendered at
+// that height to discover how many rows its content actually occupies, then
+// re-rendered at that tight height so neither the .txt frame nor the
+// --visual PNG has dead trailing space.
+async function renderEntry(width: number, probeHeight: number, commits: StreamCommit[]): Promise<RenderResult> {
+  const rows = commits.flatMap((commit) => {
+    const body = scrollbackEntryBody(commit)
+    if (body.type === "none") {
+      return []
+    }
+
+    return [{ commit, body }]
+  })
+  const node = () => (
+    <box width={width} flexDirection="column">
+      {rows.map((row) => (
+        <RunEntryContent commit={row.commit} body={row.body} theme={RUN_THEME_FALLBACK} width={width} />
+      ))}
+    </box>
+  )
+  const minSettleMs = rows.some((row) => row.body.type === "code" || row.body.type === "markdown") ? 800 : 0
 
   const probe = await captureSettledPanel(width, probeHeight, node, minSettleMs)
   const lines = probe.text.split("\n")
@@ -1110,7 +1183,7 @@ const CASES: GalleryCase[] = [
   },
   {
     name: "footer.todos",
-    description: "Footer todo panel with completed/in_progress/pending sample todos.",
+    description: "Footer todo panel with completed/in_progress/pending sample todos, using ☒/☐ glyphs.",
     height: 12,
     render: (width, height) => renderFooterView({ width, height, todos: SAMPLE_TODOS }),
   },
@@ -1276,7 +1349,7 @@ const CASES: GalleryCase[] = [
       name: item.name,
       description: item.description,
       height: 90,
-      render: (width, height) => renderEntry(width, height, item.commit),
+      render: (width, height) => renderEntry(width, height, item.commits),
     }),
   ),
 ]

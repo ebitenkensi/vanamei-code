@@ -15,12 +15,11 @@ import {
 } from "@opentui/core"
 import { entryBody, entryCanStream, entryDone, entryFlags } from "./entry.body"
 import { entryColor, entryLook, entrySyntax } from "./scrollback.shared"
-import { turnSummaryCommit } from "./turn-summary"
-import { entryWriter, needsDotPrefix, sameEntryGroup, separatorRows, spacerWriter, turnSummaryWriter } from "./scrollback.writer"
+import { entryWriter, needsDotPrefix, sameEntryGroup, separatorRows, spacerWriter } from "./scrollback.writer"
 import { type RunTheme } from "./theme"
 import type { RunDiffStyle, RunEntryBody, StreamCommit } from "./types"
 
-type ActiveBody = Exclude<RunEntryBody, { type: "none" | "structured" }>
+type ActiveBody = Exclude<RunEntryBody, { type: "none" | "structured" | "header" }>
 
 type ActiveEntry = {
   body: ActiveBody
@@ -151,11 +150,19 @@ export class RunScrollbackStream {
       startOnNewLine: entryFlags(commit).startOnNewLine,
     })
     const style = entryLook(commit, this.theme.entry)
+    // Streamed assistant markdown (and the rare dotted text case) hangs under
+    // a 2-column "⏺ " gutter instead of the flush-left body: the gutter and
+    // the renderable become siblings in a row, so wrapped lines stay aligned
+    // under the text rather than under the dot. Non-dotted bodies (tool
+    // output, reasoning) keep the plain full-width layout.
+    const dotted = needsDotPrefix(commit, body)
     const renderable =
       body.type === "text"
         ? new TextRenderable(surface.renderContext, {
             content: "",
-            width: "100%",
+            width: dotted ? undefined : "100%",
+            flexGrow: dotted ? 1 : undefined,
+            flexShrink: dotted ? 1 : undefined,
             wrapMode: "word",
             fg: style.fg,
             attributes: style.attrs,
@@ -175,13 +182,27 @@ export class RunScrollbackStream {
           : new MarkdownRenderable(surface.renderContext, {
               content: "",
               syntaxStyle: entrySyntax(commit, this.theme),
-              width: "100%",
+              width: dotted ? undefined : "100%",
+              flexGrow: dotted ? 1 : undefined,
+              flexShrink: dotted ? 1 : undefined,
               streaming: true,
               internalBlockMode: "top-level",
               tableOptions: { widthMode: "content" },
               fg: entryColor(commit, this.theme),
               treeSitterClient: this.treeSitterClient,
             })
+
+    if (dotted) {
+      surface.root.flexDirection = "row"
+      surface.root.add(
+        new TextRenderable(surface.renderContext, {
+          content: "⏺ ",
+          width: 2,
+          wrapMode: "none",
+          fg: style.fg,
+        }),
+      )
+    }
 
     surface.root.add(renderable)
 
@@ -338,11 +359,7 @@ export class RunScrollbackStream {
 
     this.active.body = body
     this.active.commit = commit
-    this.active.content += !this.active.content && needsDotPrefix(commit, body)
-      ? body.type === "markdown"
-        ? `⏺\n${body.content}`
-        : `⏺ ${body.content}`
-      : body.content
+    this.active.content += body.content
     await this.flushActive(false, false)
     if (this.active.rendered) {
       this.markRendered(this.active.commit)
@@ -353,14 +370,6 @@ export class RunScrollbackStream {
     const same = sameEntryGroup(this.tail, commit)
     if (!same) {
       this.markRendered(await this.finishActive(false))
-    }
-
-    if (commit.summary) {
-      this.writeSpacer(1)
-      this.renderer.writeToScrollback(turnSummaryWriter({ ...commit.summary, theme: this.theme }))
-      this.markRendered(commit)
-      this.tail = commit
-      return
     }
 
     const body = entryBody(commit)
@@ -375,6 +384,7 @@ export class RunScrollbackStream {
 
     if (
       body.type !== "structured" &&
+      body.type !== "header" &&
       (entryCanStream(commit, body) || (commit.kind === "tool" && commit.phase === "final" && body.type === "markdown"))
     ) {
       await this.writeStreaming(commit, body)
@@ -422,10 +432,6 @@ export class RunScrollbackStream {
 
   public async complete(trailingNewline = false): Promise<void> {
     this.markRendered(await this.finishActive(trailingNewline))
-  }
-
-  public async writeTurnSummary(input: { agent: string; model: string; duration: string }): Promise<void> {
-    await this.append(turnSummaryCommit(input))
   }
 
   public destroy(): void {

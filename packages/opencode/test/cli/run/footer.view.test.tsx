@@ -1328,6 +1328,10 @@ test("direct footer hides zero-value pills", async () => {
   }
 })
 
+function pillsRow(frame: string) {
+  return frame.split("\n").find((line) => line.includes("BUILD") && line.includes("cmd")) ?? ""
+}
+
 test("direct footer drops info pills by priority as width shrinks", async () => {
   const state = {
     contextTokens: 1000,
@@ -1335,6 +1339,9 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
     cost: 4.23,
     modified: 3,
   } satisfies Partial<FooterState>
+  // The todo panel's own checkbox glyph ("☐ one") also uses ☐, so the
+  // pills-row assertions below check the status line specifically rather
+  // than the whole frame.
   const todos = () => [{ status: "pending", content: "one" }]
 
   const full = await renderFooter({ width: 130, state, todos })
@@ -1367,7 +1374,7 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
     const frame = noTodos.captureCharFrame()
     expect(frame).toContain("◆ 42%")
     expect(frame).toContain("$4.23")
-    expect(frame).not.toContain("☐")
+    expect(pillsRow(frame)).not.toContain("☐")
     expect(frame).not.toContain("✎")
   } finally {
     noTodos.cleanup()
@@ -1379,7 +1386,7 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
     const frame = noCost.captureCharFrame()
     expect(frame).toContain("◆ 42%")
     expect(frame).not.toContain("$")
-    expect(frame).not.toContain("☐")
+    expect(pillsRow(frame)).not.toContain("☐")
     expect(frame).not.toContain("✎")
   } finally {
     noCost.cleanup()
@@ -1391,7 +1398,7 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
     const frame = hidden.captureCharFrame()
     expect(frame).not.toContain("◆")
     expect(frame).not.toContain("$")
-    expect(frame).not.toContain("☐")
+    expect(pillsRow(frame)).not.toContain("☐")
     expect(frame).not.toContain("✎")
   } finally {
     hidden.cleanup()
@@ -1727,7 +1734,7 @@ function glyphColorForContent(frame: CapturedFrame, content: string) {
 
   const rowSpans = spans.filter((span) => span.row === contentSpan.row)
   const contentIndex = rowSpans.findIndex((span) => span === contentSpan)
-  const glyphSpan = rowSpans.slice(0, contentIndex).findLast((span) => /[✓●○]/.test(span.text))
+  const glyphSpan = rowSpans.slice(0, contentIndex).findLast((span) => /[☒☐]/.test(span.text))
   return glyphSpan?.fg
 }
 
@@ -1749,9 +1756,8 @@ test("direct footer todo panel renders todos with status glyphs and colors", asy
     expect(frame).toContain("Write tests")
 
     const spans = app.captureSpans()
-    expect(findSpan(spans, "✓")).toBeDefined()
-    expect(findSpan(spans, "●")).toBeDefined()
-    expect(findSpan(spans, "○")).toBeDefined()
+    expect(findSpan(spans, "☒")).toBeDefined()
+    expect(findSpan(spans, "☐")).toBeDefined()
 
     expect(glyphColorForContent(spans, "Set up project")?.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.success as RGBA).toInts(),
@@ -1781,9 +1787,8 @@ test("direct footer todo panel is hidden when empty", async () => {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).not.toContain("✓")
-    expect(frame).not.toContain("●")
-    expect(frame).not.toContain("○")
+    expect(frame).not.toContain("☒")
+    expect(frame).not.toContain("☐")
   } finally {
     app.cleanup()
   }

@@ -1,3 +1,3 @@
-
-⎿  M src/format.ts
-⎿ ?? src/demo-notes.md
+⏺ Bash(git status --short) in /opt/opencode-demo
+  ⎿   M src/format.ts
+     ?? src/demo-notes.md

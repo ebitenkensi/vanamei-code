@@ -1,3 +1,4 @@
-# Explore Task
+⏺ Task(Audit entry.body phase combinations for scrollback rendering) Explore
+  ⎿  Done (1ms)
 
- Audit entry.body phase combinations for scrollback rendering
+     Audit entry.body phase combinations for scrollback rendering

@@ -1,7 +1,6 @@
 import type { Event, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { bootstrapSessionData, createSessionData, reduceSessionData, type SessionData } from "./session-data"
 import { messagePrompt, type SessionMessages } from "./session.shared"
-import { messageTurnSummaryCommit } from "./turn-summary"
 import type { FooterPatch, LocalReplayRow, RunProvider, StreamCommit } from "./types"
 
 type ReplayInput = {
@@ -16,7 +15,6 @@ type ReplayInput = {
 type ReplayConfig = {
   limits: Record<string, number>
   providers?: RunProvider[]
-  summaries: ReadonlySet<string>
 }
 
 export type SessionReplay = {
@@ -29,8 +27,6 @@ type ReplayMessage = {
   commits: StreamCommit[]
   patch?: FooterPatch
 }
-
-const SHELL_SYNTHETIC_USER_TEXT = "The following tool was executed by the user"
 
 function apply(data: SessionData, event: Event, sessionID: string, thinking: boolean, limits: Record<string, number>) {
   return reduceSessionData({
@@ -97,57 +93,6 @@ function replayPatch(data: SessionData, patch: FooterPatch | undefined) {
     phase: "idle",
     status: "",
   } satisfies FooterPatch
-}
-
-function isShellSyntheticUser(message: SessionMessages[number]) {
-  if (message.info.role !== "user") {
-    return false
-  }
-
-  const prompt = messagePrompt(message)
-  return (
-    !prompt.text.trim() &&
-    prompt.parts.length === 0 &&
-    message.parts.some((part) => part.type === "text" && part.synthetic && part.text === SHELL_SYNTHETIC_USER_TEXT)
-  )
-}
-
-function isShellSyntheticAssistant(message: SessionMessages[number], shellParents: ReadonlySet<string>) {
-  return (
-    message.info.role === "assistant" &&
-    shellParents.has(message.info.parentID) &&
-    message.parts.some((part) => part.type === "tool" && part.tool === "bash")
-  )
-}
-
-function summaryMessageIDs(messages: SessionMessages): ReadonlySet<string> {
-  const shellParents = new Set(messages.filter(isShellSyntheticUser).map((message) => message.info.id))
-  const parents = new Set<string>()
-  const summaries = new Set<string>()
-
-  for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
-    const message = messages[idx]
-    if (!message || message.info.role !== "assistant") {
-      continue
-    }
-
-    if (isShellSyntheticAssistant(message, shellParents)) {
-      continue
-    }
-
-    if (parents.has(message.info.parentID)) {
-      continue
-    }
-
-    parents.add(message.info.parentID)
-
-    const completed = message.info.time.completed
-    if (typeof completed === "number" && completed > message.info.time.created) {
-      summaries.add(message.info.id)
-    }
-  }
-
-  return summaries
 }
 
 function replayMessage(
@@ -217,13 +162,6 @@ function replayMessage(
     commits.push(...next.commits)
   }
 
-  const summary = config.summaries.has(message.info.id)
-    ? messageTurnSummaryCommit(message, config.providers)
-    : undefined
-  if (summary) {
-    commits.push(summary)
-  }
-
   return {
     commits,
     patch,
@@ -234,7 +172,6 @@ export function replaySession(input: ReplayInput): SessionReplay {
   const data = createSessionData()
   const commits: StreamCommit[] = []
   let patch: FooterPatch | undefined
-  const summaries = summaryMessageIDs(input.messages)
 
   bootstrapSessionData({
     data,
@@ -247,7 +184,6 @@ export function replaySession(input: ReplayInput): SessionReplay {
     const next = replayMessage(data, message, input.thinking, {
       limits: input.limits,
       providers: input.providers,
-      summaries,
     })
     commits.push(...next.commits)
     patch = mergePatch(patch, next.patch)

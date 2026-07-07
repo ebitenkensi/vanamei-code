@@ -3,24 +3,16 @@ import { TextRenderable, type ColorInput, type ScrollbackRenderContext, type Scr
 import { Match, Switch, createMemo } from "solid-js"
 import { entryBody, entryFlags } from "./entry.body"
 import { entryColor, entryLook, entrySyntax } from "./scrollback.shared"
-import { toolFiletype, toolStructuredFinal } from "./tool"
+import { diffCounts, toolFiletype } from "./tool"
 import { RUN_THEME_FALLBACK, transparent, type RunTheme } from "./theme"
 import type { EntryLayout, RunEntryBody, ScrollbackOptions, StreamCommit } from "./types"
 
-function todoText(item: { status: string; content: string }): string {
-  if (item.status === "completed") {
-    return `[✓] ${item.content}`
+function todoGlyph(status: string): string {
+  if (status === "in_progress" || status === "pending") {
+    return "☐"
   }
 
-  if (item.status === "cancelled") {
-    return `[~] ${item.content}`
-  }
-
-  if (item.status === "in_progress") {
-    return `[•] ${item.content}`
-  }
-
-  return `[ ] ${item.content}`
+  return "☒"
 }
 
 function todoColor(theme: RunTheme, status: string) {
@@ -31,27 +23,39 @@ function todoColor(theme: RunTheme, status: string) {
   return theme.block.muted
 }
 
-function bashBlockContent(content: string): string {
+// Result lines hang under a tool's `⏺ ` header: the first line gets the
+// "  ⎿  " marker, continuation lines are indented to the same column.
+const TOOL_RESULT_TRUNCATE_LINES = 5
+
+function hangBlock(content: string): string {
   return content
     .split("\n")
-    .map((line) => (line ? `⎿ ${line}` : line))
+    .map((line, index) => (index === 0 ? `  ⎿  ${line}` : line ? `     ${line}` : line))
     .join("\n")
 }
 
-function diffCounts(item: { diff: string; deletions?: number }): { additions: number; deletions: number } {
-  const lines = item.diff.split("\n")
-  const additions = lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length
-  const deletions = item.deletions ?? lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
-  return { additions, deletions }
+// Committed (non-streaming) tool text results get the ⎿ hanging-block layout
+// and, for `type: "text"` bodies specifically, are cut to the first N lines
+// with a muted "... +N lines" notice. Live streaming display is untouched --
+// this only runs on bodies passed to entryWriter's static scrollback path.
+export function toolResultBody(commit: StreamCommit, body: RunEntryBody): RunEntryBody {
+  if (commit.kind !== "tool" || body.type !== "text" || entryLayout(commit, body) !== "block") {
+    return body
+  }
+
+  const lines = body.content.replace(/^\n+/, "").split("\n")
+  const hidden = Math.max(0, lines.length - TOOL_RESULT_TRUNCATE_LINES)
+  const kept = hidden > 0 ? lines.slice(0, TOOL_RESULT_TRUNCATE_LINES) : lines
+  return {
+    type: "text",
+    content: hangBlock(kept.join("\n")),
+    truncated: hidden || undefined,
+  }
 }
 
 export function entryGroupKey(commit: StreamCommit): string | undefined {
   if (!commit.partID) {
     return undefined
-  }
-
-  if (toolStructuredFinal(commit)) {
-    return `tool:${commit.partID}:final`
   }
 
   return `${commit.kind}:${commit.partID}`
@@ -73,12 +77,11 @@ export function entryLayout(commit: StreamCommit, body: RunEntryBody = entryBody
       return "block"
     }
 
-    if (
-      commit.phase === "progress" &&
-      commit.toolState === "completed" &&
-      body.type === "text" &&
-      body.content.includes("\n")
-    ) {
+    // Every tool text body except the user-shell "$ command" echo is a
+    // result hanging under the tool's `⏺ ` header, so it gets the ⎿ block
+    // layout regardless of phase or line count. The shell echo keeps its
+    // inline dot-prefixed look (see needsDotPrefix below).
+    if (body.type === "text" && !(commit.phase === "start" && commit.shell)) {
       return "block"
     }
 
@@ -101,7 +104,10 @@ export function needsDotPrefix(commit: StreamCommit, body: RunEntryBody): boolea
     return body.type === "text" || body.type === "markdown"
   }
 
-  if (commit.kind === "tool") {
+  // Tool headers already draw their own "⏺ " (see the `header` body Match in
+  // RunEntryContent). Only the user-shell "$ command" echo still relies on
+  // this generic dot-prefixing.
+  if (commit.kind === "tool" && commit.shell) {
     return entryLayout(commit, body) === "inline"
   }
 
@@ -139,6 +145,11 @@ export function RunEntryContent(props: {
   const suppressBackgrounds = createMemo(() => props.opts?.suppressBackgrounds === true)
   const diffBg = (color: ColorInput) => (suppressBackgrounds() ? transparent : color)
   const streaming = createMemo(() => props.commit.phase === "progress")
+  const dotted = createMemo(() => needsDotPrefix(props.commit, body()))
+  const header = createMemo(() => {
+    const next = body()
+    return next.type === "header" ? next : undefined
+  })
   const text = createMemo(() => {
     const next = body()
     return next.type === "text" ? next : undefined
@@ -178,9 +189,32 @@ export function RunEntryContent(props: {
 
   return (
     <Switch fallback={null}>
+      <Match when={header()}>
+        <text width="100%" wrapMode="none" truncate>
+          <span style={{ fg: style().fg }}>⏺ </span>
+          <span style={{ fg: theme().block.text }}>{header()!.label}</span>
+          {header()!.suffix ? <span style={{ fg: theme().block.muted }}>{` ${header()!.suffix}`}</span> : null}
+        </text>
+      </Match>
+      <Match when={text() && dotted()}>
+        <box width="100%" flexDirection="row">
+          <text width={2} wrapMode="none" fg={style().fg}>
+            ⏺{" "}
+          </text>
+          <text flexGrow={1} flexShrink={1} wrapMode="word" fg={style().fg} attributes={style().attrs}>
+            {text()!.content}
+            {text()!.truncated ? (
+              <span style={{ fg: theme().block.muted }}>{`\n     … +${text()!.truncated} lines`}</span>
+            ) : null}
+          </text>
+        </box>
+      </Match>
       <Match when={text()}>
         <text width="100%" wrapMode="word" fg={style().fg} attributes={style().attrs}>
           {text()!.content}
+          {text()!.truncated ? (
+            <span style={{ fg: theme().block.muted }}>{`\n     … +${text()!.truncated} lines`}</span>
+          ) : null}
         </text>
       </Match>
       <Match when={code()}>
@@ -197,10 +231,12 @@ export function RunEntryContent(props: {
       </Match>
       <Match when={code_snapshot()}>
         <box width="100%" flexDirection="column" gap={1}>
-          <text width="100%" wrapMode="word" fg={theme().block.muted}>
-            {code_snapshot()!.title}
-          </text>
-          <box width="100%" paddingLeft={1}>
+          {code_snapshot()!.summary ? (
+            <text width="100%" wrapMode="word" fg={theme().block.muted}>
+              {`  ⎿  ${code_snapshot()!.summary}`}
+            </text>
+          ) : null}
+          <box width="100%" paddingLeft={5}>
             <line_number width="100%" fg={theme().block.muted} minWidth={3} paddingRight={1}>
               <code
                 width="100%"
@@ -217,18 +253,27 @@ export function RunEntryContent(props: {
       </Match>
       <Match when={diff_snapshot()}>
         <box width="100%" flexDirection="column" gap={1}>
-          {diff_snapshot()!.items.map((item) => {
-            const counts = diffCounts(item)
-            return (
-              <box width="100%" flexDirection="column" gap={1}>
-                <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                  {item.title}
-                </text>
-                <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                  +{counts.additions} / -{counts.deletions}
-                </text>
-                {item.diff.trim() ? (
-                  <box width="100%" paddingLeft={1}>
+          {diff_snapshot()!.summary ? (
+            <text width="100%" wrapMode="word" fg={theme().block.muted}>
+              {`  ⎿  ${diff_snapshot()!.summary}`}
+            </text>
+          ) : null}
+          <box width="100%" paddingLeft={5} flexDirection="column" gap={1}>
+            {diff_snapshot()!.items.map((item) => {
+              const counts = diffCounts(item)
+              return (
+                <box width="100%" flexDirection="column" gap={1}>
+                  {item.title ? (
+                    <text width="100%" wrapMode="word" fg={theme().block.muted}>
+                      {item.title}
+                    </text>
+                  ) : null}
+                  {diff_snapshot()!.summary ? null : (
+                    <text width="100%" wrapMode="word" fg={theme().block.muted}>
+                      +{counts.additions} / -{counts.deletions}
+                    </text>
+                  )}
+                  {item.diff.trim() ? (
                     <diff
                       diff={item.diff}
                       view="unified"
@@ -248,19 +293,21 @@ export function RunEntryContent(props: {
                       addedLineNumberBg={diffBg(theme().block.diffAddedLineNumberBg)}
                       removedLineNumberBg={diffBg(theme().block.diffRemovedLineNumberBg)}
                     />
-                  </box>
-                ) : null}
-              </box>
-            )
-          })}
+                  ) : null}
+                </box>
+              )
+            })}
+          </box>
         </box>
       </Match>
       <Match when={task_snapshot()}>
         <box width="100%" flexDirection="column" gap={1}>
-          <text width="100%" wrapMode="word" fg={theme().block.muted}>
-            {task_snapshot()!.title}
-          </text>
-          <box width="100%" flexDirection="column" gap={0} paddingLeft={1}>
+          {task_snapshot()!.summary ? (
+            <text width="100%" wrapMode="word" fg={theme().block.muted}>
+              {`  ⎿  ${task_snapshot()!.summary}`}
+            </text>
+          ) : null}
+          <box width="100%" flexDirection="column" gap={0} paddingLeft={5}>
             {task_snapshot()!.rows.map((row) => (
               <text width="100%" wrapMode="word" fg={theme().block.text}>
                 {row}
@@ -275,52 +322,61 @@ export function RunEntryContent(props: {
         </box>
       </Match>
       <Match when={todo_snapshot()}>
-        <box width="100%" flexDirection="column" gap={1}>
-          <text width="100%" wrapMode="word" fg={theme().block.muted}>
-            # Todos
-          </text>
-          <box width="100%" flexDirection="column" gap={0}>
-            {todo_snapshot()!.items.map((item) => (
-              <text width="100%" wrapMode="word">
-                <span style={{
+        <box width="100%" flexDirection="column" gap={0}>
+          {todo_snapshot()!.items.map((item, index) => (
+            <text width="100%" wrapMode="word">
+              <span style={{ fg: theme().block.muted }}>{index === 0 ? "  ⎿  " : "     "}</span>
+              <span
+                style={{
                   fg: todoColor(theme(), item.status),
                   bold: item.status === "in_progress",
-                  strikethrough: item.status === "completed",
-                }}>
-                  {todoText(item)}
-                </span>
-              </text>
-            ))}
-            {todo_snapshot()!.tail ? (
-              <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                {todo_snapshot()!.tail}
-              </text>
-            ) : null}
-          </box>
+                  strikethrough: item.status === "completed" || item.status === "cancelled",
+                }}
+              >
+                {todoGlyph(item.status)} {item.content}
+              </span>
+            </text>
+          ))}
+          {todo_snapshot()!.tail ? (
+            <text width="100%" wrapMode="word" fg={theme().block.muted}>
+              {todo_snapshot()!.tail}
+            </text>
+          ) : null}
         </box>
       </Match>
       <Match when={question_snapshot()}>
-        <box width="100%" flexDirection="column" gap={1}>
-          <text width="100%" wrapMode="word" fg={theme().block.muted}>
-            # Questions
-          </text>
-          <box width="100%" flexDirection="column" gap={1}>
-            {question_snapshot()!.items.map((item) => (
-              <box width="100%" flexDirection="column" gap={0}>
-                <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                  {item.question}
-                </text>
-                <text width="100%" wrapMode="word" fg={theme().block.text}>
-                  {item.answer}
-                </text>
-              </box>
-            ))}
-            {question_snapshot()!.tail ? (
+        <box width="100%" paddingLeft={5} flexDirection="column" gap={1}>
+          {question_snapshot()!.items.map((item) => (
+            <box width="100%" flexDirection="column" gap={0}>
               <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                {question_snapshot()!.tail}
+                {item.question}
               </text>
-            ) : null}
-          </box>
+              <text width="100%" wrapMode="word" fg={theme().block.text}>
+                {item.answer}
+              </text>
+            </box>
+          ))}
+          {question_snapshot()!.tail ? (
+            <text width="100%" wrapMode="word" fg={theme().block.muted}>
+              {question_snapshot()!.tail}
+            </text>
+          ) : null}
+        </box>
+      </Match>
+      <Match when={markdown() && dotted()}>
+        <box width="100%" flexDirection="row">
+          <text width={2} wrapMode="none" fg={style().fg}>
+            ⏺{" "}
+          </text>
+          <markdown
+            flexGrow={1}
+            flexShrink={1}
+            syntaxStyle={syntax()}
+            streaming={streaming()}
+            content={markdown()!.content}
+            fg={color()}
+            tableOptions={{ widthMode: "content" }}
+          />
         </box>
       </Match>
       <Match when={markdown()}>
@@ -344,20 +400,7 @@ export function entryWriter(input: {
   opts?: ScrollbackOptions
 }): ScrollbackWriter {
   const resolvedBody = input.body ?? entryBody(input.commit)
-  const adjustedBody =
-    needsDotPrefix(input.commit, resolvedBody) && (resolvedBody.type === "text" || resolvedBody.type === "markdown")
-      ? {
-          ...resolvedBody,
-          content: resolvedBody.type === "markdown" ? `⏺\n${resolvedBody.content}` : `⏺ ${resolvedBody.content}`,
-        }
-      : resolvedBody
-  const blockBody =
-    input.commit.kind === "tool" &&
-    input.commit.tool === "bash" &&
-    adjustedBody.type === "text" &&
-    entryLayout(input.commit, adjustedBody) === "block"
-      ? { ...adjustedBody, content: bashBlockContent(adjustedBody.content) }
-      : adjustedBody
+  const blockBody = toolResultBody(input.commit, resolvedBody)
 
   return createScrollbackWriter(
     (ctx) => (
@@ -385,22 +428,4 @@ export function spacerWriter(): ScrollbackWriter {
     startOnNewLine: true,
     trailingNewline: true,
   })
-}
-
-export function turnSummaryWriter(input: { agent: string; model: string; duration: string; theme: RunTheme }) {
-  return createScrollbackWriter(
-    () => (
-      <box width="100%" height={1}>
-        <text wrapMode="none" truncate>
-          <span style={{ fg: input.theme.block.highlight }}>▣ </span>
-          <span style={{ fg: input.theme.block.text }}>{input.agent}</span>
-          <span style={{ fg: input.theme.block.muted }}>
-            {" "}
-            · {input.model} · {input.duration}
-          </span>
-        </text>
-      </box>
-    ),
-    { startOnNewLine: true, trailingNewline: false },
-  )
 }

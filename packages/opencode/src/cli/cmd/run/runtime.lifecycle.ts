@@ -32,6 +32,9 @@ import type {
 } from "./types"
 import { formatModelLabel } from "./variant.shared"
 
+// Composer's initial rows: 2 border + 1 textarea row inside the box, plus
+// 1 statusline row below it. RunFooter derives its fixed height portion as
+// FOOTER_HEIGHT - TEXTAREA_MIN_ROWS, so the textarea can grow independently.
 const FOOTER_HEIGHT = 4
 
 type SplashState = {

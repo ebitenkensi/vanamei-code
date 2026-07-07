@@ -1,46 +1,45 @@
-⏺
-Direct Mode Demo
+⏺ Direct Mode Demo
 
-This is a realistic assistant response for direct-mode formatting checks.
-It mixes bold, italic, inline code, links, code fences, and tables in one
-streamed reply.
+  This is a realistic assistant response for direct-mode formatting checks.
+  It mixes bold, italic, inline code, links, code fences, and tables in one
+  streamed reply.
 
-Summary
+  Summary
 
-- Restored the final markdown flush so the last block is committed on idle.
-- Switched markdown scrollback commits back to top-level block boundaries.
-- Added footer-level regression coverage for split-footer rendering.
+  - Restored the final markdown flush so the last block is committed on idle.
+  - Switched markdown scrollback commits back to top-level block boundaries.
+  - Added footer-level regression coverage for split-footer rendering.
 
-Status
-┌─────────┬──────────────────┬────────────┬────────────────────────────────────┐
-│Area     │Before            │After       │Notes                               │
-├─────────┼──────────────────┼────────────┼────────────────────────────────────┤
-│Direct   │Missing final rows│Stable      │Final markdown block now flushes on │
-│mode     │                  │            │idle                                │
-├─────────┼──────────────────┼────────────┼────────────────────────────────────┤
-│Tables   │Dropped in        │Visible     │Block-based commits match the       │
-│         │streaming mode    │            │working OpenTUI demo                │
-├─────────┼──────────────────┼────────────┼────────────────────────────────────┤
-│Tests    │Partial coverage  │Broader     │Includes a footer-level split       │
-│         │                  │coverage    │render capture                      │
-└─────────┴──────────────────┴────────────┴────────────────────────────────────┘
+  Status
+  ┌────────┬──────────────────┬────────────┬───────────────────────────────────┐
+  │Area    │Before            │After       │Notes                              │
+  ├────────┼──────────────────┼────────────┼───────────────────────────────────┤
+  │Direct  │Missing final rows│Stable      │Final markdown block now flushes   │
+  │mode    │                  │            │on idle                            │
+  ├────────┼──────────────────┼────────────┼───────────────────────────────────┤
+  │Tables  │Dropped in        │Visible     │Block-based commits match the      │
+  │        │streaming mode    │            │working OpenTUI demo               │
+  ├────────┼──────────────────┼────────────┼───────────────────────────────────┤
+  │Tests   │Partial coverage  │Broader     │Includes a footer-level split      │
+  │        │                  │coverage    │render capture                     │
+  └────────┴──────────────────┴────────────┴───────────────────────────────────┘
 
-│ This sample intentionally includes a wide table so you can spot wrapping and
-│ commit bugs quickly.
+  │ This sample intentionally includes a wide table so you can spot wrapping
+  │ and commit bugs quickly.
 
-const result = { markdown: true, tables: 2, stable: true }
+  const result = { markdown: true, tables: 2, stable: true }
 
-Files
-┌───────────────────┬──────────────────────────────────────────────────────────┐
-│File               │Change                                                    │
-├───────────────────┼──────────────────────────────────────────────────────────┤
-│scrollback.surface.│Align markdown commit logic with the split-footer demo    │
-│ts                 │                                                          │
-├───────────────────┼──────────────────────────────────────────────────────────┤
-│footer.ts          │Keep active surfaces across footer-height-only resizes    │
-├───────────────────┼──────────────────────────────────────────────────────────┤
-│footer.test.ts     │Capture real split-footer markdown payloads during idle   │
-│                   │completion                                                │
-└───────────────────┴──────────────────────────────────────────────────────────┘
+  Files
+  ┌──────────────────┬─────────────────────────────────────────────────────────┐
+  │File              │Change                                                   │
+  ├──────────────────┼─────────────────────────────────────────────────────────┤
+  │scrollback.       │Align markdown commit logic with the split-footer demo   │
+  │surface.ts        │                                                         │
+  ├──────────────────┼─────────────────────────────────────────────────────────┤
+  │footer.ts         │Keep active surfaces across footer-height-only resizes   │
+  ├──────────────────┼─────────────────────────────────────────────────────────┤
+  │footer.test.ts    │Capture real split-footer markdown payloads during idle  │
+  │                  │completion                                               │
+  └──────────────────┴─────────────────────────────────────────────────────────┘
 
-Next step: run /fmt table if you want a tighter table-only sample.
+  Next step: run /fmt table if you want a tighter table-only sample.

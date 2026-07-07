@@ -105,12 +105,6 @@ export type FooterPatch = Partial<FooterState>
 
 export type RunDiffStyle = "auto" | "stacked"
 
-export type TurnSummary = {
-  agent: string
-  model: string
-  duration: string
-}
-
 export type ScrollbackOptions = {
   diffStyle?: RunDiffStyle
   suppressBackgrounds?: boolean
@@ -118,15 +112,16 @@ export type ScrollbackOptions = {
 
 export type ToolCodeSnapshot = {
   kind: "code"
-  title: string
+  summary?: string
   content: string
   file?: string
 }
 
 export type ToolDiffSnapshot = {
   kind: "diff"
+  summary?: string
   items: Array<{
-    title: string
+    title?: string
     diff: string
     file?: string
     deletions?: number
@@ -135,7 +130,7 @@ export type ToolDiffSnapshot = {
 
 export type ToolTaskSnapshot = {
   kind: "task"
-  title: string
+  summary?: string
   rows: string[]
   tail: string
 }
@@ -173,10 +168,11 @@ export type EntryLayout = "inline" | "block"
 
 export type RunEntryBody =
   | { type: "none" }
-  | { type: "text"; content: string }
+  | { type: "text"; content: string; truncated?: number }
   | { type: "code"; content: string; filetype?: string }
   | { type: "markdown"; content: string }
   | { type: "structured"; snapshot: ToolSnapshot }
+  | { type: "header"; label: string; suffix?: string }
 
 // Which interactive surface the footer is showing. Only one view is active at
 // a time. The reducer drives transitions: when a permission arrives the view
@@ -338,7 +334,6 @@ export type StreamCommit = {
   text: string
   phase: StreamPhase
   source: StreamSource
-  summary?: TurnSummary
   messageID?: string
   partID?: string
   tool?: string

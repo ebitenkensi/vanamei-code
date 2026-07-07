@@ -5,9 +5,9 @@
 ┃
 ┃ ❯ Migrate config schema to v2
 ┃
-┃ $ bun test test/config/schema.test.ts
+┃ ⏺ $ bun test test/config/schema.test.ts
 ┃
-┃ Schema migrated; tests passing.
+┃ ⏺ Schema migrated; tests passing.
 ┃
 ┃
 ┃

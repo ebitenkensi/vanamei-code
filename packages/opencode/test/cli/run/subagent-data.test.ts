@@ -19,20 +19,24 @@ function visible(commits: Array<Parameters<typeof entryBody>[0]>) {
       return []
     }
 
+    if (body.type === "header") {
+      return [body.suffix ? `⏺ ${body.label} ${body.suffix}` : `⏺ ${body.label}`]
+    }
+
     if (body.type === "structured") {
       if (body.snapshot.kind === "code" || body.snapshot.kind === "task") {
-        return [body.snapshot.title]
+        return [body.snapshot.summary ?? ""]
       }
 
       if (body.snapshot.kind === "diff") {
-        return body.snapshot.items.map((item) => item.title)
+        return body.snapshot.items.map((item) => item.title ?? "")
       }
 
       if (body.snapshot.kind === "todo") {
-        return ["# Todos"]
+        return ["Todos"]
       }
 
-      return ["# Questions"]
+      return ["Questions"]
     }
 
     return [body.content]
@@ -401,7 +405,7 @@ describe("run subagent data", () => {
     expect(visible(snapshot.details["child-1"]?.commits ?? [])).toEqual([
       "❯ Inspect footer tabs",
       "_Thinking:_ planning next steps",
-      "$ git status --short",
+      "⏺ Bash(git status --short)",
       "hello world",
     ])
     expect(snapshot.permissions).toEqual([

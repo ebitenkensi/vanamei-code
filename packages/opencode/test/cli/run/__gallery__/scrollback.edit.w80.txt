@@ -1,7 +1,6 @@
-# Edited /opt/opencode-demo/src/demo-format.ts
+⏺ Edit(/opt/opencode-demo/src/demo-format.ts)
+  ⎿  +1 / -1
 
-+1 / -1
-
-  1 - export const demo = 1
-  1 + export const demo = 42
-  2   context line
+      1 - export const demo = 1
+      1 + export const demo = 42
+      2   context line

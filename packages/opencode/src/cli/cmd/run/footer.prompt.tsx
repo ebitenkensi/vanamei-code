@@ -251,8 +251,8 @@ export function RunPromptBody(props: {
   })
 
   return (
-    <box width="100%">
-      <box flexDirection="row" paddingTop={1} paddingBottom={1} paddingRight={2}>
+    <box width="100%" border={true} borderStyle="rounded" borderColor={props.theme().muted}>
+      <box flexDirection="row" paddingLeft={1} paddingRight={2}>
         <text fg={props.theme().highlight} flexShrink={0}>
           {props.shell() ? "$ " : "❯ "}
         </text>

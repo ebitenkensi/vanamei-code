@@ -65,6 +65,14 @@ export type ToolInline = {
   body?: string
 }
 
+// Scrollback header line: `⏺ label` with an optional dim suffix (working dir,
+// agent type, etc). Unlike ToolInline (used by the non-interactive `run`
+// command), the ⏺ icon is always the same glyph -- only label/suffix vary.
+export type ToolHeader = {
+  label: string
+  suffix?: string
+}
+
 export type ToolPermissionInfo = {
   icon: string
   title: string
@@ -117,6 +125,7 @@ type ToolName = keyof ToolDefs
 type ToolRule<T = Tool.Info> = {
   view: ToolView
   run: (props: ToolProps<T>) => ToolInline
+  header?: (props: ToolProps<T>) => ToolHeader
   scroll?: Partial<Record<ToolPhase, (props: ToolProps<T>) => string>>
   permission?: (props: ToolPermissionProps<T>) => ToolPermissionInfo
   snap?: (props: ToolProps<T>) => ToolSnapshot | undefined
@@ -283,6 +292,21 @@ function fallbackInline(ctx: ToolFrame): ToolInline {
 
 function count(n: number, label: string): string {
   return `${n} ${label}${n === 1 ? "" : "es"}`
+}
+
+export function diffCounts(item: { diff: string; deletions?: number }): { additions: number; deletions: number } {
+  const lines = item.diff.split("\n")
+  const additions = lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length
+  const deletions = item.deletions ?? lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
+  return { additions, deletions }
+}
+
+function lineCount(content: string): number {
+  if (!content) {
+    return 0
+  }
+
+  return content.replace(/\n$/, "").split("\n").length
 }
 
 function runGlob(p: ToolProps<typeof GlobTool>): ToolInline {
@@ -504,9 +528,10 @@ function snapWrite(p: ToolProps<typeof WriteTool>): ToolSnapshot | undefined {
     return undefined
   }
 
+  const n = lineCount(content)
   return {
     kind: "code",
-    title: `# Wrote ${toolPath(file)}`,
+    summary: `Wrote ${n} line${n === 1 ? "" : "s"}`,
     content,
     file,
   }
@@ -519,11 +544,12 @@ function snapEdit(p: ToolProps<typeof EditTool>): ToolSnapshot | undefined {
     return undefined
   }
 
+  const counts = diffCounts({ diff })
   return {
     kind: "diff",
+    summary: `+${counts.additions} / -${counts.deletions}`,
     items: [
       {
-        title: `# Edited ${toolPath(file)}`,
         diff,
         file,
       },
@@ -569,14 +595,14 @@ function snapPatch(p: ToolProps<typeof ApplyPatchTool>): ToolSnapshot | undefine
 }
 
 function snapTask(p: ToolProps<typeof TaskTool>): ToolSnapshot {
-  const kind = Locale.titlecase(p.input.subagent_type || "general")
   const desc = p.input.description
   const title = text(p.frame.state.title)
   const rows = [desc || title].filter((item): item is string => Boolean(item))
+  const time = span(p.frame.state)
 
   return {
     kind: "task",
-    title: `# ${kind} Task`,
+    summary: time ? `Done (${time})` : "Done",
     rows,
     tail: "",
   }
@@ -621,20 +647,17 @@ function snapQuestion(p: ToolProps<typeof QuestionTool>): ToolSnapshot {
   }
 }
 
-function scrollBashStart(p: ToolProps<typeof BashTool>): string {
-  const cmd = p.input.command ?? ""
+function bashWorkdir(p: ToolProps<typeof BashTool>): string {
   const wd = p.input.workdir ?? ""
   const formatted = wd && wd !== "." ? toolPath(wd) : ""
-  const dir = formatted === "." ? "" : formatted
-  if (cmd && !dir) {
-    return `$ ${cmd}`
-  }
+  return formatted === "." ? "" : formatted
+}
 
-  if (!cmd) {
-    return dir ? `# Running in ${dir}` : ""
-  }
-
-  return `# Running in ${dir}\n$ ${cmd}`
+function headerBash(p: ToolProps<typeof BashTool>): ToolHeader {
+  const cmd = p.input.command ?? ""
+  const dir = bashWorkdir(p)
+  const label = cmd ? `Bash(${cmd})` : "Bash"
+  return dir ? { label, suffix: `in ${dir}` } : { label }
 }
 
 function scrollBashProgress(p: ToolProps<typeof BashTool>): string {
@@ -672,35 +695,43 @@ function scrollBashProgress(p: ToolProps<typeof BashTool>): string {
 
 function scrollBashFinal(p: ToolProps<typeof BashTool>): string {
   const code = p.metadata.exit ?? num(p.frame.meta.exitCode) ?? num(p.frame.meta.exit_code)
-  const time = span(p.frame.state)
-  if (code === undefined) {
-    if (!time) {
-      return "bash completed"
-    }
+  const output = stripAnsi(text(p.frame.state.output)).trim()
 
-    return `bash completed · ${time}`
+  if (p.frame.status === "error") {
+    const label = code === undefined ? "Error" : `Error (exit ${code})`
+    return output ? `${label}\n${output}` : label
   }
 
-  return `bash completed (exit ${code})${time ? ` · ${time}` : ""}`
+  // Successful output was already shown by the completed-progress commit;
+  // the final phase only needs to say something when there was none.
+  return output ? "" : "(no output)"
 }
 
-function scrollReadStart(p: ToolProps<typeof ReadTool>): string {
-  const file = toolPath(p.input.filePath)
-  const extra = info(p.frame.input, ["filePath"])
-  const tail = extra ? ` ${extra}` : ""
-  return `→ Read ${file}${tail}`.trim()
+function headerRead(p: ToolProps<typeof ReadTool>): ToolHeader {
+  return { label: `Read(${toolPath(p.input.filePath)})` }
 }
 
-function scrollWriteStart(_: ToolProps<typeof WriteTool>): string {
-  return ""
+function scrollReadFinal(p: ToolProps<typeof ReadTool>): string {
+  const display = p.metadata.display
+  if (!display || display.type !== "file") {
+    return ""
+  }
+
+  const n = display.lineEnd - display.lineStart + 1
+  return n > 0 ? `Read ${n} line${n === 1 ? "" : "s"}` : ""
 }
 
-function scrollEditStart(_: ToolProps<typeof EditTool>): string {
-  return ""
+function headerWrite(p: ToolProps<typeof WriteTool>): ToolHeader {
+  return { label: `Write(${toolPath(p.input.filePath)})` }
 }
 
-function scrollPatchStart(_: ToolProps<typeof ApplyPatchTool>): string {
-  return ""
+function headerEdit(p: ToolProps<typeof EditTool>): ToolHeader {
+  return { label: `Edit(${toolPath(p.input.filePath)})` }
+}
+
+function headerPatch(p: ToolProps<typeof ApplyPatchTool>): ToolHeader {
+  const files = p.metadata.files?.length ?? 0
+  return { label: `Patch(${files} file${files === 1 ? "" : "s"})` }
 }
 
 function patchLine(file: PatchFile): string {
@@ -752,8 +783,10 @@ function scrollPatchFinal(p: ToolProps<typeof ApplyPatchTool>): string {
   return patchLine(files[0]!)
 }
 
-function scrollTaskStart(_: ToolProps<typeof TaskTool>): string {
-  return ""
+function headerTask(p: ToolProps<typeof TaskTool>): ToolHeader {
+  const kind = Locale.titlecase(p.input.subagent_type || "general")
+  const desc = p.input.description || text(p.frame.state.title)
+  return { label: `Task(${desc || `${kind} Task`})`, suffix: kind }
 }
 
 function taskResult(output: string): string | undefined {
@@ -788,8 +821,8 @@ function scrollTaskFinal(p: ToolProps<typeof TaskTool>): string {
   return `# ${kind} Task\n${row}`
 }
 
-function scrollTodoStart(_: ToolProps<typeof TodoWriteTool>): string {
-  return ""
+function headerTodo(): ToolHeader {
+  return { label: "Update Todos" }
 }
 
 function scrollTodoFinal(p: ToolProps<typeof TodoWriteTool>): string {
@@ -824,8 +857,9 @@ function scrollTodoFinal(p: ToolProps<typeof TodoWriteTool>): string {
   return tail.join(" · ")
 }
 
-function scrollQuestionStart(_: ToolProps<typeof QuestionTool>): string {
-  return ""
+function headerQuestion(p: ToolProps<typeof QuestionTool>): ToolHeader {
+  const total = list(p.frame.input.questions).length
+  return { label: `Question(${total} question${total === 1 ? "" : "s"})` }
 }
 
 function scrollQuestionFinal(p: ToolProps<typeof QuestionTool>): string {
@@ -855,66 +889,63 @@ function scrollQuestionFinal(p: ToolProps<typeof QuestionTool>): string {
   return rows.join("\n")
 }
 
-function scrollLspStart(p: ToolProps<typeof LspTool>): string {
-  return `→ ${lspTitle(p.input)}`
+function headerLsp(p: ToolProps<typeof LspTool>): ToolHeader {
+  const op = p.input.operation || "request"
+  const file = p.input.filePath ? toolPath(p.input.filePath) : ""
+  const line = typeof p.input.line === "number" ? p.input.line : undefined
+  const char = typeof p.input.character === "number" ? p.input.character : undefined
+  const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : ""
+  return { label: file ? `LSP(${op} ${file}${pos})` : `LSP(${op})` }
 }
 
-function scrollSkillStart(p: ToolProps<typeof SkillTool>): string {
-  return `→ Skill "${p.input.name ?? ""}"`
+function headerSkill(p: ToolProps<typeof SkillTool>): ToolHeader {
+  return { label: `Skill(${p.input.name ?? ""})` }
 }
 
-function scrollGlobStart(p: ToolProps<typeof GlobTool>): string {
-  const pattern = p.input.pattern ?? ""
-  const head = pattern ? `✱ Glob "${pattern}"` : "✱ Glob"
+function headerGlob(p: ToolProps<typeof GlobTool>): ToolHeader {
+  const label = `Glob(${p.input.pattern ?? ""})`
   const dir = p.input.path ?? ""
-  if (!dir) {
-    return head
-  }
-
-  return `${head} in ${toolPath(dir)}`
+  return dir ? { label, suffix: `in ${toolPath(dir)}` } : { label }
 }
 
 function scrollGlobFinal(p: ToolProps<typeof GlobTool>): string {
-  return toolError(p.frame) || fail(p.frame)
+  if (p.frame.status === "error") {
+    return toolError(p.frame) || fail(p.frame)
+  }
+
+  const n = p.metadata.count
+  return n === undefined ? "" : count(n, "match")
 }
 
-function scrollGrepStart(p: ToolProps<typeof GrepTool>): string {
-  const pattern = p.input.pattern ?? ""
-  const head = pattern ? `✱ Grep "${pattern}"` : "✱ Grep"
+function headerGrep(p: ToolProps<typeof GrepTool>): ToolHeader {
+  const label = `Grep(${p.input.pattern ?? ""})`
   const dir = p.input.path ?? ""
-  if (!dir) {
-    return head
-  }
-
-  return `${head} in ${toolPath(dir)}`
+  return dir ? { label, suffix: `in ${toolPath(dir)}` } : { label }
 }
 
-function scrollListStart(p: ToolProps): string {
+function scrollGrepFinal(p: ToolProps<typeof GrepTool>): string {
+  if (p.frame.status === "error") {
+    return toolError(p.frame) || fail(p.frame)
+  }
+
+  const n = p.metadata.matches
+  return n === undefined ? "" : count(n, "match")
+}
+
+function headerList(p: ToolProps): ToolHeader {
   const dir = text(dict(p.input).path)
-  if (!dir) {
-    return "→ List"
-  }
-
-  return `→ List ${toolPath(dir)}`
+  return { label: dir ? `List(${toolPath(dir)})` : "List" }
 }
 
-function scrollWebfetchStart(p: ToolProps<typeof WebFetchTool>): string {
+function headerWebfetch(p: ToolProps<typeof WebFetchTool>): ToolHeader {
   const url = p.input.url ?? ""
-  if (!url) {
-    return "% WebFetch"
-  }
-
-  return `% WebFetch ${url}`
+  return { label: url ? `WebFetch(${url})` : "WebFetch" }
 }
 
-function scrollWebSearchStart(p: ToolProps<typeof WebSearchTool>): string {
+function headerWebSearch(p: ToolProps<typeof WebSearchTool>): ToolHeader {
   const title = webSearchProviderLabel(p.metadata.provider)
   const query = p.input.query ?? ""
-  if (!query) {
-    return `◈ ${title}`
-  }
-
-  return `◈ ${title} "${query}"`
+  return { label: query ? `${title}(${query})` : title }
 }
 
 function permEdit(p: ToolPermissionProps<typeof EditTool>): ToolPermissionInfo {
@@ -1026,18 +1057,15 @@ const TOOL_RULES = {
       final: false,
     },
     run: runInvalid,
-    scroll: {
-      start: () => "",
-    },
   },
   bash: {
     view: {
       output: true,
-      final: false,
+      final: true,
     },
     run: runBash,
+    header: headerBash,
     scroll: {
-      start: scrollBashStart,
       progress: scrollBashProgress,
       final: scrollBashFinal,
     },
@@ -1050,10 +1078,8 @@ const TOOL_RULES = {
       snap: "code",
     },
     run: runWrite,
+    header: headerWrite,
     snap: snapWrite,
-    scroll: {
-      start: scrollWriteStart,
-    },
   },
   edit: {
     view: {
@@ -1062,10 +1088,8 @@ const TOOL_RULES = {
       snap: "diff",
     },
     run: runEdit,
+    header: headerEdit,
     snap: snapEdit,
-    scroll: {
-      start: scrollEditStart,
-    },
     permission: permEdit,
   },
   apply_patch: {
@@ -1075,9 +1099,9 @@ const TOOL_RULES = {
       snap: "diff",
     },
     run: runPatch,
+    header: headerPatch,
     snap: snapPatch,
     scroll: {
-      start: scrollPatchStart,
       final: scrollPatchFinal,
     },
   },
@@ -1087,9 +1111,6 @@ const TOOL_RULES = {
       final: false,
     },
     run: runBatch,
-    scroll: {
-      start: () => "",
-    },
   },
   task: {
     view: {
@@ -1098,9 +1119,9 @@ const TOOL_RULES = {
       snap: "structured",
     },
     run: runTask,
+    header: headerTask,
     snap: snapTask,
     scroll: {
-      start: scrollTaskStart,
       final: scrollTaskFinal,
     },
     permission: permTask,
@@ -1112,9 +1133,9 @@ const TOOL_RULES = {
       snap: "structured",
     },
     run: runTodo,
+    header: headerTodo,
     snap: snapTodo,
     scroll: {
-      start: scrollTodoStart,
       final: scrollTodoFinal,
     },
   },
@@ -1125,31 +1146,32 @@ const TOOL_RULES = {
       snap: "structured",
     },
     run: runQuestion,
+    header: headerQuestion,
     snap: snapQuestion,
     scroll: {
-      start: scrollQuestionStart,
       final: scrollQuestionFinal,
     },
   },
   read: {
     view: {
       output: false,
-      final: false,
+      final: true,
     },
     run: runRead,
+    header: headerRead,
     scroll: {
-      start: scrollReadStart,
+      final: scrollReadFinal,
     },
     permission: permRead,
   },
   glob: {
     view: {
       output: false,
-      final: false,
+      final: true,
     },
     run: runGlob,
+    header: headerGlob,
     scroll: {
-      start: scrollGlobStart,
       final: scrollGlobFinal,
     },
     permission: permGlob,
@@ -1157,11 +1179,12 @@ const TOOL_RULES = {
   grep: {
     view: {
       output: false,
-      final: false,
+      final: true,
     },
     run: runGrep,
+    header: headerGrep,
     scroll: {
-      start: scrollGrepStart,
+      final: scrollGrepFinal,
     },
     permission: permGrep,
   },
@@ -1171,9 +1194,7 @@ const TOOL_RULES = {
       final: false,
     },
     run: runList,
-    scroll: {
-      start: scrollListStart,
-    },
+    header: headerList,
     permission: permList,
   },
   lsp: {
@@ -1182,9 +1203,7 @@ const TOOL_RULES = {
       final: false,
     },
     run: runLsp,
-    scroll: {
-      start: scrollLspStart,
-    },
+    header: headerLsp,
     permission: permLsp,
   },
   webfetch: {
@@ -1193,9 +1212,7 @@ const TOOL_RULES = {
       final: false,
     },
     run: runWebfetch,
-    scroll: {
-      start: scrollWebfetchStart,
-    },
+    header: headerWebfetch,
     permission: permWebfetch,
   },
   websearch: {
@@ -1204,9 +1221,7 @@ const TOOL_RULES = {
       final: false,
     },
     run: runWebSearch,
-    scroll: {
-      start: scrollWebSearchStart,
-    },
+    header: headerWebSearch,
     permission: permWebSearch,
   },
   skill: {
@@ -1215,9 +1230,7 @@ const TOOL_RULES = {
       final: false,
     },
     run: runSkill,
-    scroll: {
-      start: scrollSkillStart,
-    },
+    header: headerSkill,
   },
   plan_exit: {
     view: {
@@ -1225,9 +1238,6 @@ const TOOL_RULES = {
       final: false,
     },
     run: runPlanExit,
-    scroll: {
-      start: () => "",
-    },
   },
 } as const satisfies ToolRegistry
 
@@ -1310,6 +1320,32 @@ export function toolInlineInfo(part: ToolPart): ToolInline {
   }
 
   return fallbackInline(ctx)
+}
+
+function fallbackHeader(ctx: ToolFrame): ToolHeader {
+  const run = rule(ctx.name)?.run
+  try {
+    if (run) {
+      return { label: run(props(ctx)).title }
+    }
+  } catch {
+    // fall through to the generic fallback below
+  }
+
+  return { label: fallbackInline(ctx).title }
+}
+
+export function toolHeader(ctx: ToolFrame): ToolHeader {
+  const draw = rule(ctx.name)?.header
+  try {
+    if (draw) {
+      return draw(props(ctx))
+    }
+  } catch {
+    return fallbackHeader(ctx)
+  }
+
+  return fallbackHeader(ctx)
 }
 
 export function toolScroll(phase: ToolPhase, ctx: ToolFrame): string {
@@ -1418,6 +1454,11 @@ function shellOutput(command: string, raw: string): string | undefined {
   return `\n${body}`
 }
 
+function headerBody(ctx: ToolFrame): RunEntryBody {
+  const header = toolHeader(ctx)
+  return { type: "header", label: header.label, suffix: header.suffix }
+}
+
 export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody | undefined {
   if (commit.shell) {
     if (commit.phase === "start") {
@@ -1434,16 +1475,14 @@ export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody |
   const ctx = toolFrame(commit, raw)
   const view = toolView(ctx.name)
 
-  if (ctx.name === "task") {
-    if (commit.phase === "start") {
-      return undefined
-    }
+  if (commit.phase === "start") {
+    return headerBody(ctx)
+  }
 
-    if (commit.phase === "final" && ctx.status === "completed") {
-      const result = taskResult(text(ctx.state.output))
-      if (result) {
-        return markdownBody(result)
-      }
+  if (ctx.name === "task" && commit.phase === "final" && ctx.status === "completed") {
+    const result = taskResult(text(ctx.state.output))
+    if (result) {
+      return markdownBody(result)
     }
   }
 
