@@ -229,11 +229,10 @@ export function PanelShell(props: {
   dark?: boolean
   chrome?: "default" | "minimal"
 }) {
-  const background = () => (props.dark ? props.theme().shade : props.theme().surface)
   const minimal = () => props.chrome === "minimal"
   const content = (
     <>
-      <box height={1} flexShrink={0} backgroundColor={background()} />
+      <box height={1} flexShrink={0} border={["top"]} borderColor={props.theme().muted} />
       <box
         width="100%"
         height={1}
@@ -242,7 +241,6 @@ export function PanelShell(props: {
         flexDirection="row"
         gap={1}
         flexShrink={0}
-        backgroundColor={background()}
       >
         <text fg={props.theme().text} attributes={TextAttributes.BOLD} wrapMode="none" flexShrink={0}>
           {props.title}
@@ -257,18 +255,16 @@ export function PanelShell(props: {
           esc
         </text>
       </box>
-      <box height={1} flexShrink={0} backgroundColor={background()} />
+      <box height={1} flexShrink={0} />
       <box
         width="100%"
         height={1}
         paddingLeft={PANEL_PAD}
         paddingRight={PANEL_PAD}
         flexShrink={0}
-        backgroundColor={background()}
       >
         <input
           width="100%"
-          focusedBackgroundColor={background()}
           focusedTextColor={props.theme().text}
           placeholder={props.placeholder}
           placeholderColor={props.theme().muted}
@@ -285,8 +281,8 @@ export function PanelShell(props: {
           }}
         />
       </box>
-      <box height={1} flexShrink={0} backgroundColor={background()} />
-      <box width="100%" flexDirection="column" flexShrink={0} backgroundColor={background()}>
+      <box height={1} flexShrink={0} />
+      <box width="100%" flexDirection="column" flexShrink={0}>
         {props.children}
       </box>
     </>
@@ -316,7 +312,7 @@ export function PanelShell(props: {
             width="100%"
             height={1}
             border={["bottom"]}
-            borderColor={background()}
+            borderColor={props.theme().muted}
             backgroundColor="transparent"
             customBorderChars={HALF_BLOCK_BORDER}
           />
@@ -335,7 +331,7 @@ export function PanelShell(props: {
             width="100%"
             height={1}
             border={["bottom"]}
-            borderColor={background()}
+            borderColor={props.theme().muted}
             backgroundColor="transparent"
             customBorderChars={HALF_BLOCK_BORDER}
           />

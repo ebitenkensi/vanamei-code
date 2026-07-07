@@ -13,7 +13,7 @@
 // All state logic lives in question.shared.ts as a pure state machine.
 // This component just renders it and dispatches keyboard events.
 /** @jsxImportSource @opentui/solid */
-import type { TextareaRenderable } from "@opentui/core"
+import { TextAttributes, type TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
@@ -277,7 +277,6 @@ export function RunQuestionBody(props: {
         paddingTop={1}
         flexGrow={1}
         flexShrink={1}
-        backgroundColor={props.theme.surface}
       >
         <Show when={!single()}>
           <box flexDirection="row" gap={1} paddingLeft={1} flexShrink={0}>
@@ -289,12 +288,14 @@ export function RunQuestionBody(props: {
                   <box
                     paddingLeft={1}
                     paddingRight={1}
-                    backgroundColor={active() ? props.theme.highlight : props.theme.surface}
                     onMouseUp={() => {
                       if (!disabled()) setTab(index())
                     }}
                   >
-                    <text fg={active() ? props.theme.surface : answered() ? props.theme.text : props.theme.muted}>
+                    <text
+                      fg={active() ? props.theme.highlight : answered() ? props.theme.text : props.theme.muted}
+                      attributes={active() ? TextAttributes.BOLD : undefined}
+                    >
                       {item.header}
                     </text>
                   </box>
@@ -304,12 +305,16 @@ export function RunQuestionBody(props: {
             <box
               paddingLeft={1}
               paddingRight={1}
-              backgroundColor={confirm() ? props.theme.highlight : props.theme.surface}
               onMouseUp={() => {
                 if (!disabled()) setTab(props.request.questions.length)
               }}
             >
-              <text fg={confirm() ? props.theme.surface : props.theme.muted}>Confirm</text>
+              <text
+                fg={confirm() ? props.theme.highlight : props.theme.muted}
+                attributes={confirm() ? TextAttributes.BOLD : undefined}
+              >
+                Confirm
+              </text>
             </box>
           </box>
         </Show>
@@ -323,7 +328,7 @@ export function RunQuestionBody(props: {
                 height="100%"
                 verticalScrollbarOptions={{
                   trackOptions: {
-                    backgroundColor: props.theme.surface,
+                    backgroundColor: "transparent",
                     foregroundColor: props.theme.line,
                   },
                 }}
@@ -367,7 +372,7 @@ export function RunQuestionBody(props: {
                 height="100%"
                 verticalScrollbarOptions={{
                   trackOptions: {
-                    backgroundColor: props.theme.surface,
+                    backgroundColor: "transparent",
                     foregroundColor: props.theme.line,
                   },
                 }}
@@ -397,17 +402,19 @@ export function RunQuestionBody(props: {
                             }
                           }}
                         >
-                          <box flexDirection="row">
-                            <box backgroundColor={active() ? props.theme.line : undefined} paddingRight={1}>
-                              <text fg={active() ? props.theme.highlight : props.theme.muted}>{`${index() + 1}.`}</text>
-                            </box>
-                            <box backgroundColor={active() ? props.theme.line : undefined}>
-                              <text
-                                fg={active() ? props.theme.highlight : hit() ? props.theme.success : props.theme.text}
-                              >
-                                {info()?.multiple ? `[${hit() ? "✓" : " "}] ${item.label}` : item.label}
-                              </text>
-                            </box>
+                          <box flexDirection="row" gap={1}>
+                            <text
+                              fg={active() ? props.theme.highlight : props.theme.muted}
+                              attributes={active() ? TextAttributes.BOLD : undefined}
+                            >
+                              {`${index() + 1}.`}
+                            </text>
+                            <text
+                              fg={active() ? props.theme.highlight : hit() ? props.theme.success : props.theme.text}
+                              attributes={active() ? TextAttributes.BOLD : undefined}
+                            >
+                              {info()?.multiple ? `[${hit() ? "✓" : " "}] ${item.label}` : item.label}
+                            </text>
                             <Show when={!info()?.multiple}>
                               <text fg={props.theme.success}>{hit() ? " ✓" : ""}</text>
                             </Show>
@@ -442,21 +449,21 @@ export function RunQuestionBody(props: {
                         }
                       }}
                     >
-                      <box flexDirection="row">
-                        <box backgroundColor={other() ? props.theme.line : undefined} paddingRight={1}>
-                          <text
-                            fg={other() ? props.theme.highlight : props.theme.muted}
-                          >{`${(info()?.options.length ?? 0) + 1}.`}</text>
-                        </box>
-                        <box backgroundColor={other() ? props.theme.line : undefined}>
-                          <text
-                            fg={other() ? props.theme.highlight : picked() ? props.theme.success : props.theme.text}
-                          >
-                            {info()?.multiple
-                              ? `[${picked() ? "✓" : " "}] Type your own answer`
-                              : "Type your own answer"}
-                          </text>
-                        </box>
+                      <box flexDirection="row" gap={1}>
+                        <text
+                          fg={other() ? props.theme.highlight : props.theme.muted}
+                          attributes={other() ? TextAttributes.BOLD : undefined}
+                        >
+                          {`${(info()?.options.length ?? 0) + 1}.`}
+                        </text>
+                        <text
+                          fg={other() ? props.theme.highlight : picked() ? props.theme.success : props.theme.text}
+                          attributes={other() ? TextAttributes.BOLD : undefined}
+                        >
+                          {info()?.multiple
+                            ? `[${picked() ? "✓" : " "}] Type your own answer`
+                            : "Type your own answer"}
+                        </text>
                         <Show when={!info()?.multiple}>
                           <text fg={props.theme.success}>{picked() ? " ✓" : ""}</text>
                         </Show>
@@ -483,8 +490,6 @@ export function RunQuestionBody(props: {
                             placeholderColor={props.theme.muted}
                             textColor={props.theme.text}
                             focusedTextColor={props.theme.text}
-                            backgroundColor={props.theme.surface}
-                            focusedBackgroundColor={props.theme.surface}
                             cursorColor={props.theme.text}
                             focused={!disabled()}
                             onSubmit={saveCustom}

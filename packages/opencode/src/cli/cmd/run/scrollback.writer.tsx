@@ -28,10 +28,6 @@ function todoColor(theme: RunTheme, status: string) {
     return theme.block.highlight
   }
 
-  if (status === "completed") {
-    return theme.footer.success
-  }
-
   return theme.block.muted
 }
 
@@ -285,8 +281,14 @@ export function RunEntryContent(props: {
           </text>
           <box width="100%" flexDirection="column" gap={0}>
             {todo_snapshot()!.items.map((item) => (
-              <text width="100%" wrapMode="word" fg={todoColor(theme(), item.status)}>
-                {todoText(item)}
+              <text width="100%" wrapMode="word">
+                <span style={{
+                  fg: todoColor(theme(), item.status),
+                  bold: item.status === "in_progress",
+                  strikethrough: item.status === "completed",
+                }}>
+                  {todoText(item)}
+                </span>
               </text>
             ))}
             {todo_snapshot()!.tail ? (
@@ -363,7 +365,7 @@ export function entryWriter(input: {
         commit={input.commit}
         body={blockBody}
         theme={input.theme}
-        opts={{ ...input.opts, suppressBackgrounds: true }}
+        opts={{ ...input.opts, suppressBackgrounds: false }}
         width={ctx.width}
       />
     ),

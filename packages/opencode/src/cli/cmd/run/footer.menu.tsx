@@ -2,7 +2,7 @@
 import { TextAttributes, type ColorInput } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
-import { transparent, type RunFooterTheme } from "./theme"
+import { type RunFooterTheme } from "./theme"
 import * as Locale from "@/util/locale"
 
 export const FOOTER_MENU_ROWS = 8
@@ -227,14 +227,12 @@ export function RunFooterMenu(props: {
     <box
       width="100%"
       height={props.rows()}
-      backgroundColor={props.background ? props.theme().shade : transparent}
       flexDirection="column"
     >
       {rows().length === 0 ? (
         <box
           paddingRight={0}
           flexDirection="row"
-          backgroundColor={props.background ? props.theme().shade : transparent}
         >
           {border() ? (
             <text fg={props.theme().border} wrapMode="none">
@@ -246,7 +244,6 @@ export function RunFooterMenu(props: {
             flexShrink={1}
             paddingLeft={props.paddingLeft ?? 1}
             paddingRight={props.paddingRight ?? 0}
-            backgroundColor={props.background ? props.theme().shade : transparent}
           >
             <text fg={props.theme().muted} wrapMode="none" truncate>
               {props.empty ?? "No matching items"}
@@ -275,18 +272,10 @@ export function RunFooterMenu(props: {
           }
 
           const active = () => row.index === props.selected()
-          const background = () =>
-            active()
-              ? props.background
-                ? props.theme().selected
-                : props.theme().shade
-              : props.background
-                ? props.theme().shade
-                : transparent
           return (
-            <box paddingRight={0} flexDirection="row" backgroundColor={background()}>
+            <box paddingRight={0} flexDirection="row">
               {border() ? (
-                <text fg={props.theme().highlight} bg={background()} wrapMode="none">
+                <text fg={active() ? props.theme().highlight : props.theme().border} wrapMode="none">
                   {active() ? "▌" : " "}
                 </text>
               ) : undefined}
@@ -295,7 +284,6 @@ export function RunFooterMenu(props: {
                 flexShrink={1}
                 paddingLeft={props.paddingLeft ?? 1}
                 paddingRight={props.paddingRight ?? 0}
-                backgroundColor={background()}
               >
                 <box width="100%" flexDirection="row" justifyContent="space-between" gap={1}>
                   <box flexDirection="row" gap={0} flexGrow={1} flexShrink={1}>

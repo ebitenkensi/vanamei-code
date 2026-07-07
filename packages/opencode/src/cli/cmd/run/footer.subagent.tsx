@@ -63,7 +63,7 @@ export function RunFooterSubagentBody(props: {
   const opts = createMemo(() => ({ diffStyle: props.diffStyle }))
   const scrollbar = createMemo(() => ({
     trackOptions: {
-      backgroundColor: footer().surface,
+      backgroundColor: "transparent",
       foregroundColor: footer().line,
     },
   }))
@@ -121,7 +121,7 @@ export function RunFooterSubagentBody(props: {
   })
 
   return (
-    <box width="100%" height="100%" flexDirection="column" backgroundColor={footer().surface}>
+    <box width="100%" height="100%" flexDirection="column" border={["top"]} borderColor={footer().line}>
       <box paddingTop={1} paddingLeft={1} paddingRight={3} paddingBottom={1} flexDirection="column" flexGrow={1}>
         <Show when={tab()}>
           {(current) => (

@@ -11,7 +11,9 @@
 import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
-import { createColors, createFrames } from "@/cli/ui/spinner"
+import { Spinner } from "@/cli/ui/component/spinner"
+
+import { RGBA } from "@opentui/core"
 import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
@@ -26,6 +28,7 @@ import {
 import { FOOTER_MENU_ROWS, RunFooterMenu } from "./footer.menu"
 import { canOpenSessionsMenu, RunSessionSelectBody } from "./footer.sessions"
 import { RunFooterSubagentBody } from "./footer.subagent"
+import { RunSubagentTree } from "./footer.subagent-tree"
 import { RunPromptBody, createPromptState } from "./footer.prompt"
 import { RunPermissionBody } from "./footer.permission"
 import { RunQuestionBody } from "./footer.question"
@@ -293,22 +296,6 @@ export function RunFooterView(props: RunFooterViewProps) {
   const runTheme = createMemo(() => props.theme())
   const theme = createMemo(() => runTheme().footer)
   const block = createMemo(() => runTheme().block)
-  const spin = createMemo(() => {
-    return {
-      frames: createFrames({
-        color: theme().highlight,
-        style: "blocks",
-        inactiveFactor: 0.6,
-        minAlpha: 0.3,
-      }),
-      color: createColors({
-        color: theme().highlight,
-        style: "blocks",
-        inactiveFactor: 0.6,
-        minAlpha: 0.3,
-      }),
-    }
-  })
   const permission = createMemo<Extract<FooterView, { type: "permission" }> | undefined>(() => {
     const view = active()
     return view.type === "permission" ? view : undefined
@@ -448,17 +435,6 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return shell() ? "SHELL" : props.state().agent.toUpperCase()
   })
-  const modeColor = createMemo(() => {
-    if (exiting()) {
-      return theme().error
-    }
-
-    if (shell()) {
-      return theme().warning
-    }
-
-    return theme().highlight
-  })
   const statusText = createMemo(() => {
     if (exiting()) {
       return `Press ${clearShortcut() || "ctrl+c"} again to exit`
@@ -507,6 +483,10 @@ export function RunFooterView(props: RunFooterViewProps) {
       items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
     }
 
+    if (activeTabs().length > 0) {
+      items.push({ text: `◆ ${activeTabs().length} agents`, color: theme().highlight })
+    }
+
     if (stats.pills.cost && cost() > 0) {
       items.push({ text: money.format(cost()), color: theme().muted })
     }
@@ -549,7 +529,6 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return theme().muted
   })
-  const statuslineBackground = createMemo(() => theme().status)
   const hasPills = createMemo(() => pills().length > 0)
   const hasModelStatus = createMemo(() => responsive().statusline.showModel && Boolean(modelStatus()))
   const contextHints = createMemo(() => {
@@ -946,6 +925,10 @@ export function RunFooterView(props: RunFooterViewProps) {
               <RunFooterTodoPanel todos={props.todos!} theme={theme} />
             </Show>
 
+            <Show when={!panel() && !menu() && tabs().length > 0}>
+              <RunSubagentTree tabs={tabs} theme={theme} mainStatus={stateStatus} />
+            </Show>
+
             <Show when={!panel() && !menu()}>
               <box
                 width="100%"
@@ -953,11 +936,11 @@ export function RunFooterView(props: RunFooterViewProps) {
                 flexDirection="row"
                 gap={0}
                 flexShrink={0}
-                backgroundColor={statuslineBackground()}
+                backgroundColor="transparent"
               >
-                <box paddingLeft={1} paddingRight={1} backgroundColor={theme().statusAccent} flexShrink={0}>
+                <box paddingLeft={1} paddingRight={1} border={["left"]} borderColor={theme().highlight} flexShrink={0}>
                   <text wrapMode="none" truncate>
-                    <span style={{ fg: modeColor(), bold: true }}>{modeLabel()}</span>
+                    <span style={{ fg: theme().highlight, bold: true }}>{modeLabel()}</span>
                   </text>
                 </box>
 
@@ -972,16 +955,21 @@ export function RunFooterView(props: RunFooterViewProps) {
                   backgroundColor="transparent"
                 >
                   <Show when={busy() && !exiting()}>
+                    <Show when={interruptLabel()}>
+                      {(label) => <text flexShrink={0} fg={armed() ? statusColor() : theme().muted}>{label()} </text>}
+                    </Show>
                     <box flexShrink={0}>
-                      <spinner color={spin().color} frames={spin().frames} interval={40} />
+                      <Spinner
+                        message={statusText}
+                        mode={() => "responding"}
+                        stalled={() => false}
+                        color={() => theme().highlight as RGBA}
+                      />
                     </box>
                   </Show>
 
                   <text fg={statusColor()} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
-                    <Show when={busy() && !exiting()} fallback={statusText()}>
-                      <Show when={interruptLabel()}>
-                        {(label) => <span style={{ fg: armed() ? statusColor() : theme().muted }}>{label()} </span>}
-                      </Show>
+                    <Show when={!busy() || exiting()}>
                       {statusText()}
                     </Show>
                   </text>
@@ -1091,7 +1079,7 @@ function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () =>
   }
 
   function color(status: string) {
-    if (status === "completed") return props.theme().success
+    if (status === "completed") return props.theme().muted
     if (status === "in_progress") return props.theme().warning
     return props.theme().muted
   }
@@ -1115,8 +1103,14 @@ function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () =>
             <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
               {glyph(item.status)}
             </text>
-            <text fg={props.theme().text} wrapMode="none" truncate flexGrow={1}>
-              {item.content}
+            <text wrapMode="none" truncate flexGrow={1}>
+              <span style={{
+                fg: item.status === "in_progress" ? props.theme().warning : item.status === "completed" ? props.theme().muted : props.theme().muted,
+                bold: item.status === "in_progress",
+                strikethrough: item.status === "completed",
+              }}>
+                {item.content}
+              </span>
             </text>
           </box>
         )}

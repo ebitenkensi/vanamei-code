@@ -11,7 +11,7 @@
 // The diff view (when available) uses the same diff component as scrollback
 // tool snapshots.
 /** @jsxImportSource @opentui/solid */
-import type { TextareaRenderable } from "@opentui/core"
+import { TextAttributes, type TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
@@ -31,7 +31,7 @@ import {
 } from "./permission.shared"
 import { footerWidthPolicy } from "./footer.width"
 import { toolFiletype } from "./tool"
-import { transparent, type RunBlockTheme, type RunFooterTheme } from "./theme"
+import { type RunBlockTheme, type RunFooterTheme } from "./theme"
 import type { PermissionReply, RunDiffStyle } from "./types"
 
 function buttons(
@@ -49,7 +49,6 @@ function buttons(
           <box
             paddingLeft={1}
             paddingRight={1}
-            backgroundColor={option === selected ? theme.highlight : transparent}
             onMouseOver={() => {
               if (!disabled) onHover(option)
             }}
@@ -57,7 +56,12 @@ function buttons(
               if (!disabled) onSelect(option)
             }}
           >
-            <text fg={option === selected ? theme.surface : theme.muted}>{permissionLabel(option)}</text>
+            <text
+              fg={option === selected ? theme.highlight : theme.muted}
+              attributes={option === selected ? TextAttributes.BOLD : undefined}
+            >
+              {permissionLabel(option)}
+            </text>
           </box>
         )}
       </For>
@@ -104,8 +108,6 @@ export function RejectField(props: {
       placeholderColor={props.theme.muted}
       textColor={props.theme.text}
       focusedTextColor={props.theme.text}
-      backgroundColor={props.theme.surface}
-      focusedBackgroundColor={props.theme.surface}
       cursorColor={props.theme.text}
       focused={!props.disabled}
       onSubmit={props.onConfirm}
@@ -257,7 +259,7 @@ export function RunPermissionBody(props: {
   })
 
   return (
-    <box width="100%" height="100%" flexDirection="column" backgroundColor={props.theme.surface}>
+    <box width="100%" height="100%" flexDirection="column" border={["top"]} borderColor={props.theme.line}>
       <box
         flexDirection="column"
         gap={1}
@@ -297,7 +299,8 @@ export function RunPermissionBody(props: {
             <box
               flexDirection={narrow() ? "column" : "row"}
               flexShrink={0}
-              backgroundColor={props.theme.line}
+              border={["top"]}
+              borderColor={props.theme.line}
               paddingTop={1}
               paddingLeft={2}
               paddingRight={3}
@@ -350,7 +353,7 @@ export function RunPermissionBody(props: {
                 height="100%"
                 verticalScrollbarOptions={{
                   trackOptions: {
-                    backgroundColor: props.theme.surface,
+                    backgroundColor: "transparent",
                     foregroundColor: props.theme.line,
                   },
                 }}
@@ -404,7 +407,7 @@ export function RunPermissionBody(props: {
                 height="100%"
                 verticalScrollbarOptions={{
                   trackOptions: {
-                    backgroundColor: props.theme.surface,
+                    backgroundColor: "transparent",
                     foregroundColor: props.theme.line,
                   },
                 }}
@@ -426,7 +429,8 @@ export function RunPermissionBody(props: {
         <box
           flexDirection={narrow() ? "column" : "row"}
           flexShrink={0}
-          backgroundColor={props.theme.pane}
+          border={["top"]}
+          borderColor={props.theme.line}
           gap={1}
           paddingTop={1}
           paddingLeft={2}
