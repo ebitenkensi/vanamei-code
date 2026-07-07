@@ -14,6 +14,7 @@ import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
 import { Spinner } from "@/cli/ui/component/spinner"
 
 import { RGBA } from "@opentui/core"
+import { budgetState } from "@opencode-ai/core/session/runner/budget"
 import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
@@ -41,11 +42,7 @@ import {
   useKeymapSelector,
   type OpenTuiKeymap,
 } from "@/cli/ui/keymap"
-import {
-  modeCycle,
-  modeIndicator,
-  type PermissionMode,
-} from "./mode.shared"
+import { modeCycle, modeIndicator, type PermissionMode } from "./mode.shared"
 import type {
   FooterPromptRoute,
   FooterQueuedPrompt,
@@ -70,11 +67,6 @@ import type { RunFooterTheme, RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
-
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-})
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -290,6 +282,10 @@ export function RunFooterView(props: RunFooterViewProps) {
   const contextTokens = createMemo(() => props.state().contextTokens)
   const contextPercent = createMemo(() => props.state().contextPercent)
   const cost = createMemo(() => props.state().cost)
+  // Budget-aware cost pill (P4): the current session's agent may carry a
+  // soft/hard USD budget. Undefined when the agent has none configured, in
+  // which case the cost pill falls back to its plain (non-fraction) form.
+  const agentBudget = createMemo(() => props.agents().find((item) => item.name === props.state().agent)?.budget)
   const modifiedCount = createMemo(() => props.state().modified)
   const todoCount = createMemo(() => (props.todos?.() ?? []).filter((item) => item.status !== "completed").length)
   const interruptLabel = createMemo(() => {
@@ -495,8 +491,16 @@ export function RunFooterView(props: RunFooterViewProps) {
       items.push({ text: `◆ ${activeTabs().length} agents`, color: theme().highlight })
     }
 
-    if (stats.pills.cost && cost() > 0) {
-      items.push({ text: money.format(cost()), color: theme().muted })
+    if (stats.pills.cost) {
+      const budget = agentBudget()
+      if (budget && (budget.soft !== undefined || budget.hard !== undefined)) {
+        const denom = budget.soft ?? budget.hard!
+        const state = budgetState(cost(), budget)
+        const color = state === "ok" ? theme().muted : state === "soft" ? theme().warning : theme().error
+        items.push({ text: `${Locale.money(cost())}/${Locale.money(denom)}`, color })
+      } else if (cost() > 0) {
+        items.push({ text: Locale.money(cost()), color: theme().muted })
+      }
     }
 
     if (stats.pills.todos && todoCount() > 0) {
@@ -907,16 +911,16 @@ export function RunFooterView(props: RunFooterViewProps) {
                             }}
                           />
                         </Match>
-              <Match when={active().type === "permission"}>
-                <RunPermissionBody
-                  request={permission()!.request}
-                  theme={theme()}
-                  block={block()}
-                  diffStyle={props.diffStyle}
-                  judgeReason={permission()!.judgeReason}
-                  onReply={props.onPermissionReply}
-                />
-              </Match>
+                        <Match when={active().type === "permission"}>
+                          <RunPermissionBody
+                            request={permission()!.request}
+                            theme={theme()}
+                            block={block()}
+                            diffStyle={props.diffStyle}
+                            judgeReason={permission()!.judgeReason}
+                            onReply={props.onPermissionReply}
+                          />
+                        </Match>
                         <Match when={active().type === "question"}>
                           <RunQuestionBody
                             request={question()!.request}

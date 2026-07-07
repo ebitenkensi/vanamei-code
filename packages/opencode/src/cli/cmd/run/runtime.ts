@@ -23,7 +23,17 @@ import { createRuntimeLifecycle } from "./runtime.lifecycle"
 import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import type { FooterView, LocalReplayAnchor, LocalReplayRow, PermissionReply, RunInput, RunPrompt, RunProvider, StreamCommit } from "./types"
+import type {
+  FooterView,
+  LocalReplayAnchor,
+  LocalReplayRow,
+  PermissionReply,
+  RunAgent,
+  RunInput,
+  RunPrompt,
+  RunProvider,
+  StreamCommit,
+} from "./types"
 
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
@@ -132,6 +142,9 @@ type RuntimeState = {
   localRows: LocalReplayRow[]
   sessionTitle?: string
   agent: string | undefined
+  // Catalog snapshot for the current agent's budget lookup (P4), fed to the
+  // stream transport's client-side budget-crossing detection.
+  agents: RunAgent[]
   switching?: Promise<void>
   demo?: ReturnType<typeof createRunDemo>
   selectSubagent?: (sessionID: string | undefined) => void
@@ -216,6 +229,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     localRows: [],
     sessionTitle: ctx.sessionTitle,
     agent: ctx.agent,
+    agents: [],
     includeFiles: true,
     permissionMode: "normal",
   }
@@ -441,6 +455,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       return
     }
 
+    state.agents = agents
     footer.event({
       type: "catalog",
       agents,
@@ -605,6 +620,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         replayLimit: input.replayLimit,
         limits: () => state.limits,
         providers: () => state.providers,
+        budget: () => state.agents.find((item) => item.name === state.agent)?.budget,
         footer,
         trace: log,
         permissionMode: () => state.permissionMode,

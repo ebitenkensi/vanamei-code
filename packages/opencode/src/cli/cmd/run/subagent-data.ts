@@ -88,7 +88,8 @@ export function sameSubagentTab(a: FooterSubagentTab | undefined, b: FooterSubag
     a.title === b.title &&
     a.toolCalls === b.toolCalls &&
     a.lastUpdatedAt === b.lastUpdatedAt &&
-    a.activity === b.activity
+    a.activity === b.activity &&
+    a.cost === b.cost
   )
 }
 
@@ -346,7 +347,11 @@ function syncTaskTab(data: SubagentData, part: ToolPart, children?: Set<string>)
     return false
   }
 
-  const next = { ...taskTab(part, sessionID), activity: data.tabs.get(sessionID)?.activity }
+  const next = {
+    ...taskTab(part, sessionID),
+    activity: data.tabs.get(sessionID)?.activity,
+    cost: data.tabs.get(sessionID)?.cost,
+  }
   if (sameSubagentTab(data.tabs.get(sessionID), next)) {
     ensureDetail(data, sessionID)
     return false
@@ -408,6 +413,29 @@ function syncActivity(data: SubagentData, sessionID: string, detail: DetailState
   }
 
   data.tabs.set(sessionID, { ...tab, activity: next })
+  return true
+}
+
+// Accumulates a subagent's own session cost onto its task row (mirrors how
+// session-data.ts extracts info.cost for the main session's statusline
+// pill). info.cost is already the child session's running total, so this
+// replaces rather than adds.
+function syncCost(data: SubagentData, sessionID: string, info: Message) {
+  if (info.role !== "assistant") {
+    return false
+  }
+
+  const cost = typeof info.cost === "number" ? info.cost : undefined
+  if (cost === undefined) {
+    return false
+  }
+
+  const tab = data.tabs.get(sessionID)
+  if (!tab || tab.cost === cost) {
+    return false
+  }
+
+  data.tabs.set(sessionID, { ...tab, cost })
   return true
 }
 
@@ -877,9 +905,10 @@ export function reduceSubagentData(input: {
     event.type === "message.updated" && isAbortedAssistantMessage(event.properties.info)
       ? cancelSubagentTab(input.data, sessionID)
       : false
+  const costChanged = event.type === "message.updated" ? syncCost(input.data, sessionID, event.properties.info) : false
   if (event.type === "session.status") {
     if (event.properties.status.type !== "retry") {
-      return cancelled
+      return cancelled || costChanged
     }
 
     const appended = appendCommits(detail, [
@@ -892,7 +921,7 @@ export function reduceSubagentData(input: {
       },
     ])
     const activity = syncActivity(input.data, sessionID, detail)
-    return appended || activity || cancelled
+    return appended || activity || cancelled || costChanged
   }
 
   if (event.type === "session.error" && event.properties.error) {
@@ -906,7 +935,7 @@ export function reduceSubagentData(input: {
       },
     ])
     const activity = syncActivity(input.data, sessionID, detail)
-    return appended || activity || cancelled
+    return appended || activity || cancelled || costChanged
   }
 
   const applied = applyChildEvent({
@@ -916,5 +945,5 @@ export function reduceSubagentData(input: {
     limits: input.limits,
   })
   const activity = syncActivity(input.data, sessionID, detail)
-  return applied || activity || cancelled
+  return applied || activity || cancelled || costChanged
 }

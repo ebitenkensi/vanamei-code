@@ -25,6 +25,7 @@
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
+import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
 import type { FooterOutput, FooterPatch, FooterTodoItem, FooterView, StreamCommit } from "./types"
 
@@ -170,6 +171,16 @@ export function formatError(error: {
 
 function isAbort(error: { name?: string } | undefined): boolean {
   return error?.name === "MessageAbortedError"
+}
+
+// Truncates a denied permission's pattern so a long glob/command doesn't blow
+// out the one-line scrollback notice (P4).
+const PERMISSION_DENIED_PATTERN_LIMIT = 60
+
+function formatPermissionDenied(properties: { permission: string; patterns: string[] }): string {
+  const pattern = properties.patterns[0]
+  const suffix = pattern ? ` "${Locale.truncateMiddle(pattern, PERMISSION_DENIED_PATTERN_LIMIT)}"` : ""
+  return `✗ permission denied: ${properties.permission}${suffix}`
 }
 
 function msgErr(id: string): string {
@@ -1118,6 +1129,23 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     commits.push({
       kind: "error",
       text: formatError(event.properties.error),
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  // Rule/hook permission denials (P4). Surfaced as a muted one-line scrollback
+  // notice for the bound (main) session only -- subagent denies are not
+  // routed here (see subagent-data.ts's reduceSubagentData event list).
+  if (event.type === "permission.denied") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    commits.push({
+      kind: "system",
+      text: formatPermissionDenied(event.properties),
       phase: "start",
       source: "system",
     })

@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
-import { For, type Accessor } from "solid-js"
+import { For, Show, type Accessor } from "solid-js"
 import { SPINNER_BRAILLE_FRAMES } from "@/cli/ui/component/spinner"
+import * as Locale from "@/util/locale"
 import { statusColor } from "./footer.subagent"
 import type { FooterSubagentTab } from "./types"
 import type { RunFooterTheme } from "./theme"
@@ -47,6 +48,9 @@ export function RunSubagentTree(props: { tabs: Accessor<FooterSubagentTab[]>; th
               <text fg={props.theme().text} wrapMode="none" truncate flexGrow={1}>
                 {`Task(${tab.description})`}
                 <span style={{ fg: props.theme().muted }}>{` ${tab.label}`}</span>
+                <Show when={(tab.cost ?? 0) > 0}>
+                  <span style={{ fg: props.theme().muted }}>{` ${Locale.money(tab.cost!)}`}</span>
+                </Show>
               </text>
             </box>
             <box width="100%" height={1} flexDirection="row" gap={0} flexShrink={0} backgroundColor="transparent">

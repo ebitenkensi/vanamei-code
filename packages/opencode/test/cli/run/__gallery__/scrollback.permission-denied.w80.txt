@@ -1,0 +1,1 @@
+✗ permission denied: bash "git push origin main"

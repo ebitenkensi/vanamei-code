@@ -138,13 +138,19 @@ function subagent(input: {
   } satisfies FooterSubagentTab
 }
 
-function agent(input: { name: string; mode: RunAgent["mode"]; description?: string }): RunAgent {
+function agent(input: {
+  name: string
+  mode: RunAgent["mode"]
+  description?: string
+  budget?: { soft?: number; hard?: number }
+}): RunAgent {
   return {
     name: input.name,
     description: input.description,
     mode: input.mode,
     permission: [],
     options: {},
+    budget: input.budget,
   } satisfies RunAgent
 }
 
@@ -1328,6 +1334,88 @@ test("direct footer hides zero-value pills", async () => {
     expect(frame).not.toContain("$")
     expect(frame).not.toContain("☐")
     expect(frame).not.toContain("✎")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer shows a budget-fraction cost pill colored by threshold", async () => {
+  const budgetAgent = agent({ name: "budget-build", mode: "primary", budget: { soft: 1.5, hard: 2.5 } })
+
+  const ok = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 0.42 },
+  })
+  try {
+    await ok.renderOnce()
+    expect(ok.captureCharFrame()).toContain("$0.42/$1.50")
+    expect(findSpan(ok.captureSpans(), "$0.42/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
+    )
+  } finally {
+    ok.cleanup()
+  }
+
+  const soft = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 1.52 },
+  })
+  try {
+    await soft.renderOnce()
+    expect(soft.captureCharFrame()).toContain("$1.52/$1.50")
+    expect(findSpan(soft.captureSpans(), "$1.52/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
+    )
+  } finally {
+    soft.cleanup()
+  }
+
+  const hard = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 2.5 },
+  })
+  try {
+    await hard.renderOnce()
+    expect(hard.captureCharFrame()).toContain("$2.50/$1.50")
+    expect(findSpan(hard.captureSpans(), "$2.50/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.error as RGBA).toInts(),
+    )
+  } finally {
+    hard.cleanup()
+  }
+})
+
+test("direct footer keeps the plain cost pill when the current agent has no budget", async () => {
+  const app = await renderFooter({
+    width: 130,
+    agents: [agent({ name: "build", mode: "primary" })],
+    state: { agent: "build", cost: 4.23 },
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).toContain("$4.23")
+    expect(frame).not.toContain("$4.23/")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer degrades the budget pill at the same width breakpoint as the plain cost pill", async () => {
+  const budgetAgent = agent({ name: "budget-build", mode: "primary", budget: { soft: 1.5, hard: 2.5 } })
+  const app = await renderFooter({
+    width: 85,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 0.42 },
+  })
+
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).not.toContain("$0.42")
   } finally {
     app.cleanup()
   }

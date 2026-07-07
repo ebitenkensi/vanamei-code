@@ -1,0 +1,12 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ❯ check on that                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⏺ Task(Inspect auth flow) Explore $0.03
+   ⎿  ⠋ Grep("SessionExecution")
+ ⏺ Task(Migrate config schema) General $0.11
+   ⎿  Done
+BUILD                                               ◆ 1 agents · ctrl+b background · ctrl+x down subagents · ctrl+p cmd
+
+
+
+

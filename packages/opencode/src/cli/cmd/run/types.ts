@@ -214,6 +214,10 @@ export type FooterSubagentTab = {
   // derived from its most recent shell/tool commit. Undefined until the
   // first matching commit lands, and only meaningful while running.
   activity?: string
+  // Accumulated cost of the child session, extracted from its own
+  // message.updated events (mirrors FooterState.cost for the main session).
+  // Undefined/0 hides the cost from the task row.
+  cost?: number
 }
 
 export type FooterSubagentDetail = {

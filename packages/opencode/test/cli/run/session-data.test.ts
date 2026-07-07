@@ -601,6 +601,72 @@ describe("run session data", () => {
     ])
   })
 
+  test("surfaces a permission.denied event as a muted system notice with the permission and first pattern", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["git push origin main", "git push --force"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: '✗ permission denied: bash "git push origin main"',
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("truncates a long denied pattern in the permission.denied notice", () => {
+    const longPattern = "src/" + "a".repeat(80) + "/file.ts"
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "edit",
+        patterns: [longPattern],
+      },
+    })
+
+    const text = out.commits[0]?.text ?? ""
+    expect(text.startsWith('✗ permission denied: edit "')).toBe(true)
+    expect(text.length).toBeLessThan(longPattern.length)
+  })
+
+  test("omits the pattern suffix when permission.denied has no patterns", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "doom_loop",
+        patterns: [],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "✗ permission denied: doom_loop",
+      }),
+    ])
+  })
+
+  test("ignores permission.denied events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-2",
+        permission: "bash",
+        patterns: ["*"],
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
   test("emits structured context/cost numbers for the statusline pills", () => {
     const out = reduceWithLimits(
       createSessionData(),

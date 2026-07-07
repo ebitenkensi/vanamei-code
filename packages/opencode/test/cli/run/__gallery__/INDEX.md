@@ -33,8 +33,16 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.subagent.w120.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
 | `footer.subagent-tree.w80.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
 | `footer.subagent-tree.w120.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
+| `footer.subagent-tree.cost.w80.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
+| `footer.subagent-tree.cost.w120.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
 | `footer.statusline.accept-edits.w80.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
+| `footer.statusline.budget-ok.w80.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
+| `footer.statusline.budget-ok.w120.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
+| `footer.statusline.budget-soft.w80.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
+| `footer.statusline.budget-soft.w120.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
+| `footer.statusline.budget-hard.w80.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
+| `footer.statusline.budget-hard.w120.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
 | `panel.command-menu.w80.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.command-menu.w120.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.model-select.w80.txt` | Standalone model picker body with a current selection and a deprecated model hidden. |
@@ -75,3 +83,7 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `scrollback.question.w120.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |
 | `scrollback.error.w80.txt` | Session error entry rendered in the scrollback. |
 | `scrollback.error.w120.txt` | Session error entry rendered in the scrollback. |
+| `scrollback.permission-denied.w80.txt` | Muted one-line notice for a rule/hook permission denial in the bound (main) session. |
+| `scrollback.permission-denied.w120.txt` | Muted one-line notice for a rule/hook permission denial in the bound (main) session. |
+| `scrollback.budget-crossed.w80.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
+| `scrollback.budget-crossed.w120.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |

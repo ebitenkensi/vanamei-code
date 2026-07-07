@@ -130,13 +130,19 @@ function provider(): RunProvider {
   } as RunProvider
 }
 
-function agent(input: { name: string; mode: RunAgent["mode"]; description?: string }): RunAgent {
+function agent(input: {
+  name: string
+  mode: RunAgent["mode"]
+  description?: string
+  budget?: { soft?: number; hard?: number }
+}): RunAgent {
   return {
     name: input.name,
     description: input.description,
     mode: input.mode,
     permission: [],
     options: {},
+    budget: input.budget,
   } as RunAgent
 }
 
@@ -146,6 +152,7 @@ function subagentTab(input: {
   description: string
   status?: FooterSubagentTab["status"]
   activity?: string
+  cost?: number
 }): FooterSubagentTab {
   return {
     sessionID: input.sessionID,
@@ -156,6 +163,7 @@ function subagentTab(input: {
     status: input.status ?? "running",
     lastUpdatedAt: 1,
     activity: input.activity,
+    cost: input.cost,
   }
 }
 
@@ -174,8 +182,9 @@ function footerState(input: Partial<FooterState> = {}): FooterState {
     first: false,
     interrupt: 0,
     exit: 0,
-    permissionMode: input.permissionMode ?? "normal",
+    permissionMode: "normal",
     judging: false,
+    ...input,
   }
 }
 
@@ -194,6 +203,16 @@ const SAMPLE_AGENTS: RunAgent[] = [
   agent({ name: "build", mode: "primary", description: "General coding agent" }),
   agent({ name: "plan", mode: "primary", description: "Planning without edits" }),
 ]
+
+// Budget-carrying agent (P4): soft/hard denominators for the statusline
+// budget pill gallery states below. Deliberately not in SAMPLE_AGENTS so
+// unrelated footer states keep rendering the plain (non-budget) cost pill.
+const BUDGET_AGENT: RunAgent = agent({
+  name: "budget-build",
+  mode: "primary",
+  description: "Budget-tracked coding agent",
+  budget: { soft: 1.5, hard: 2.5 },
+})
 
 const SAMPLE_TODOS: FooterTodoItem[] = [
   { status: "completed", content: "Set up project" },
@@ -245,6 +264,26 @@ const SAMPLE_SUBAGENT_TREE_TABS: FooterSubagentTab[] = [
     activity: 'Grep("SessionExecution")',
   }),
   subagentTab({ sessionID: "sub-2", label: "General", description: "Migrate config schema", status: "completed" }),
+]
+
+// Same tree fixture as above, but each task row also carries an accumulated
+// child-session cost (P4), muted at the row end.
+const SAMPLE_SUBAGENT_TREE_COST_TABS: FooterSubagentTab[] = [
+  subagentTab({
+    sessionID: "sub-1",
+    label: "Explore",
+    description: "Inspect auth flow",
+    status: "running",
+    activity: 'Grep("SessionExecution")',
+    cost: 0.03,
+  }),
+  subagentTab({
+    sessionID: "sub-2",
+    label: "General",
+    description: "Migrate config schema",
+    status: "completed",
+    cost: 0.11,
+  }),
 ]
 
 // entryBody() (entry.body.ts) only renders "assistant"/"tool" commits for
@@ -861,6 +900,31 @@ const SCROLLBACK_ERROR_COMMIT: StreamCommit = {
   source: "system",
 }
 
+// Governance UI (P4): rule/hook permission denials and budget-threshold
+// crossings both render as quiet, muted, one-line "system" notices --
+// matching how existing system lines (e.g. "resume session ...") look,
+// rather than an alarming error row.
+const SCROLLBACK_PERMISSION_DENIED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: '✗ permission denied: bash "git push origin main"',
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_BUDGET_SOFT_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "◈ budget: soft $1.50 crossed ($1.52)",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_BUDGET_HARD_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "◈ budget: hard $2.50 crossed — tools disabled, report only",
+  phase: "start",
+  source: "system",
+}
+
 const SCROLLBACK_CASES: { name: string; description: string; commits: StreamCommit[] }[] = [
   {
     name: "scrollback.markdown",
@@ -936,6 +1000,17 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
     name: "scrollback.error",
     description: "Session error entry rendered in the scrollback.",
     commits: [SCROLLBACK_ERROR_COMMIT],
+  },
+  {
+    name: "scrollback.permission-denied",
+    description: "Muted one-line notice for a rule/hook permission denial in the bound (main) session.",
+    commits: [SCROLLBACK_PERMISSION_DENIED_COMMIT],
+  },
+  {
+    name: "scrollback.budget-crossed",
+    description:
+      "Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only).",
+    commits: [SCROLLBACK_BUDGET_SOFT_COMMIT, SCROLLBACK_BUDGET_HARD_COMMIT],
   },
 ]
 
@@ -1269,6 +1344,18 @@ const CASES: GalleryCase[] = [
       }),
   },
   {
+    name: "footer.subagent-tree.cost",
+    description: "Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4).",
+    height: 12,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        subagent: { tabs: SAMPLE_SUBAGENT_TREE_COST_TABS, details: {}, permissions: [], questions: [] },
+        interact: typeShortPrompt,
+      }),
+  },
+  {
     name: "footer.statusline.accept-edits",
     description: "Statusline with the accept-edits permission mode pill visible beside a prompt composer.",
     height: 8,
@@ -1277,6 +1364,43 @@ const CASES: GalleryCase[] = [
         width,
         height,
         state: { permissionMode: "accept-edits" },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-ok",
+    description:
+      "Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 0.42 },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-soft",
+    description: "Statusline budget-fraction pill in warning color once session cost reaches the soft budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 1.52 },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-hard",
+    description: "Statusline budget-fraction pill in error color once session cost reaches the hard budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 2.5 },
       }),
   },
   {

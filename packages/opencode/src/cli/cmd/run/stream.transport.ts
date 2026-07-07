@@ -17,7 +17,9 @@
 // delayed idle from an older turn cannot complete a newer busy turn.
 import type { Event, GlobalEvent, OpencodeClient, PermissionRequest } from "@opencode-ai/sdk/v2"
 import { Context, Deferred, Effect, Exit, Layer, Scope, Stream } from "effect"
+import { budgetState } from "@opencode-ai/core/session/runner/budget"
 import { makeRuntime } from "@/effect/run-service"
+import * as Locale from "@/util/locale"
 import { modeDecision } from "./mode.shared"
 import {
   blockerStatus,
@@ -76,6 +78,10 @@ type StreamInput = {
   replayLimit?: number
   limits: () => Record<string, number>
   providers?: () => RunProvider[]
+  // Current agent's USD budget, for the client-side budget-crossing
+  // scrollback notices (P4). Undefined/no thresholds set means the agent has
+  // no budget configured -- crossing detection is a no-op.
+  budget?: () => { soft?: number; hard?: number } | undefined
   footer: FooterApi
   trace?: Trace
   signal?: AbortSignal
@@ -126,6 +132,10 @@ type State = {
   blockerTick: number
   selectedSubagent?: string
   blockers: Map<string, number>
+  // Budget tiers already announced via a scrollback notice this session
+  // (P4). Per-transport, so a fresh session attach (session switch) starts
+  // clean, same as data.announced.
+  budgetFired: Set<"soft" | "hard">
 }
 
 type TransportService = {
@@ -155,6 +165,7 @@ function sid(event: Event): string | undefined {
     event.type === "session.next.shell.ended" ||
     event.type === "permission.asked" ||
     event.type === "permission.replied" ||
+    event.type === "permission.denied" ||
     event.type === "question.asked" ||
     event.type === "question.replied" ||
     event.type === "question.rejected" ||
@@ -394,6 +405,44 @@ function traceTabs(trace: Trace | undefined, prev: FooterSubagentTab[], next: Fo
   }
 }
 
+// Client-side budget-crossing detection (P4): the reducer (session-data.ts)
+// is agent-agnostic and never sees the current agent's budget, so this stays
+// in the stream bridge, next to the cost value it watches. Emits at most one
+// notice per tier per session -- fired tiers live on the per-transport
+// State.budgetFired set, so a session switch (fresh transport) resets them.
+function checkBudgetCrossing(
+  fired: Set<"soft" | "hard">,
+  cost: number,
+  budget: { soft?: number; hard?: number } | undefined,
+): StreamCommit[] {
+  if (!budget) {
+    return []
+  }
+
+  const commits: StreamCommit[] = []
+  if (budget.soft !== undefined && !fired.has("soft") && budgetState(cost, { soft: budget.soft }) === "soft") {
+    fired.add("soft")
+    commits.push({
+      kind: "system",
+      text: `◈ budget: soft ${Locale.money(budget.soft)} crossed (${Locale.money(cost)})`,
+      phase: "start",
+      source: "system",
+    })
+  }
+
+  if (budget.hard !== undefined && !fired.has("hard") && budgetState(cost, { hard: budget.hard }) === "hard") {
+    fired.add("hard")
+    commits.push({
+      kind: "system",
+      text: `◈ budget: hard ${Locale.money(budget.hard)} crossed — tools disabled, report only`,
+      phase: "start",
+      source: "system",
+    })
+  }
+
+  return commits
+}
+
 function createLayer(input: StreamInput) {
   return Layer.fresh(
     Layer.effect(
@@ -456,6 +505,7 @@ function createLayer(input: StreamInput) {
           footerView: { type: "prompt" },
           blockerTick: 0,
           blockers: new Map(),
+          budgetFired: new Set(),
         }
         let booting = true
         let replaying = false
@@ -956,6 +1006,15 @@ function createLayer(input: StreamInput) {
                 ? { visible: state.data.visible.get(visible.partID) }
                 : {}),
             })
+          }
+
+          if (
+            event.type === "message.updated" &&
+            event.properties.sessionID === input.sessionID &&
+            event.properties.info.role === "assistant" &&
+            typeof event.properties.info.cost === "number"
+          ) {
+            next.commits.push(...checkBudgetCrossing(state.budgetFired, event.properties.info.cost, input.budget?.()))
           }
 
           if (
