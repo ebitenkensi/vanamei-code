@@ -16,7 +16,7 @@ import {
 import { entryBody, entryCanStream, entryDone, entryFlags } from "./entry.body"
 import { entryColor, entryLook, entrySyntax } from "./scrollback.shared"
 import { turnSummaryCommit } from "./turn-summary"
-import { entryWriter, sameEntryGroup, separatorRows, spacerWriter, turnSummaryWriter } from "./scrollback.writer"
+import { entryWriter, needsDotPrefix, sameEntryGroup, separatorRows, spacerWriter, turnSummaryWriter } from "./scrollback.writer"
 import { type RunTheme } from "./theme"
 import type { RunDiffStyle, RunEntryBody, StreamCommit } from "./types"
 
@@ -338,7 +338,11 @@ export class RunScrollbackStream {
 
     this.active.body = body
     this.active.commit = commit
-    this.active.content += body.content
+    this.active.content += !this.active.content && needsDotPrefix(commit, body)
+      ? body.type === "markdown"
+        ? `⏺\n${body.content}`
+        : `⏺ ${body.content}`
+      : body.content
     await this.flushActive(false, false)
     if (this.active.rendered) {
       this.markRendered(this.active.commit)

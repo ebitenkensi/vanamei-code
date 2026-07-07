@@ -772,6 +772,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                             theme={theme}
                             background={() => runTheme().background}
                             placeholder={composer.placeholder}
+                            shell={composer.shell}
                             onSubmit={composer.onSubmit}
                             onKeyDown={composer.onKeyDown}
                             onContentChange={composer.onContentChange}

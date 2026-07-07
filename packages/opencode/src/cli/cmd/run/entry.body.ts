@@ -55,7 +55,7 @@ function userBody(raw: string): RunEntryBody {
 
   const lead = raw.match(/^\n+/)?.[0] ?? ""
   const body = lead ? raw.slice(lead.length) : raw
-  return textBody(`${lead}› ${body}`)
+  return textBody(`${lead}❯ ${body}`)
 }
 
 function reasoningBody(raw: string): RunEntryBody {

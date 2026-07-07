@@ -33,6 +33,12 @@ export function entryLook(commit: StreamCommit, theme: RunEntryTheme): { fg: Col
     }
   }
 
+  if (commit.kind === "tool" && commit.phase === "final") {
+    return {
+      fg: theme.system.body,
+    }
+  }
+
   if (commit.phase === "final") {
     return {
       fg: theme.system.body,

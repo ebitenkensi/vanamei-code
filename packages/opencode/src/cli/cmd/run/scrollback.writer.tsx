@@ -13,7 +13,7 @@ function todoText(item: { status: string; content: string }): string {
   }
 
   if (item.status === "cancelled") {
-    return `~[ ] ${item.content}~`
+    return `[~] ${item.content}`
   }
 
   if (item.status === "in_progress") {
@@ -24,7 +24,29 @@ function todoText(item: { status: string; content: string }): string {
 }
 
 function todoColor(theme: RunTheme, status: string) {
-  return status === "in_progress" ? theme.block.warning : theme.block.muted
+  if (status === "in_progress") {
+    return theme.block.highlight
+  }
+
+  if (status === "completed") {
+    return theme.footer.success
+  }
+
+  return theme.block.muted
+}
+
+function bashBlockContent(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => (line ? `⎿ ${line}` : line))
+    .join("\n")
+}
+
+function diffCounts(item: { diff: string; deletions?: number }): { additions: number; deletions: number } {
+  const lines = item.diff.split("\n")
+  const additions = lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length
+  const deletions = item.deletions ?? lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length
+  return { additions, deletions }
 }
 
 export function entryGroupKey(commit: StreamCommit): string | undefined {
@@ -76,6 +98,18 @@ export function entryLayout(commit: StreamCommit, body: RunEntryBody = entryBody
   }
 
   return "block"
+}
+
+export function needsDotPrefix(commit: StreamCommit, body: RunEntryBody): boolean {
+  if (commit.kind === "assistant") {
+    return body.type === "text" || body.type === "markdown"
+  }
+
+  if (commit.kind === "tool") {
+    return entryLayout(commit, body) === "inline"
+  }
+
+  return false
 }
 
 export function separatorRows(
@@ -187,40 +221,42 @@ export function RunEntryContent(props: {
       </Match>
       <Match when={diff_snapshot()}>
         <box width="100%" flexDirection="column" gap={1}>
-          {diff_snapshot()!.items.map((item) => (
-            <box width="100%" flexDirection="column" gap={1}>
-              <text width="100%" wrapMode="word" fg={theme().block.muted}>
-                {item.title}
-              </text>
-              {item.diff.trim() ? (
-                <box width="100%" paddingLeft={1}>
-                  <diff
-                    diff={item.diff}
-                    view="unified"
-                    filetype={toolFiletype(item.file)}
-                    syntaxStyle={syntax()}
-                    showLineNumbers={true}
-                    width="100%"
-                    wrapMode="word"
-                    fg={theme().block.text}
-                    addedBg={diffBg(theme().block.diffAddedBg)}
-                    removedBg={diffBg(theme().block.diffRemovedBg)}
-                    contextBg={diffBg(theme().block.diffContextBg)}
-                    addedSignColor={theme().block.diffHighlightAdded}
-                    removedSignColor={theme().block.diffHighlightRemoved}
-                    lineNumberFg={theme().block.diffLineNumber}
-                    lineNumberBg={diffBg(theme().block.diffContextBg)}
-                    addedLineNumberBg={diffBg(theme().block.diffAddedLineNumberBg)}
-                    removedLineNumberBg={diffBg(theme().block.diffRemovedLineNumberBg)}
-                  />
-                </box>
-              ) : (
-                <text width="100%" wrapMode="word" fg={theme().block.diffRemoved}>
-                  -{item.deletions ?? 0} line{item.deletions === 1 ? "" : "s"}
+          {diff_snapshot()!.items.map((item) => {
+            const counts = diffCounts(item)
+            return (
+              <box width="100%" flexDirection="column" gap={1}>
+                <text width="100%" wrapMode="word" fg={theme().block.muted}>
+                  {item.title}
                 </text>
-              )}
-            </box>
-          ))}
+                <text width="100%" wrapMode="word" fg={theme().block.muted}>
+                  +{counts.additions} / -{counts.deletions}
+                </text>
+                {item.diff.trim() ? (
+                  <box width="100%" paddingLeft={1}>
+                    <diff
+                      diff={item.diff}
+                      view="unified"
+                      filetype={toolFiletype(item.file)}
+                      syntaxStyle={syntax()}
+                      showLineNumbers={true}
+                      width="100%"
+                      wrapMode="word"
+                      fg={theme().block.text}
+                      addedBg={diffBg(theme().block.diffAddedBg)}
+                      removedBg={diffBg(theme().block.diffRemovedBg)}
+                      contextBg={diffBg(theme().block.diffContextBg)}
+                      addedSignColor={theme().block.diffHighlightAdded}
+                      removedSignColor={theme().block.diffHighlightRemoved}
+                      lineNumberFg={theme().block.diffLineNumber}
+                      lineNumberBg={diffBg(theme().block.diffContextBg)}
+                      addedLineNumberBg={diffBg(theme().block.diffAddedLineNumberBg)}
+                      removedLineNumberBg={diffBg(theme().block.diffRemovedLineNumberBg)}
+                    />
+                  </box>
+                ) : null}
+              </box>
+            )
+          })}
         </box>
       </Match>
       <Match when={task_snapshot()}>
@@ -305,11 +341,27 @@ export function entryWriter(input: {
   theme?: RunTheme
   opts?: ScrollbackOptions
 }): ScrollbackWriter {
+  const resolvedBody = input.body ?? entryBody(input.commit)
+  const adjustedBody =
+    needsDotPrefix(input.commit, resolvedBody) && (resolvedBody.type === "text" || resolvedBody.type === "markdown")
+      ? {
+          ...resolvedBody,
+          content: resolvedBody.type === "markdown" ? `⏺\n${resolvedBody.content}` : `⏺ ${resolvedBody.content}`,
+        }
+      : resolvedBody
+  const blockBody =
+    input.commit.kind === "tool" &&
+    input.commit.tool === "bash" &&
+    adjustedBody.type === "text" &&
+    entryLayout(input.commit, adjustedBody) === "block"
+      ? { ...adjustedBody, content: bashBlockContent(adjustedBody.content) }
+      : adjustedBody
+
   return createScrollbackWriter(
     (ctx) => (
       <RunEntryContent
         commit={input.commit}
-        body={input.body}
+        body={blockBody}
         theme={input.theme}
         opts={{ ...input.opts, suppressBackgrounds: true }}
         width={ctx.width}

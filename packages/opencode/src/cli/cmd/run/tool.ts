@@ -1270,9 +1270,10 @@ export function toolFrame(commit: StreamCommit, raw: string): ToolFrame {
 }
 
 function runBash(p: ToolProps<typeof BashTool>): ToolInline {
+  const command = p.input.command || ""
   return {
     icon: "$",
-    title: p.input.command || "",
+    title: command ? `Bash (${command})` : "Bash",
     mode: "block",
     body: p.frame.status === "completed" ? text(p.frame.state.output).trim() : undefined,
   }

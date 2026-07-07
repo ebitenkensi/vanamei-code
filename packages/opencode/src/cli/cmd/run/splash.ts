@@ -242,6 +242,13 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
     height = top + mark.length
   }
 
+  if (width >= 2) {
+    const bar = "─".repeat(Math.max(0, width - 2))
+    push(lines, 0, 0, `╭${bar}╮`, input.theme.right)
+    push(lines, 0, height + 1, `╰${bar}╯`, input.theme.right)
+  }
+  height += 2
+
   const root = new BoxRenderable(ctx.renderContext, {
     position: "absolute",
     left: 0,
