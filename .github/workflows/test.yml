@@ -79,6 +79,11 @@ jobs:
         working-directory: packages/opencode
         run: bun run test:httpapi
 
+      - name: Check UI gallery drift
+        if: runner.os == 'Linux'
+        working-directory: packages/opencode
+        run: LANG=C LC_ALL=C bun run ui-gallery -- --check
+
   e2e:
     name: e2e (${{ matrix.settings.name }})
     strategy:
