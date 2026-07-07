@@ -1,0 +1,16 @@
+────────────────────────────────────────────────────────────────────────────────
+  Commands                                                                 esc
+
+  Search
+
+  Session
+  Open editor                                                          /editor
+  View subagents                                                      1 active
+  Resume session                                                     /sessions
+  New session                                                             /new
+
+  Prompt
+  Skills                                                               /skills
+
+  Agent
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀

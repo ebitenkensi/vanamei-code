@@ -1,0 +1,20 @@
+
+────────────────────────────────────────────────────────────────────────────────
+
+  △ Permission required
+
+   # Shell command
+
+  $ git status --short                                                      █
+                                                                            █
+                                                                            █
+                                                                            █
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+
+   Allow once   Allow always   Reject     ⇆ select  enter confirm  esc reject
+

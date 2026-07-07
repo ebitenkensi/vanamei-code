@@ -1,0 +1,20 @@
+
+
+  Which footer should be the reference for spacing checks?
+
+  1. Permission                                                             █
+     Inspect the permission footer                                          █
+  2. Question                                                               █
+     Keep this question footer open                                         █
+  3. Prompt                                                                 █
+     Return to the normal composer                                          █
+                                                                            █
+
+
+
+
+
+
+
+  ↑↓ select  enter submit  esc dismiss
+

@@ -1,0 +1,20 @@
+
+
+   Checks   Confirm
+
+  Select the direct-mode cases you want to inspect next (select all that
+  apply)
+
+  1. [ ] Diff                                                               █
+     Show an edit diff in the footer                                        █
+  2. [ ] Task                                                               █
+     Show a structured task summary                                         █
+  3. [ ] Todo                                                               █
+     Show a todo snapshot                                                   ▀
+  4. [ ] Error
+     Show an error transcript row
+
+
+
+  ⇆ tab  ↑↓ select  enter toggle  esc dismiss
+

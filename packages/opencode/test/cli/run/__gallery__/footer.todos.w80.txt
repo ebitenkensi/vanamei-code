@@ -1,0 +1,12 @@
+
+❯
+
+ ✓ Set up project
+ ● Implement feature
+ ○ Write tests
+│ BUILD                                                              ctrl+p cmd
+
+
+
+
+

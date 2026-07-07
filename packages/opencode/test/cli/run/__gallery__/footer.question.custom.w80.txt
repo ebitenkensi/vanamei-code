@@ -1,0 +1,20 @@
+
+
+  What custom answer should appear in the footer preview?
+
+  1. Short note                                                             █
+     Keep the answer to one line                                            █
+  2. Wrapped note                                                           █
+     Use a longer answer to test wrapping                                   █
+  3. Type your own answer                                                   █
+                                                                            █
+                                                                            █
+
+
+
+
+
+
+
+  ↑↓ select  enter submit  esc dismiss
+

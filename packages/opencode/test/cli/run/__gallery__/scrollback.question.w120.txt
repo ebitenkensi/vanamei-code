@@ -1,0 +1,7 @@
+# Questions
+
+Which footer view should stay active while testing?
+Question
+
+Pick formatting previews
+Diff, Todo

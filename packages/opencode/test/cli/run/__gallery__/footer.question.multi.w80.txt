@@ -1,0 +1,20 @@
+
+
+   Layout   Rows   Confirm
+
+  Which footer view should stay active while testing?
+
+  1. Prompt                                                                 █
+     Return to prompt                                                       █
+  2. Question                                                               █
+     Keep question open                                                     █
+  3. Type your own answer                                                   █
+                                                                            █
+
+
+
+
+
+
+  ⇆ tab  ↑↓ select  enter confirm  esc dismiss
+

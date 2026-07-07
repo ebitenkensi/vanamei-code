@@ -1,0 +1,4 @@
+# Wrote /opt/opencode-demo/src/demo-format.ts
+
+  1 export const demo = 42
+  2

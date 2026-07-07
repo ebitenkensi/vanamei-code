@@ -1,0 +1,20 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  △ Permission required
+
+   # Explore Task
+
+  ◉ Inspect footer spacing across direct-mode prompts                                                               █
+                                                                                                                    █
+                                                                                                                    █
+                                                                                                                    █
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   Allow once   Allow always   Reject                                             ⇆ select  enter confirm  esc reject
+

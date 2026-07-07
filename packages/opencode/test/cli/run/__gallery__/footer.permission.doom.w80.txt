@@ -1,0 +1,20 @@
+
+────────────────────────────────────────────────────────────────────────────────
+
+  △ Permission required
+
+   ⟳ Continue after repeated failures
+
+  This keeps the session running despite repeated failures.                 █
+                                                                            █
+                                                                            █
+                                                                            █
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+
+   Allow once   Allow always   Reject     ⇆ select  enter confirm  esc reject
+

@@ -1,0 +1,1 @@
+Thinking: check whether the footer coalescing change affects paste latency before landing it.

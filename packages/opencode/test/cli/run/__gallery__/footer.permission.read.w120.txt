@@ -1,0 +1,20 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  △ Permission required
+
+   → Read /opt/opencode-demo/package.json
+
+  Path: /opt/opencode-demo/package.json                                                                             █
+                                                                                                                    █
+                                                                                                                    █
+                                                                                                                    █
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   Allow once   Allow always   Reject                                             ⇆ select  enter confirm  esc reject
+
