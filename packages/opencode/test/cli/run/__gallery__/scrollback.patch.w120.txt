@@ -1,4 +1,4 @@
-⏺ Patch(2 files)
+● Patch(2 files)
      # Patched src/demo-format.ts
 
      +1 / -1

@@ -25,6 +25,20 @@ function elbowLabel(tab: FooterSubagentTab): string {
   return "Error"
 }
 
+// Non-running header glyph. Running tabs show the animated braille spinner
+// instead (see the header row below) -- one spinner per tab, not two.
+function headerGlyph(tab: FooterSubagentTab): string {
+  if (tab.status === "completed") {
+    return "✓"
+  }
+
+  if (tab.status === "cancelled") {
+    return "○"
+  }
+
+  return "✗"
+}
+
 export function RunSubagentTree(props: { tabs: Accessor<FooterSubagentTab[]>; theme: () => RunFooterTheme }) {
   if (props.tabs().length === 0) return null
 
@@ -41,10 +55,20 @@ export function RunSubagentTree(props: { tabs: Accessor<FooterSubagentTab[]>; th
       <For each={props.tabs()}>
         {(tab) => (
           <box width="100%" flexDirection="column" gap={0} flexShrink={0} backgroundColor="transparent">
-            <box width="100%" height={1} flexDirection="row" gap={0} flexShrink={0} backgroundColor="transparent">
-              <text fg={statusColor(props.theme(), tab.status)} wrapMode="none" flexShrink={0}>
-                {"⏺ "}
-              </text>
+            <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+              {tab.status === "running" ? (
+                <box flexShrink={0}>
+                  <spinner
+                    frames={SPINNER_BRAILLE_FRAMES}
+                    interval={80}
+                    color={statusColor(props.theme(), tab.status)}
+                  />
+                </box>
+              ) : (
+                <text fg={statusColor(props.theme(), tab.status)} wrapMode="none" flexShrink={0}>
+                  {headerGlyph(tab)}
+                </text>
+              )}
               <text fg={props.theme().text} wrapMode="none" truncate flexGrow={1}>
                 {`Task(${tab.description})`}
                 <span style={{ fg: props.theme().muted }}>{` ${tab.label}`}</span>
@@ -57,18 +81,9 @@ export function RunSubagentTree(props: { tabs: Accessor<FooterSubagentTab[]>; th
               <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
                 {"  ⎿  "}
               </text>
-              {tab.status === "running" ? (
-                <box flexDirection="row" gap={1} flexShrink={0}>
-                  <spinner frames={SPINNER_BRAILLE_FRAMES} interval={80} color={props.theme().highlight} />
-                  <text fg={props.theme().muted} wrapMode="none" truncate>
-                    {tab.activity ?? "Running…"}
-                  </text>
-                </box>
-              ) : (
-                <text fg={tab.status === "error" ? props.theme().error : props.theme().muted} wrapMode="none" truncate>
-                  {elbowLabel(tab)}
-                </text>
-              )}
+              <text fg={tab.status === "error" ? props.theme().error : props.theme().muted} wrapMode="none" truncate>
+                {tab.status === "running" ? (tab.activity ?? "Running…") : elbowLabel(tab)}
+              </text>
             </box>
           </box>
         )}

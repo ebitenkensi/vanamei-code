@@ -151,7 +151,7 @@ export class RunScrollbackStream {
     })
     const style = entryLook(commit, this.theme.entry)
     // Streamed assistant markdown (and the rare dotted text case) hangs under
-    // a 2-column "⏺ " gutter instead of the flush-left body: the gutter and
+    // a 2-column "● " gutter instead of the flush-left body: the gutter and
     // the renderable become siblings in a row, so wrapped lines stay aligned
     // under the text rather than under the dot. Non-dotted bodies (tool
     // output, reasoning) keep the plain full-width layout.
@@ -196,7 +196,7 @@ export class RunScrollbackStream {
       surface.root.flexDirection = "row"
       surface.root.add(
         new TextRenderable(surface.renderContext, {
-          content: "⏺ ",
+          content: "● ",
           width: 2,
           wrapMode: "none",
           fg: style.fg,

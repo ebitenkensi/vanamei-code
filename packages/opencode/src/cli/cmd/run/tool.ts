@@ -65,9 +65,9 @@ export type ToolInline = {
   body?: string
 }
 
-// Scrollback header line: `⏺ label` with an optional dim suffix (working dir,
+// Scrollback header line: `● label` with an optional dim suffix (working dir,
 // agent type, etc). Unlike ToolInline (used by the non-interactive `run`
-// command), the ⏺ icon is always the same glyph -- only label/suffix vary.
+// command), the ● icon is always the same glyph -- only label/suffix vary.
 export type ToolHeader = {
   label: string
   suffix?: string

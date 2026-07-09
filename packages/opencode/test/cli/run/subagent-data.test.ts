@@ -20,7 +20,7 @@ function visible(commits: Array<Parameters<typeof entryBody>[0]>) {
     }
 
     if (body.type === "header") {
-      return [body.suffix ? `⏺ ${body.label} ${body.suffix}` : `⏺ ${body.label}`]
+      return [body.suffix ? `● ${body.label} ${body.suffix}` : `● ${body.label}`]
     }
 
     if (body.type === "structured") {
@@ -407,7 +407,7 @@ describe("run subagent data", () => {
     expect(visible(snapshot.details["child-1"]?.commits ?? [])).toEqual([
       "❯ Inspect footer tabs",
       "_Thinking:_ planning next steps",
-      "⏺ Bash(git status --short)",
+      "● Bash(git status --short)",
       "hello world",
     ])
     expect(snapshot.permissions).toEqual([

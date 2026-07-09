@@ -121,7 +121,7 @@ export function RunFooterSubagentBody(props: {
                 </box>
               ) : (
                 <text fg={statusColor(footer(), current().status)} wrapMode="none" truncate flexShrink={0}>
-                  ⏺
+                  ●
                 </text>
               )}
               <text fg={footer().text} wrapMode="none" truncate flexGrow={1} flexShrink={1}>

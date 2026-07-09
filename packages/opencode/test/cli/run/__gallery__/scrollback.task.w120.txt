@@ -1,4 +1,4 @@
-⏺ Task(Audit entry.body phase combinations for scrollback rendering) Explore
+● Task(Audit entry.body phase combinations for scrollback rendering) Explore
   ⎿  Done (1ms)
 
      Audited entry.body across all phase combinations for tool, text, and error commit kinds.

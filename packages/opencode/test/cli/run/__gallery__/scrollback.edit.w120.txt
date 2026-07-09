@@ -1,4 +1,4 @@
-⏺ Edit(/opt/opencode-demo/src/demo-format.ts)
+● Edit(/opt/opencode-demo/src/demo-format.ts)
   ⎿  +1 / -1
 
       1 - export const demo = 1

@@ -47,6 +47,7 @@ import type {
   FooterSessionTab,
   FooterState,
   FooterSubagentState,
+  FooterSubagentTab,
   FooterTodoItem,
   FooterView,
   PermissionReply,
@@ -125,6 +126,10 @@ const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
 const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
 const THEME_REFRESH_DELAYS = [1000, 1000] as const
+// How long a completed/cancelled/error subagent tab lingers in the tree
+// below the composer before it's pruned, so the footer doesn't accumulate
+// finished tasks indefinitely.
+const SUBAGENT_DONE_LINGER_MS = 10000
 
 function createEmptySubagentState(): FooterSubagentState {
   return {
@@ -230,6 +235,7 @@ export class RunFooter implements FooterApi {
   private interruptTimeout: NodeJS.Timeout | undefined
   private exitTimeout: NodeJS.Timeout | undefined
   private noticeTimeout: NodeJS.Timeout | undefined
+  private subagentDoneTimers = new Map<string, NodeJS.Timeout>()
   private noticeRestoreStatus = ""
   private statusVersion = 0
   private requestExitHandler: (() => boolean) | undefined
@@ -492,6 +498,7 @@ export class RunFooter implements FooterApi {
       }
 
       this.setSubagent(next.state)
+      this.syncSubagentDoneTimers(next.state.tabs)
       this.applyHeight()
       return
     }
@@ -1012,6 +1019,66 @@ export class RunFooter implements FooterApi {
       .catch(() => {})
   }
 
+  // Schedules pruning for any tab that just went terminal, cancels a pending
+  // prune if a tab is (re)running, and drops timers for tabs the server no
+  // longer reports. Delay accounts for lastUpdatedAt instead of always
+  // running the full window, so a tab that finished mid-replay doesn't get
+  // extra linger time.
+  private syncSubagentDoneTimers(tabs: FooterSubagentTab[]): void {
+    const seen = new Set<string>()
+    for (const tab of tabs) {
+      seen.add(tab.sessionID)
+      if (tab.status === "running") {
+        this.clearSubagentDoneTimer(tab.sessionID)
+        continue
+      }
+
+      if (this.subagentDoneTimers.has(tab.sessionID)) {
+        continue
+      }
+
+      const delay = Math.max(0, SUBAGENT_DONE_LINGER_MS - (Date.now() - tab.lastUpdatedAt))
+      const sessionID = tab.sessionID
+      this.subagentDoneTimers.set(
+        sessionID,
+        setTimeout(() => {
+          this.subagentDoneTimers.delete(sessionID)
+          this.pruneSubagentTab(sessionID)
+        }, delay),
+      )
+    }
+
+    for (const sessionID of [...this.subagentDoneTimers.keys()]) {
+      if (!seen.has(sessionID)) {
+        this.clearSubagentDoneTimer(sessionID)
+      }
+    }
+  }
+
+  private clearSubagentDoneTimer(sessionID: string): void {
+    const timeout = this.subagentDoneTimers.get(sessionID)
+    if (!timeout) {
+      return
+    }
+
+    clearTimeout(timeout)
+    this.subagentDoneTimers.delete(sessionID)
+  }
+
+  private pruneSubagentTab(sessionID: string): void {
+    if (this.isGone) {
+      return
+    }
+
+    const current = this.subagent()
+    if (!current.tabs.some((tab) => tab.sessionID === sessionID)) {
+      return
+    }
+
+    this.setSubagent({ ...current, tabs: current.tabs.filter((tab) => tab.sessionID !== sessionID) })
+    this.applyHeight()
+  }
+
   private clearInterruptTimer(): void {
     if (!this.interruptTimeout) {
       return
@@ -1200,6 +1267,7 @@ export class RunFooter implements FooterApi {
     this.clearInterruptTimer()
     this.clearExitTimer()
     this.clearNoticeTimer()
+    for (const sessionID of [...this.subagentDoneTimers.keys()]) this.clearSubagentDoneTimer(sessionID)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.renderer.off(CliRenderEvents.PALETTE, this.handlePalette)
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeRefresh)
