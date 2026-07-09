@@ -347,12 +347,22 @@ function syncTaskTab(data: SubagentData, part: ToolPart, children?: Set<string>)
     return false
   }
 
+  const existing = data.tabs.get(sessionID)
+
+  // Guard: never regress a terminal-status tab (completed/cancelled/error)
+  // back to "running" for the same tool call (same callID). A different
+  // callID means a genuinely new task invocation that may update the tab.
+  if (existing && existing.status !== "running" && taskStatus(part) === "running" && existing.callID === part.callID) {
+    ensureDetail(data, sessionID)
+    return false
+  }
+
   const next = {
     ...taskTab(part, sessionID),
-    activity: data.tabs.get(sessionID)?.activity,
-    cost: data.tabs.get(sessionID)?.cost,
+    activity: existing?.activity,
+    cost: existing?.cost,
   }
-  if (sameSubagentTab(data.tabs.get(sessionID), next)) {
+  if (existing && sameSubagentTab(existing, next)) {
     ensureDetail(data, sessionID)
     return false
   }
