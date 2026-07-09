@@ -506,9 +506,12 @@ export class RunFooter implements FooterApi {
         return
       }
 
+      const prevTabCount = this.subagent().tabs.length
       this.setSubagent(next.state)
       this.syncSubagentDoneTimers(next.state.tabs)
-      this.applyHeight()
+      if (next.state.tabs.length !== prevTabCount) {
+        this.applyHeight()
+      }
       return
     }
 

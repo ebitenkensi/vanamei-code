@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { For, Show, type Accessor } from "solid-js"
+import { createMemo, For, Show, type Accessor } from "solid-js"
 import { SPINNER_BRAILLE_FRAMES } from "@/cli/ui/component/spinner"
 import * as Locale from "@/util/locale"
 import { statusColor } from "./footer.subagent"
@@ -42,10 +42,15 @@ function headerGlyph(tab: FooterSubagentTab): string {
 export function RunSubagentTree(props: { tabs: Accessor<FooterSubagentTab[]>; theme: () => RunFooterTheme }) {
   if (props.tabs().length === 0) return null
 
+  // Derive height from tab count only, not the full array reference, so that
+  // cost/activity updates that don't change the tab count do NOT re-evaluate
+  // the outer box height (which would reflow the composer sibling above).
+  const rowCount = createMemo(() => subagentTreeRowCount(props.tabs()))
+
   return (
     <box
       width="100%"
-      height={subagentTreeRowCount(props.tabs())}
+      height={rowCount()}
       flexShrink={0}
       flexDirection="column"
       backgroundColor="transparent"
