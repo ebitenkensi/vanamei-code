@@ -48,6 +48,7 @@ import type {
   FooterState,
   FooterSubagentState,
   FooterSubagentTab,
+  FooterThinkingState,
   FooterTodoItem,
   FooterView,
   PermissionReply,
@@ -125,6 +126,7 @@ const AGENT_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
 const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
+const MAX_THINKING_ROWS = 10
 const THEME_REFRESH_DELAYS = [1000, 1000] as const
 // How long a completed/cancelled/error subagent tab lingers in the tree
 // below the composer before it's pruned, so the footer doesn't accumulate
@@ -227,6 +229,8 @@ export class RunFooter implements FooterApi {
   private setQueuedPrompts: Setter<FooterQueuedPrompt[]>
   private todos: Accessor<FooterTodoItem[]>
   private setTodos: Setter<FooterTodoItem[]>
+  private thinking: Accessor<FooterThinkingState | undefined>
+  private setThinking: Setter<FooterThinkingState | undefined>
   private sessions: Accessor<FooterSessionTab[]>
   private setSessions: Setter<FooterSessionTab[]>
   private promptRoute: FooterPromptRoute = { type: "composer" }
@@ -328,6 +332,9 @@ export class RunFooter implements FooterApi {
     const [todos, setTodos] = createSignal<FooterTodoItem[]>([])
     this.todos = todos
     this.setTodos = setTodos
+    const [thinking, setThinking] = createSignal<FooterThinkingState | undefined>()
+    this.thinking = thinking
+    this.setThinking = setThinking
     const [sessions, setSessions] = createSignal<FooterSessionTab[]>([])
     this.sessions = sessions
     this.setSessions = setSessions
@@ -353,6 +360,7 @@ export class RunFooter implements FooterApi {
               subagent: footer.subagent,
               queuedPrompts: footer.queuedPrompts,
               todos: footer.todos,
+              thinking: footer.thinking,
               sessions: footer.sessions,
               sessionID: options.sessionID,
               findFiles: options.findFiles,
@@ -392,6 +400,7 @@ export class RunFooter implements FooterApi {
               onQueuedRemove: footer.handleQueuedRemove,
               onSessionSelect: options.onSessionSelect,
               onSessionsOpen: options.onSessionsOpen,
+              onToggleThinking: () => footer.toggleThinking(),
             })
           },
         }),
@@ -509,6 +518,16 @@ export class RunFooter implements FooterApi {
       }
 
       this.setTodos(next.todos)
+      this.applyHeight()
+      return
+    }
+
+    if (next.type === "stream.thinking") {
+      if (this.isGone) {
+        return
+      }
+
+      this.setThinking((prev) => ({ ...next.thinking, expanded: prev?.expanded ?? false }))
       this.applyHeight()
       return
     }
@@ -754,7 +773,7 @@ export class RunFooter implements FooterApi {
   }
 
   private todoPanelVisible(): boolean {
-    return this.view().type === "prompt" && this.promptRoute.type === "composer" && !this.autocomplete
+    return this.view().type === "prompt" && this.todos().length > 0
   }
 
   private todoPanelRows(): number {
@@ -765,8 +784,35 @@ export class RunFooter implements FooterApi {
     return todoPanelRowCount(this.todos())
   }
 
+  private thinkingPanelVisible(): boolean {
+    return this.view().type === "prompt" && this.thinking()?.active === true
+  }
+
+  private thinkingPanelRows(): number {
+    const state = this.thinking()
+    if (!state?.active) {
+      return 0
+    }
+
+    if (!state.expanded) {
+      return 1
+    }
+
+    return Math.min(state.lines, MAX_THINKING_ROWS)
+  }
+
+  public toggleThinking(): void {
+    const current = this.thinking()
+    if (!current?.active) {
+      return
+    }
+
+    this.setThinking({ ...current, expanded: !current.expanded })
+    this.applyHeight()
+  }
+
   private subagentTreeRows(): number {
-    if (!this.todoPanelVisible()) {
+    if (this.view().type !== "prompt" || this.promptRoute.type !== "composer" || this.autocomplete) {
       return 0
     }
 
@@ -802,7 +848,7 @@ export class RunFooter implements FooterApi {
                             ? this.base + SUBAGENT_INSPECTOR_ROWS
                             : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
-    const total = height + this.todoPanelRows() + this.subagentTreeRows()
+    const total = height + this.todoPanelRows() + this.thinkingPanelRows() + this.subagentTreeRows()
     if (total !== this.renderer.footerHeight) {
       this.renderer.footerHeight = total
     }

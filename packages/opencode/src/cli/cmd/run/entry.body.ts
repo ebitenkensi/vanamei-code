@@ -128,7 +128,11 @@ export function entryFlags(commit: StreamCommit): EntryFlags {
 }
 
 export function entryDone(commit: StreamCommit): boolean {
-  if (commit.kind === "assistant" || commit.kind === "reasoning") {
+  if (commit.kind === "reasoning") {
+    return true
+  }
+
+  if (commit.kind === "assistant") {
     return commit.phase === "final"
   }
 
@@ -180,7 +184,7 @@ export function entryBody(commit: StreamCommit): RunEntryBody {
 
   if (commit.kind === "reasoning") {
     if (commit.phase === "start") {
-      return RUN_ENTRY_NONE
+      return textBody(raw)
     }
 
     if (commit.phase === "final") {

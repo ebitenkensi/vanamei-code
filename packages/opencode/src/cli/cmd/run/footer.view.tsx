@@ -49,6 +49,7 @@ import type {
   FooterSessionTab,
   FooterState,
   FooterSubagentState,
+  FooterThinkingState,
   FooterTodoItem,
   FooterView,
   PermissionReply,
@@ -97,6 +98,7 @@ type RunFooterViewProps = {
   subagent?: () => FooterSubagentState
   queuedPrompts?: () => FooterQueuedPrompt[]
   todos?: () => FooterTodoItem[]
+  thinking?: () => FooterThinkingState | undefined
   sessions?: () => FooterSessionTab[]
   sessionID?: () => string | undefined
   theme: () => RunTheme
@@ -128,6 +130,7 @@ type RunFooterViewProps = {
   onQueuedRemove: (messageID: string) => Promise<boolean>
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
+  onToggleThinking?: () => void
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
@@ -671,6 +674,20 @@ export function RunFooterView(props: RunFooterViewProps) {
     bindings: props.tuiConfig.keybinds.get("session.queued_prompts"),
   }))
 
+  useBindings(() => ({
+    mode: OPENCODE_BASE_MODE,
+    enabled: active().type === "prompt" && (props.thinking?.()?.active ?? false),
+    commands: [
+      {
+        name: "session.toggle.thinking",
+        title: "Toggle thinking panel",
+        category: "Session",
+        run: () => props.onToggleThinking?.(),
+      },
+    ],
+    bindings: props.tuiConfig.keybinds.get("display_thinking"),
+  }))
+
   createEffect(() => {
     const current = route()
     if (current.type !== "subagent") {
@@ -749,6 +766,18 @@ export function RunFooterView(props: RunFooterViewProps) {
         when={inspecting()}
         fallback={
           <box width="100%" flexDirection="column" gap={0}>
+            <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
+              <RunFooterTodoPanel todos={props.todos!} theme={theme} />
+            </Show>
+
+            <Show when={active().type === "prompt"}>
+              <RunFooterThinkingPanel
+                thinking={() => props.thinking?.()}
+                theme={theme}
+                onToggle={props.onToggleThinking}
+              />
+            </Show>
+
             <For each={[promptView()]}>
               {() => (
                 <box
@@ -953,10 +982,6 @@ export function RunFooterView(props: RunFooterViewProps) {
               />
             </Show>
 
-            <Show when={!panel() && !menu() && (props.todos?.() ?? []).length > 0}>
-              <RunFooterTodoPanel todos={props.todos!} theme={theme} />
-            </Show>
-
             <Show when={!panel() && !menu() && tabs().length > 0}>
               <RunSubagentTree tabs={tabs} theme={theme} />
             </Show>
@@ -1093,6 +1118,83 @@ export function RunFooterView(props: RunFooterViewProps) {
         </box>
       </Show>
     </box>
+  )
+}
+
+export const MAX_THINKING_ROWS = 10
+
+export function thinkingPanelRowCount(state: FooterThinkingState | undefined): number {
+  if (!state?.active) {
+    return 0
+  }
+
+  if (!state.expanded) {
+    return 1
+  }
+
+  return Math.min(state.lines, MAX_THINKING_ROWS)
+}
+
+function RunFooterThinkingPanel(props: {
+  thinking: () => FooterThinkingState | undefined
+  theme: () => RunFooterTheme
+  onToggle?: () => void
+}) {
+  const state = createMemo(() => props.thinking())
+  const visible = createMemo(() => state()?.active === true)
+
+  return (
+    <Show when={visible()}>
+      <box
+        width="100%"
+        height={thinkingPanelRowCount(state())}
+        flexShrink={0}
+        flexDirection="column"
+        backgroundColor="transparent"
+        paddingLeft={1}
+        paddingRight={1}
+      >
+        <Show
+          when={state()?.expanded}
+          fallback={
+            <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+              <text wrapMode="none" truncate flexGrow={1}>
+                <span style={{ fg: props.theme().muted, dim: true }}>
+                  ✻ Thinking… ({state()?.lines ?? 0} lines)
+                </span>
+              </text>
+              <Show when={props.onToggle}>
+                <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+                  [toggle]
+                </text>
+              </Show>
+            </box>
+          }
+        >
+          <box width="100%" flexDirection="column" gap={0} flexShrink={0}>
+            <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+              <text wrapMode="none" truncate flexGrow={1}>
+                <span style={{ fg: props.theme().muted, dim: true }}>
+                  ✻ Thinking ({state()?.lines ?? 0} lines)
+                </span>
+              </text>
+              <Show when={props.onToggle}>
+                <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+                  [collapse]
+                </text>
+              </Show>
+            </box>
+            <box width="100%" flexGrow={1} flexShrink={1} backgroundColor="transparent" paddingLeft={1}>
+              <text wrapMode="word" truncate flexGrow={1}>
+                <span style={{ fg: props.theme().muted, dim: true }}>
+                  {state()?.text ?? ""}
+                </span>
+              </text>
+            </box>
+          </box>
+        </Show>
+      </box>
+    </Show>
   )
 }
 

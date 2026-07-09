@@ -146,6 +146,13 @@ export type FooterTodoItem = {
 
 export type FooterTodoState = FooterTodoItem[]
 
+export type FooterThinkingState = {
+  active: boolean
+  text: string
+  lines: number
+  expanded: boolean
+}
+
 export type ToolTodoSnapshot = {
   kind: "todo"
   items: FooterTodoItem[]
@@ -248,6 +255,7 @@ export type FooterOutput = {
   view?: FooterView
   subagent?: FooterSubagentState
   todos?: FooterTodoState
+  thinking?: FooterThinkingState
 }
 
 // Typed messages sent to RunFooter.event(). The prompt queue and stream
@@ -315,6 +323,10 @@ export type FooterEvent =
   | {
       type: "stream.todo"
       todos: FooterTodoState
+    }
+  | {
+      type: "stream.thinking"
+      thinking: FooterThinkingState
     }
   | {
       type: "sessions"

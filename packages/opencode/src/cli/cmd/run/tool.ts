@@ -609,26 +609,8 @@ function snapTask(p: ToolProps<typeof TaskTool>): ToolSnapshot {
   }
 }
 
-function snapTodo(p: ToolProps<typeof TodoWriteTool>): ToolSnapshot {
-  const items = list<{ status?: string; content?: string }>(p.frame.input.todos).flatMap((item) => {
-    const content = typeof item?.content === "string" ? item.content : ""
-    if (!content) {
-      return []
-    }
-
-    return [
-      {
-        status: typeof item.status === "string" ? item.status : "",
-        content,
-      },
-    ]
-  })
-
-  return {
-    kind: "todo",
-    items,
-    tail: "",
-  }
+function snapTodo(_p: ToolProps<typeof TodoWriteTool>): ToolSnapshot | undefined {
+  return undefined
 }
 
 function snapQuestion(p: ToolProps<typeof QuestionTool>): ToolSnapshot {
@@ -826,36 +808,8 @@ function headerTodo(): ToolHeader {
   return { label: "Update Todos" }
 }
 
-function scrollTodoFinal(p: ToolProps<typeof TodoWriteTool>): string {
-  const items = list<{ status?: string }>(p.input.todos)
-  const time = span(p.frame.state)
-  if (items.length === 0) {
-    if (!time) {
-      return "0 todos"
-    }
-
-    return `0 todos · ${time}`
-  }
-
-  const doneN = items.filter((item) => item.status === "completed").length
-  const runN = items.filter((item) => item.status === "in_progress").length
-  const left = items.length - doneN - runN
-  const tail = [`${items.length} total`]
-  if (doneN > 0) {
-    tail.push(`${doneN} done`)
-  }
-  if (runN > 0) {
-    tail.push(`${runN} active`)
-  }
-  if (left > 0) {
-    tail.push(`${left} pending`)
-  }
-
-  if (time) {
-    tail.push(time)
-  }
-
-  return tail.join(" · ")
+function scrollTodoFinal(_p: ToolProps<typeof TodoWriteTool>): string {
+  return "Done"
 }
 
 function headerQuestion(p: ToolProps<typeof QuestionTool>): ToolHeader {

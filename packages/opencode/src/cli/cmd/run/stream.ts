@@ -169,6 +169,14 @@ export function writeSessionOutput(input: OutputInput, out: StreamOutput): void 
     })
   }
 
+  if (out.footer?.thinking) {
+    input.trace?.write("ui.thinking", { thinking: out.footer.thinking })
+    input.footer.event({
+      type: "stream.thinking",
+      thinking: out.footer.thinking,
+    })
+  }
+
   if (!out.footer?.view) {
     return
   }

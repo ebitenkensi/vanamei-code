@@ -27,7 +27,7 @@
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
-import type { FooterOutput, FooterPatch, FooterTodoItem, FooterView, StreamCommit } from "./types"
+import type { FooterOutput, FooterPatch, FooterThinkingState, FooterTodoItem, FooterView, StreamCommit } from "./types"
 
 type Tokens = {
   input?: number
@@ -526,7 +526,19 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
       return
     }
     if (kind === "reasoning" && chunk) {
-      chunk = `Thinking: ${chunk.replace(/\[REDACTED\]/g, "")}`
+      // Compact header: emit one line into scrollback, full text goes to footer panel
+      const clean = chunk.replace(/\[REDACTED\]/g, "")
+      data.sent.set(partID, text.length)
+      data.visible.set(partID, (data.visible.get(partID) ?? "") + clean)
+      commits.push({
+        kind,
+        text: "✻ Thinking…",
+        phase: "start",
+        source: kind,
+        messageID: msg,
+        partID,
+      })
+      return
     }
     if (kind === "assistant" && chunk) {
       chunk = stripEcho(data, msg, chunk)
@@ -534,6 +546,15 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
         return
       }
     }
+  }
+
+  // Subsequent reasoning chunks: accumulate silently into visible (footer panel),
+  // never push a progress commit into scrollback. The one compact start commit
+  // was already emitted above when sent === 0.
+  if (kind === "reasoning") {
+    data.sent.set(partID, text.length)
+    data.visible.set(partID, (data.visible.get(partID) ?? "") + chunk)
+    return
   }
 
   if (chunk) {
@@ -737,6 +758,20 @@ function failTool(part: ToolPart, text: string): SessionCommit {
   })
 }
 
+function extractThinking(data: SessionData): FooterThinkingState | undefined {
+  // Find the active reasoning part (the one with text but no end yet)
+  for (const [partID, kind] of data.part.entries()) {
+    if (kind !== "reasoning") continue
+    if (data.ids.has(partID)) continue
+    if (data.end.has(partID)) continue
+    const text = data.visible.get(partID) ?? data.text.get(partID) ?? ""
+    if (!text.trim()) continue
+    const lines = text.split("\n").length
+    return { active: true, text, lines, expanded: false }
+  }
+  return undefined
+}
+
 function extractTodos(input: unknown): FooterTodoItem[] | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined
@@ -934,6 +969,15 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     flushPart(data, commits, partID)
+
+    // Emit footer thinking patch for reasoning text
+    if (kind === "reasoning") {
+      const thinking = extractThinking(data)
+      if (thinking) {
+        return out(data, commits, { thinking })
+      }
+    }
+
     return out(data, commits)
   }
 
@@ -1071,11 +1115,24 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     flushPart(data, commits, part.id)
 
     if (!part.time?.end) {
+      // Emit thinking patch for reasoning text while still streaming
+      if (kind === "reasoning") {
+        const thinking = extractThinking(data)
+        if (thinking) {
+          return out(data, commits, { thinking })
+        }
+      }
       return out(data, commits)
     }
 
     data.ids.add(part.id)
     drop(data, part.id)
+
+    // Clear thinking footer when reasoning part ends
+    if (kind === "reasoning") {
+      return out(data, commits, { thinking: { active: false, text: "", lines: 0, expanded: false } })
+    }
+
     return out(data, commits)
   }
 
