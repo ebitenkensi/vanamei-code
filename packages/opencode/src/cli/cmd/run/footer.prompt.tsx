@@ -48,7 +48,7 @@ type Auto = RunFooterMenuItem & {
 type SlashOption = RunFooterMenuItem & {
   kind: "slash"
   name: string
-  action?: "skill-menu" | "editor"
+  action?: "skill-menu" | "editor" | "model" | "agent" | "sessions" | "variant"
 }
 
 type PromptOption = Auto | SlashOption
@@ -76,6 +76,10 @@ type PromptInput = {
   onExitRequest?: () => boolean
   onExit: () => void
   onSkillMenu: () => void
+  onModel: () => void
+  onAgent: () => void
+  onSessions: () => void
+  onVariant: () => void
   onRows: (rows: number) => void
   onStatus: (text: string) => void
 }
@@ -443,6 +447,37 @@ export function createPromptState(input: PromptInput): PromptState {
             } satisfies SlashOption,
           ]
         : []),
+      // Panel openers — user commands of the same name take precedence
+      ...([
+        {
+          kind: "slash",
+          action: "model" as const,
+          name: "model",
+          display: "/model",
+          description: "switch model",
+        } satisfies SlashOption,
+        {
+          kind: "slash",
+          action: "agent" as const,
+          name: "agents",
+          display: "/agents",
+          description: "switch agent",
+        } satisfies SlashOption,
+        {
+          kind: "slash",
+          action: "sessions" as const,
+          name: "sessions",
+          display: "/sessions",
+          description: "resume session",
+        } satisfies SlashOption,
+        {
+          kind: "slash",
+          action: "variant" as const,
+          name: "variant",
+          display: "/variant",
+          description: "switch model variant",
+        } satisfies SlashOption,
+      ].filter((item) => !(input.commands() ?? []).some((cmd) => cmd.source !== "skill" && cmd.name === item.name))),
       ...(input.commands() ?? [])
         .filter((item) => item.source !== "skill" && !hidden.has(item.name))
         .map(
@@ -862,6 +897,30 @@ export function createPromptState(input: PromptInput): PromptState {
       if (next.action === "skill-menu") {
         cancelAutocomplete()
         input.onSkillMenu()
+        return
+      }
+
+      if (next.action === "model") {
+        cancelAutocomplete()
+        input.onModel()
+        return
+      }
+
+      if (next.action === "agent") {
+        cancelAutocomplete()
+        input.onAgent()
+        return
+      }
+
+      if (next.action === "sessions") {
+        cancelAutocomplete()
+        input.onSessions()
+        return
+      }
+
+      if (next.action === "variant") {
+        cancelAutocomplete()
+        input.onVariant()
         return
       }
 

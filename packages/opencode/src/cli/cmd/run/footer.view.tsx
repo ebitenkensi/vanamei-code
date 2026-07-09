@@ -426,6 +426,10 @@ export function RunFooterView(props: RunFooterViewProps) {
     onExitRequest: props.onExitRequest,
     onExit: props.onExit,
     onSkillMenu: openSkillMenu,
+    onModel: openModel,
+    onAgent: openAgent,
+    onSessions: openSessionsMenu,
+    onVariant: openVariant,
     onRows: props.onRows,
     onStatus: props.onStatus,
   })
