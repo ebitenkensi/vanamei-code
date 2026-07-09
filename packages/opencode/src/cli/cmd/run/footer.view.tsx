@@ -279,6 +279,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       ) ?? "",
   )
   const busy = createMemo(() => props.state().phase === "running")
+  const subagentRunning = createMemo(() => tabs().some((t) => t.status === "running"))
   const armed = createMemo(() => props.state().interrupt > 0)
   const exiting = createMemo(() => props.state().exit > 0)
   const queue = createMemo(() => props.state().queue)
@@ -1026,6 +1027,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                         mode={() => "responding"}
                         stalled={() => false}
                         color={() => theme().highlight as RGBA}
+                        animationsEnabled={() => !subagentRunning()}
                       />
                     </box>
                   </Show>
