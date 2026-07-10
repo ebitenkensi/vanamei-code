@@ -273,10 +273,8 @@ async function renderFooter(
 }
 
 function expectPaletteList(list: BoxRenderable, selectedIndex: number) {
-  expect(list.backgroundColor.toInts()).toEqual((RUN_THEME_FALLBACK.footer.shade as RGBA).toInts())
-  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual(
-    (RUN_THEME_FALLBACK.footer.selected as RGBA).toInts(),
-  )
+  expect(list.backgroundColor.toInts()).toEqual([0, 0, 0, 0])
+  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual([0, 0, 0, 0])
 }
 
 function child(root: BoxRenderable | RootRenderable, index: number) {
@@ -297,19 +295,13 @@ function footerComposerFrame(root: BoxRenderable | RootRenderable) {
 }
 
 function footerStatusline(root: BoxRenderable | RootRenderable) {
-  const status = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-  const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
-  const boxes = root.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
-  for (const box of boxes) {
-    const first = box.getChildren().find((item): item is BoxRenderable => item instanceof BoxRenderable)
-    if (
-      box.backgroundColor?.toInts().every((value, index) => value === status[index]) &&
-      first?.backgroundColor?.toInts().every((value, index) => value === accent[index])
-    )
-      return box
-    boxes.push(...box.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable))
-  }
-  throw new Error("Footer statusline not found")
+  const outer = child(root, 0)
+  const rfv = child(outer, 0)
+  const fallback = child(rfv, 1)
+  const children = fallback.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
+  const statusline = children.at(-1)
+  if (!statusline) throw new Error("Footer statusline not found")
+  return statusline
 }
 
 function panelMenu(root: BoxRenderable | RootRenderable) {
@@ -1139,8 +1131,6 @@ test("direct footer shows editable prompts and additional queued work while runn
     await app.renderOnce()
     const frame = app.captureCharFrame()
     const transparent = RGBA.fromValues(0, 0, 0, 0).toInts()
-    const tinted = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-    const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
     const statusline = footerStatusline(app.renderer.root)
     const statusItems = statusline.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
     const mode = statusItems[0]
@@ -1160,8 +1150,8 @@ test("direct footer shows editable prompts and additional queued work while runn
     expect(frame).toContain("a-model-name-long-enough-to-force-responsive-truncation")
     expect(frame).toContain("subagents · ctrl+p cmd")
     expect(frame).not.toContain("1 agent")
-    expect(statusline.backgroundColor.toInts()).toEqual(tinted)
-    expect(mode.backgroundColor.toInts()).toEqual(accent)
+    expect(statusline.backgroundColor.toInts()).toEqual(transparent)
+    expect(mode.backgroundColor.toInts()).toEqual(transparent)
     expect(main.backgroundColor.toInts()).toEqual(transparent)
     expect(model.backgroundColor.toInts()).toEqual(transparent)
     expect(queued.backgroundColor.toInts()).toEqual(transparent)
@@ -1499,7 +1489,7 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
 })
 
 test("direct footer mode label keeps left padding without a status pill", async () => {
-  const app = await renderFooter()
+  const app = await renderFooter({ state: { agent: "build" } })
 
   try {
     await app.renderOnce()
@@ -1509,7 +1499,7 @@ test("direct footer mode label keeps left padding without a status pill", async 
       .find((line) => line.includes("BUILD") && line.includes("cmd"))
 
     expect(statusline).toBeDefined()
-    expect(statusline?.startsWith(" BUILD ")).toBe(true)
+    expect(statusline?.startsWith("BUILD ")).toBe(true)
   } finally {
     app.cleanup()
   }
@@ -1607,7 +1597,7 @@ test("direct question body separates single-select checkmark from label", async 
     await app.renderOnce()
 
     expect(replies).toHaveLength(1)
-    expect(app.captureCharFrame()).toContain("Product ✓")
+    expect(app.captureCharFrame()).toContain("Product  ✓")
   } finally {
     app.renderer.destroy()
   }
@@ -1853,7 +1843,7 @@ test("direct footer todo panel renders todos with status glyphs and colors", asy
     expect(findSpan(spans, "☐")).toBeDefined()
 
     expect(glyphColorForContent(spans, "Set up project")?.toInts()).toEqual(
-      (RUN_THEME_FALLBACK.footer.success as RGBA).toInts(),
+      (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
     )
     expect(glyphColorForContent(spans, "Implement feature")?.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),

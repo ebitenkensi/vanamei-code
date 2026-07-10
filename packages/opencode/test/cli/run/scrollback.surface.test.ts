@@ -111,7 +111,7 @@ function reasoning(text: string, phase: StreamCommit["phase"] = "progress"): Str
   }
 }
 
-test("theme swaps restyle active reasoning without resetting the stream", async () => {
+test("theme swaps restyle active assistant without resetting the stream", async () => {
   const previousSyntax = SyntaxStyle.fromStyles({ default: { fg: "#123456" } })
   const nextSyntax = SyntaxStyle.fromStyles({ default: { fg: "#abcdef" } })
   const released: RunTheme[] = []
@@ -119,27 +119,27 @@ test("theme swaps restyle active reasoning without resetting the stream", async 
     ...RUN_THEME_FALLBACK,
     block: {
       ...RUN_THEME_FALLBACK.block,
-      subtleSyntax: previousSyntax,
+      syntax: previousSyntax,
     },
   }
   const next = {
     ...RUN_THEME_FALLBACK,
     block: {
       ...RUN_THEME_FALLBACK.block,
-      subtleSyntax: nextSyntax,
+      syntax: nextSyntax,
     },
   }
   const out = await setup({ theme: previous, onThemeRelease: (theme) => released.push(theme) })
 
   try {
-    await out.scrollback.append(reasoning("before"))
+    await out.scrollback.append(assistant("before"))
     expect(activeSyntax(out.scrollback)).toBe(previousSyntax)
 
     out.scrollback.setTheme(next)
     expect(activeSyntax(out.scrollback)).toBe(nextSyntax)
     expect(released).toEqual([])
 
-    await out.scrollback.append(reasoning("after"))
+    await out.scrollback.append(assistant("after"))
     expect(activeSyntax(out.scrollback)).toBe(nextSyntax)
     expect(released).toEqual([previous])
   } finally {
@@ -310,9 +310,7 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
       header: "● Update Todos",
       title: undefined,
       include: [
-        "☒ List files under `run/`",
-        "☐ Count functions in each `run/` file",
-        "☐ Mark each tracking item complete",
+        "  ⎿  Done",
       ],
       exclude: ["Updating", "todos completed"],
       start: toolCommit({

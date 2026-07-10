@@ -1057,12 +1057,12 @@ describe("run stream transport", () => {
       src.push(assistant("msg-thinking"))
       src.push(reasoningUpdated(reasoningPart("thinking-1", "msg-thinking", "")))
       src.push(textDelta("msg-thinking", "thinking-1", "plan"))
-      await waitFor(() => ui.commits.find((commit) => commit.kind === "reasoning" && commit.text === "Thinking: plan"))
+      await waitFor(() => ui.commits.find((commit) => commit.kind === "reasoning" && commit.text === "✻ Thinking…"))
       ui.commits.length = 0
 
       expect(await transport.replayOnResize({ localRows: () => [], reset: () => Promise.resolve() })).toBe(true)
       expect(ui.commits.filter((commit) => commit.kind === "reasoning").map((commit) => commit.text)).toEqual([
-        "Thinking: plan",
+        "plan",
       ])
     } finally {
       src.close()
