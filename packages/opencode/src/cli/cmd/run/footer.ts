@@ -240,6 +240,10 @@ export class RunFooter implements FooterApi {
   private exitTimeout: NodeJS.Timeout | undefined
   private noticeTimeout: NodeJS.Timeout | undefined
   private subagentDoneTimers = new Map<string, NodeJS.Timeout>()
+  // Sessions whose finished tab already lingered out. Every snapshot is rebuilt
+  // from the reducer's tab map, which keeps finished tasks, so without this the
+  // next subagent event resurrects the pruned row.
+  private subagentPruned = new Set<string>()
   private noticeRestoreStatus = ""
   private statusVersion = 0
   private requestExitHandler: (() => boolean) | undefined
@@ -506,10 +510,27 @@ export class RunFooter implements FooterApi {
         return
       }
 
+      // An empty snapshot means the reducer's tab map was reset (session
+      // switch), so nothing is left to resurrect.
+      if (next.state.tabs.length === 0) {
+        this.subagentPruned.clear()
+      }
+
+      // A pruned session that reports "running" again is a new task invocation,
+      // not the finished tab coming back, so let it re-enter the tree.
+      for (const tab of next.state.tabs) {
+        if (tab.status === "running") {
+          this.subagentPruned.delete(tab.sessionID)
+        }
+      }
+
+      const state = this.subagentPruned.size
+        ? { ...next.state, tabs: next.state.tabs.filter((tab) => !this.subagentPruned.has(tab.sessionID)) }
+        : next.state
       const prevTabCount = this.subagent().tabs.length
-      this.setSubagent(next.state)
-      this.syncSubagentDoneTimers(next.state.tabs)
-      if (next.state.tabs.length !== prevTabCount) {
+      this.setSubagent(state)
+      this.syncSubagentDoneTimers(state.tabs)
+      if (state.tabs.length !== prevTabCount) {
         this.applyHeight()
       }
       return
@@ -1119,6 +1140,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
+    this.subagentPruned.add(sessionID)
     const current = this.subagent()
     if (!current.tabs.some((tab) => tab.sessionID === sessionID)) {
       return
