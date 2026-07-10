@@ -1117,7 +1117,7 @@ export function RunAgentSelectBody(props: {
       return {
         category: "",
         display: Locale.titlecase(item.name),
-        footer: current ? "current" : item.description,
+        footer: current ? "current" : item.name,
         keywords: `${item.name} ${item.description ?? ""}`,
         name: item.name,
         current,

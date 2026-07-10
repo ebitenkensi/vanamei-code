@@ -1,6 +1,6 @@
 // Entry and exit splash banners for direct interactive mode scrollback.
 //
-// Renders the full opencode entry logo and a compact [O] exit badge, plus
+// Renders the full vanamei entry logo and a compact [V] exit badge, plus
 // session metadata and the resume command. These are scrollback snapshots, so
 // they become immutable terminal history once committed.
 //
@@ -18,7 +18,7 @@ import {
   type ScrollbackWriter,
 } from "@opentui/core"
 import * as Locale from "@/util/locale"
-import { go } from "@/cli/logo"
+import { badge } from "@/cli/logo"
 import type { RunSplashTheme } from "./theme"
 
 export const SPLASH_TITLE_LIMIT = 50
@@ -181,7 +181,7 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
   let height = 1
 
   if (kind === "entry") {
-    const mark = go.right.slice(1)
+    const mark = badge.slice(1)
     const top = 1
     const body_left = (mark[0]?.length ?? 0) + 2
 
@@ -194,7 +194,7 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
       })
     }
 
-    push(lines, body_left, top, "OpenCode", right, undefined, TextAttributes.BOLD)
+    push(lines, body_left, top, "Vanamei", right, undefined, TextAttributes.BOLD)
     if (input.detail) {
       push(
         lines,
@@ -209,7 +209,7 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
   }
 
   if (kind === "exit") {
-    const mark = go.right.slice(1)
+    const mark = badge.slice(1)
     const top = 1
     const body_left = (mark[0]?.length ?? 0) + 2
     const session = "Session  "
