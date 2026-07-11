@@ -68,6 +68,7 @@ const layer = Layer.effect(
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
+      let allAuto = true
 
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
@@ -84,6 +85,7 @@ const layer = Layer.effect(
           })
         }
         if (rule.action === "allow") continue
+        if (rule.action !== "auto") allAuto = false
         needsAsk = true
       }
 
@@ -98,6 +100,7 @@ const layer = Layer.effect(
         metadata: request.metadata,
         always: request.always,
         tool: request.tool,
+        auto: needsAsk ? allAuto : undefined,
       }
       yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
 

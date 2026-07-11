@@ -72,6 +72,7 @@ export type Event =
   | EventPermissionAsked
   | EventPermissionReplied
   | EventPermissionDenied
+  | EventPermissionJudged
   | EventTuiPromptAppend2
   | EventTuiCommandExecute2
   | EventTuiToastShow2
@@ -158,7 +159,7 @@ export type SnapshotFileDiff = {
   status?: "added" | "deleted" | "modified"
 }
 
-export type PermissionAction = "allow" | "deny" | "ask"
+export type PermissionAction = "allow" | "deny" | "ask" | "auto"
 
 export type PermissionRule = {
   permission: string
@@ -1390,6 +1391,7 @@ export type GlobalEvent = {
             messageID: string
             callID: string
           }
+          auto?: boolean
         }
       }
     | {
@@ -1408,6 +1410,21 @@ export type GlobalEvent = {
           sessionID: string
           permission: string
           patterns: Array<string>
+          tool?: {
+            messageID: string
+            callID: string
+          }
+        }
+      }
+    | {
+        id: string
+        type: "permission.judged"
+        properties: {
+          sessionID: string
+          requestID: string
+          permission: string
+          patterns: Array<string>
+          reason: string
           tool?: {
             messageID: string
             callID: string
@@ -1668,7 +1685,7 @@ export type ServerConfig = {
   cors?: Array<string>
 }
 
-export type PermissionActionConfig = "ask" | "allow" | "deny"
+export type PermissionActionConfig = "ask" | "allow" | "deny" | "auto"
 
 export type PermissionObjectConfig = {
   [key: string]: PermissionActionConfig
@@ -2499,6 +2516,7 @@ export type PermissionRequest = {
     messageID: string
     callID: string
   }
+  auto?: boolean
 }
 
 export type PermissionNotFoundError = {
@@ -2941,6 +2959,7 @@ export type V2Event =
   | PermissionAsked
   | PermissionReplied
   | PermissionDenied
+  | PermissionJudged
   | TuiPromptAppend
   | TuiCommandExecute
   | TuiToastShow
@@ -3901,7 +3920,7 @@ export type ProviderRequest = {
 
 export type AgentColor = string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
 
-export type PermissionV2Effect = "allow" | "deny" | "ask"
+export type PermissionV2Effect = "allow" | "deny" | "ask" | "auto"
 
 export type PermissionV2Rule = {
   action: string
@@ -5740,6 +5759,7 @@ export type PermissionAsked = {
       messageID: string
       callID: string
     }
+    auto?: boolean
   }
 }
 
@@ -5778,6 +5798,31 @@ export type PermissionDenied = {
     sessionID: string
     permission: string
     patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
+export type PermissionJudged = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "permission.judged"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    requestID: string
+    permission: string
+    patterns: Array<string>
+    reason: string
     tool?: {
       messageID: string
       callID: string
@@ -6917,6 +6962,7 @@ export type EventPermissionAsked = {
       messageID: string
       callID: string
     }
+    auto?: boolean
   }
 }
 
@@ -6937,6 +6983,22 @@ export type EventPermissionDenied = {
     sessionID: string
     permission: string
     patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
+export type EventPermissionJudged = {
+  id: string
+  type: "permission.judged"
+  properties: {
+    sessionID: string
+    requestID: string
+    permission: string
+    patterns: Array<string>
+    reason: string
     tool?: {
       messageID: string
       callID: string

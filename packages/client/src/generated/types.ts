@@ -143,7 +143,7 @@ export type AgentsListOutput = {
     readonly permissions: ReadonlyArray<{
       readonly action: string
       readonly resource: string
-      readonly effect: "allow" | "deny" | "ask"
+      readonly effect: "allow" | "deny" | "ask" | "auto"
     }>
   }>
 }
@@ -2396,7 +2396,7 @@ export type PermissionsCreateInput = {
 }
 
 export type PermissionsCreateOutput = {
-  readonly data: { readonly id: string; readonly effect: "allow" | "deny" | "ask" }
+  readonly data: { readonly id: string; readonly effect: "allow" | "deny" | "ask" | "auto" }
 }["data"]
 
 export type PermissionsListInput = { readonly sessionID: { readonly sessionID: string }["sessionID"] }

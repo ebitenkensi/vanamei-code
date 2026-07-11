@@ -4,7 +4,7 @@ import { Schema } from "effect"
 import { define, inventory } from "../event"
 import { ascending } from "../identifier"
 import { Project } from "../project"
-import { statics } from "../schema"
+import { optional, statics } from "../schema"
 import { SessionID } from "../session-id"
 
 export const ID = Schema.String.check(Schema.isStartsWith("per")).pipe(
@@ -13,7 +13,7 @@ export const ID = Schema.String.check(Schema.isStartsWith("per")).pipe(
 )
 export type ID = typeof ID.Type
 
-export const Action = Schema.Literals(["allow", "deny", "ask"]).annotate({ identifier: "PermissionAction" })
+export const Action = Schema.Literals(["allow", "deny", "ask", "auto"]).annotate({ identifier: "PermissionAction" })
 export type Action = typeof Action.Type
 
 export const Rule = Schema.Struct({ permission: Schema.String, pattern: Schema.String, action: Action }).annotate({
@@ -32,6 +32,7 @@ export const Request = Schema.Struct({
   metadata: Schema.Record(Schema.String, Schema.Unknown),
   always: Schema.Array(Schema.String),
   tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
+  auto: optional(Schema.Boolean),
 }).annotate({ identifier: "PermissionRequest" })
 export type Request = typeof Request.Type
 
@@ -72,4 +73,15 @@ const Denied = define({
     tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
   },
 })
-export const Event = { Asked, Replied, Denied, Definitions: inventory(Asked, Replied, Denied) }
+const Judged = define({
+  type: "permission.judged",
+  schema: {
+    sessionID: SessionID,
+    requestID: ID,
+    permission: Schema.String,
+    patterns: Schema.Array(Schema.String),
+    reason: Schema.String,
+    tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
+  },
+})
+export const Event = { Asked, Replied, Denied, Judged, Definitions: inventory(Asked, Replied, Denied, Judged) }
