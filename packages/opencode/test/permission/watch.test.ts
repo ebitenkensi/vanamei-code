@@ -11,9 +11,13 @@ import { InstanceStore } from "../../src/project/instance-store"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 
-// P3: read session.automode field from the session model
-function isSessionAutomode(_sessionID: SessionID): Effect.Effect<boolean> {
-  return Effect.succeed(false)
+function isSessionAutomode(session: Session.Interface, sessionID: SessionID): Effect.Effect<boolean> {
+  return Effect.gen(function* () {
+    const s = yield* session.get(sessionID).pipe(
+      Effect.catch(() => Effect.succeed({ automode: undefined } as Session.Info)),
+    )
+    return s.automode === true
+  })
 }
 
 function runJudgeInline(
@@ -48,13 +52,14 @@ function startWatcherInline(scope: Scope.Scope) {
     const events: any = yield* EventV2Bridge.Service
     const judge = yield* Judge.Service
     const permission = yield* Permission.Service
+    const session = yield* Session.Service
 
     const unsubscribe = yield* events.listen((event: any) => {
       if (event.type !== Permission.Event.Asked.type) return Effect.void
       const request = event.data as PermissionV1.Request
       return Effect.gen(function* () {
         const byFlag = request.auto === true
-        const byToggle = yield* isSessionAutomode(request.sessionID)
+        const byToggle = yield* isSessionAutomode(session, request.sessionID)
         if (!byFlag && !byToggle) return
 
         yield* runJudgeInline(request, judge, permission, events).pipe(Effect.forkIn(scope))
@@ -77,38 +82,38 @@ const sessionInfo: Session.Info = {
   cost: 0,
 } as Session.Info
 
-const mockSession: Layer.Layer<Session.Service> = Layer.succeed(
-  Session.Service,
-  Session.Service.of({
-    get: () => Effect.succeed(sessionInfo),
-    list: () => Effect.succeed([]),
-    listGlobal: () => Effect.succeed([]),
-    create: () => Effect.succeed(sessionInfo),
-    fork: () => Effect.succeed(sessionInfo),
-    touch: () => Effect.void,
-    setTitle: () => Effect.void,
-    setArchived: () => Effect.void,
-    setMetadata: () => Effect.void,
-    setAgentModel: () => Effect.void,
-    setPermission: () => Effect.void,
-    setRevert: () => Effect.void,
-    clearRevert: () => Effect.void,
-    setSummary: () => Effect.void,
-    setShare: () => Effect.void,
-    setWorkspace: () => Effect.void,
-    diff: () => Effect.succeed([]),
-    messages: () => Effect.succeed([]),
-    children: () => Effect.succeed([]),
-    remove: () => Effect.void,
-    updateMessage: (msg: any) => Effect.succeed(msg),
-    removeMessage: () => Effect.succeed("" as any),
-    removePart: () => Effect.succeed("" as any),
-    getPart: () => Effect.succeed(undefined),
-    updatePart: (part: any) => Effect.succeed(part),
-    updatePartDelta: () => Effect.void,
-    findMessage: () => Effect.succeed({ _tag: "None" }) as any,
-  }),
-)
+const mockSessionInterface: Session.Interface = {
+  get: () => Effect.succeed(sessionInfo),
+  list: () => Effect.succeed([]),
+  listGlobal: () => Effect.succeed([]),
+  create: () => Effect.succeed(sessionInfo),
+  fork: () => Effect.succeed(sessionInfo),
+  touch: () => Effect.void,
+  setTitle: () => Effect.void,
+  setArchived: () => Effect.void,
+  setMetadata: () => Effect.void,
+  setAutomode: () => Effect.void,
+  setAgentModel: () => Effect.void,
+  setPermission: () => Effect.void,
+  setRevert: () => Effect.void,
+  clearRevert: () => Effect.void,
+  setSummary: () => Effect.void,
+  setShare: () => Effect.void,
+  setWorkspace: () => Effect.void,
+  diff: () => Effect.succeed([]),
+  messages: () => Effect.succeed([]),
+  children: () => Effect.succeed([]),
+  remove: () => Effect.void,
+  updateMessage: (msg: any) => Effect.succeed(msg),
+  removeMessage: () => Effect.succeed("" as any),
+  removePart: () => Effect.succeed("" as any),
+  getPart: () => Effect.succeed(undefined),
+  updatePart: (part: any) => Effect.succeed(part),
+  updatePartDelta: () => Effect.void,
+  findMessage: () => Effect.succeed({ _tag: "None" }) as any,
+}
+
+const mockSession: Layer.Layer<Session.Service> = Layer.succeed(Session.Service, Session.Service.of(mockSessionInterface))
 
 const noopBootstrap = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const baseLayer: any = Layer.provideMerge(
@@ -248,6 +253,7 @@ describe("watch - no auto flag", () => {
 })
 
 describe("watch - user replies first (race)", () => {
+
   test("suppresses Judged when reply already handled", async () => {
     await runTest(
       Effect.gen(function* () {
@@ -273,6 +279,67 @@ describe("watch - user replies first (race)", () => {
         yield* Fiber.await(fiber).pipe(Effect.catch(() => Effect.void))
       }),
       { outcome: "allowed" },
+    )
+  })
+})
+
+describe("watch - session automode toggle", () => {
+  test("invokes judge when session automode is enabled even without auto flag", async () => {
+    const automodeSessionInfo: Session.Info = { ...sessionInfo, automode: true }
+    const automodeMockSession: Layer.Layer<Session.Service> = Layer.succeed(
+      Session.Service,
+      Session.Service.of({
+        ...mockSessionInterface,
+        get: () => Effect.succeed(automodeSessionInfo),
+      }),
+    )
+    const automodeBaseLayer: any = Layer.provideMerge(
+      AppNodeBuilder.build(
+        LayerNode.group([Permission.node, EventV2Bridge.node, InstanceStore.node]),
+        [[InstanceStore.bootstrapNode, noopBootstrap]],
+      ),
+      automodeMockSession,
+    )
+
+    const automodeLayer: any = Layer.provideMerge(
+      automodeBaseLayer,
+      Layer.succeed(Judge.Service, Judge.Service.of({ judge: () => Effect.succeed({ outcome: "allowed" as const, reason: "" }) })),
+    )
+
+    function runWithAutomode(effect: any) {
+      const withInstance = Effect.gen(function* () {
+        const store = yield* InstanceStore.Service
+        return yield* store.provide({ directory: "/tmp/watch-automode-test" }, effect)
+      })
+      return (withInstance as any).pipe(
+        (e: any) => Effect.provide(e, automodeLayer),
+        (e: any) => Effect.scoped(e),
+        (e: any) => Effect.runPromise(e),
+      )
+    }
+
+    await runWithAutomode(
+      Effect.gen(function* () {
+        const scope = yield* Scope.Scope
+        yield* startWatcherInline(scope)
+        const events: any = yield* EventV2Bridge.Service
+        const judged = yield* Effect.forkScoped(expectEvent(events, Permission.Event.Judged.type))
+
+        const perm = yield* Permission.Service
+        yield* perm.ask({
+          sessionID: SessionID.make("ses_test"),
+          permission: "bash",
+          patterns: ["ls"],
+          metadata: {},
+          always: [],
+          ruleset: [{ permission: "bash", pattern: "*", action: "ask" }],
+        }).pipe(Effect.forkScoped)
+
+        const data = (yield* Fiber.join(judged)) as any
+        expect(data.permission).toBe("bash")
+        expect(data.patterns).toEqual(["ls"])
+        expect(data.reason).toBe("")
+      }),
     )
   })
 })

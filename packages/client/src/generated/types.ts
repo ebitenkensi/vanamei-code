@@ -249,6 +249,7 @@ export type SessionsListOutput = {
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
+    readonly automode?: boolean
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
@@ -311,6 +312,7 @@ export type SessionsCreateOutput = {
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
+    readonly automode?: boolean
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string
@@ -349,6 +351,7 @@ export type SessionsGetOutput = {
     readonly title: string
     readonly location: { readonly directory: string; readonly workspaceID?: string }
     readonly subpath?: string
+    readonly automode?: boolean
     readonly revert?: {
       readonly messageID: string
       readonly partID?: string

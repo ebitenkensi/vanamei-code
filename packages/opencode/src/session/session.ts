@@ -106,6 +106,7 @@ export function fromRow(row: SessionRow): Info {
     },
     share,
     metadata: row.metadata ?? undefined,
+    automode: row.automode != null ? row.automode === 1 : undefined,
     revert,
     permission: row.permission ? [...row.permission] : undefined,
     time: {
@@ -151,6 +152,7 @@ export function toRow(info: Info) {
         }
       : null,
     permission: info.permission,
+    automode: info.automode != null ? (info.automode ? 1 : 0) : null,
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -238,6 +240,7 @@ export const Info = Schema.Struct({
   model: optional(Model),
   version: Schema.String,
   metadata: optional(Metadata),
+  automode: optional(Schema.Boolean),
   time: Time,
   permission: optional(PermissionV1.Ruleset),
   revert: optional(Revert),
@@ -430,6 +433,7 @@ export interface Interface {
   readonly setTitle: (input: { sessionID: SessionID; title: string }) => Effect.Effect<void>
   readonly setArchived: (input: { sessionID: SessionID; time?: number }) => Effect.Effect<void>
   readonly setMetadata: (input: typeof SetMetadataInput.Type) => Effect.Effect<void>
+  readonly setAutomode: (input: { sessionID: SessionID; automode: boolean }) => Effect.Effect<void>
   readonly setAgentModel: (input: {
     sessionID: SessionID
     agent: string
@@ -764,6 +768,10 @@ const layer: Layer.Layer<
       yield* patch(input.sessionID, { metadata: input.metadata, time: { updated: Date.now() } }).pipe(Effect.orDie)
     })
 
+    const setAutomode = Effect.fn("Session.setAutomode")(function* (input: { sessionID: SessionID; automode: boolean }) {
+      yield* patch(input.sessionID, { automode: input.automode, time: { updated: Date.now() } }).pipe(Effect.orDie)
+    })
+
     const setAgentModel = Effect.fn("Session.setAgentModel")(function* (input: {
       sessionID: SessionID
       agent: string
@@ -915,6 +923,7 @@ const layer: Layer.Layer<
       setTitle,
       setArchived,
       setMetadata,
+      setAutomode,
       setAgentModel,
       setPermission,
       setRevert,

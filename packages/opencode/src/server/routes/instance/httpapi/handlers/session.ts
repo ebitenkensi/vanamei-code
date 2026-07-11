@@ -191,6 +191,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       if (ctx.payload.metadata !== undefined) {
         yield* session.setMetadata({ sessionID: ctx.params.sessionID, metadata: ctx.payload.metadata })
       }
+      if (ctx.payload.automode !== undefined) {
+        yield* session.setAutomode({ sessionID: ctx.params.sessionID, automode: ctx.payload.automode })
+      }
       if (ctx.payload.permission !== undefined) {
         yield* session.setPermission({
           sessionID: ctx.params.sessionID,

@@ -8,9 +8,16 @@ import { Session } from "@/session/session"
 import { SessionID } from "@/session/schema"
 import { Effect, Layer, Scope } from "effect"
 
-// P3: read session.automode field from the session model
-function isSessionAutomode(_sessionID: SessionID): Effect.Effect<boolean> {
-  return Effect.succeed(false)
+function isSessionAutomode(
+  session: Session.Interface,
+  sessionID: SessionID,
+): Effect.Effect<boolean> {
+  return Effect.gen(function* () {
+    const s = yield* session.get(sessionID).pipe(
+      Effect.catch(() => Effect.succeed({ automode: undefined } as Session.Info)),
+    )
+    return s.automode === true
+  })
 }
 
 function runJudge(
@@ -54,7 +61,7 @@ export const layer = Layer.effect(
       const request = event.data as PermissionV1.Request
       return Effect.gen(function* () {
         const byFlag = request.auto === true
-        const byToggle = yield* isSessionAutomode(request.sessionID)
+        const byToggle = yield* isSessionAutomode(session, request.sessionID)
         if (!byFlag && !byToggle) return
 
         yield* runJudge(request, judge, permission, events).pipe(Effect.forkIn(scope))
