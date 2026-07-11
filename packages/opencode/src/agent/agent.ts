@@ -268,6 +268,20 @@ const layer = Layer.effect(
             ),
             prompt: PROMPT_SUMMARY,
           },
+          "permission-judge": {
+            name: "permission-judge",
+            mode: "primary",
+            options: {},
+            native: true,
+            hidden: true,
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                "*": "deny",
+              }),
+              user,
+            ),
+          },
         }
 
         for (const [key, value] of Object.entries(cfg.agent ?? {})) {
