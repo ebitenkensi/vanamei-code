@@ -129,7 +129,7 @@ export function entryFlags(commit: StreamCommit): EntryFlags {
 
 export function entryDone(commit: StreamCommit): boolean {
   if (commit.kind === "reasoning") {
-    return true
+    return commit.phase !== "progress"
   }
 
   if (commit.kind === "assistant") {

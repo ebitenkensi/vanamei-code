@@ -555,12 +555,21 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     }
   }
 
-  // Subsequent reasoning chunks: accumulate silently into visible (footer panel),
-  // never push a progress commit into scrollback. The one compact start commit
-  // was already emitted above when sent === 0.
+  // Subsequent reasoning chunks: accumulate text for the footer panel and push a
+  // progress commit so reasoning content streams into scrollback incrementally.
   if (kind === "reasoning") {
     data.sent.set(partID, text.length)
     data.visible.set(partID, (data.visible.get(partID) ?? "") + chunk)
+    if (chunk) {
+      commits.push({
+        kind,
+        text: chunk,
+        phase: "progress",
+        source: kind,
+        messageID: msg,
+        partID,
+      })
+    }
     return
   }
 
