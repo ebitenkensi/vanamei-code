@@ -1230,6 +1230,17 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits)
   }
 
+  // AUTO pill state follows the server's session record. The /auto toggle
+  // round-trips through session.update, so this event both confirms the
+  // toggle and reflects changes made by other clients.
+  if (event.type === "session.updated") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    return out(data, commits, patch({ automode: event.properties.info.automode === true }))
+  }
+
   // Modified-file count for the ✎ pill (P3). Subagent sessions also emit
   // session.diff, but we only surface the bound session's count.
   if (event.type === "session.diff") {

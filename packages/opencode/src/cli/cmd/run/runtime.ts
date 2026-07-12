@@ -156,7 +156,6 @@ type RuntimeState = {
   includeFiles: boolean
   permissionMode: import("./mode.shared").PermissionMode
   pendingPermission?: PermissionRequest
-  automode?: boolean
 }
 
 function hasSession(input: RunRuntimeInput, state: RuntimeState) {
@@ -302,12 +301,18 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         return
       }
 
-      const current = state.automode ?? false
-      state.automode = !current
-      footer.event({ type: "stream.patch", patch: { automode: state.automode } })
-      log?.write("auto.toggle", { automode: state.automode })
+      // The server record is the source of truth: fetch before flipping so a
+      // toggle never desyncs after resume, session switch, or external change.
+      const response = await ctx.sdk.session.get({ sessionID: state.sessionID }).catch(() => undefined)
+      if (!response?.data || footer.isClosed) {
+        return
+      }
 
-      await ctx.sdk.session.update({ sessionID: state.sessionID, automode: state.automode })
+      const next = !(response.data.automode ?? false)
+      footer.event({ type: "stream.patch", patch: { automode: next } })
+      log?.write("auto.toggle", { automode: next })
+
+      await ctx.sdk.session.update({ sessionID: state.sessionID, automode: next })
     },
     onQuestionReply: async (next) => {
       if (state.demo?.questionReply(next)) {
@@ -524,6 +529,24 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     })
   }
 
+  // Initial fetch for the AUTO automode pill, mirroring loadDiff above.
+  // Live updates after this come from session.updated events (session-data.ts).
+  const loadAutomode = async (): Promise<void> => {
+    if (footer.isClosed || !state.sessionID) {
+      return
+    }
+
+    const response = await ctx.sdk.session.get({ sessionID: state.sessionID }).catch(() => undefined)
+    if (!response?.data || footer.isClosed) {
+      return
+    }
+
+    footer.event({
+      type: "stream.patch",
+      patch: { automode: response.data.automode === true },
+    })
+  }
+
   // Refreshes the /sessions panel's list. Fetched fresh on every panel open
   // (rather than cached alongside the startup catalog) so "updated" times
   // stay accurate across a long-running footer.
@@ -731,6 +754,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
           contextPercent: null,
           cost: 0,
           modified: 0,
+          automode: false,
           first: info.first,
         },
       })
@@ -743,6 +767,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       await ensureStream()
       await loadTodos().catch(() => {})
       await loadDiff().catch(() => {})
+      await loadAutomode().catch(() => {})
       await state.demo?.start()
     } catch (error) {
       footer.event({
@@ -876,6 +901,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
                   contextPercent: null,
                   cost: 0,
                   modified: 0,
+                  automode: false,
                   first: true,
                 },
               })
@@ -968,6 +994,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       await ensureStream()
       await loadTodos().catch(() => {})
       await loadDiff().catch(() => {})
+      await loadAutomode().catch(() => {})
     }
 
     if (!eager && input.resolveSession) {

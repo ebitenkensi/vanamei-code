@@ -798,4 +798,40 @@ describe("run session data", () => {
 
     expect(out.footer).toBeUndefined()
   })
+
+  test("updates the AUTO pill from session.updated for the bound session", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-1",
+        info: { id: "session-1", automode: true },
+      },
+    })
+
+    expect(out.footer?.patch).toEqual({ automode: true })
+  })
+
+  test("clears the AUTO pill when session.updated omits automode", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-1",
+        info: { id: "session-1" },
+      },
+    })
+
+    expect(out.footer?.patch).toEqual({ automode: false })
+  })
+
+  test("ignores session.updated events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-2",
+        info: { id: "session-2", automode: true },
+      },
+    })
+
+    expect(out.footer).toBeUndefined()
+  })
 })
