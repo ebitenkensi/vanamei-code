@@ -10,6 +10,7 @@ import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { pollWithTimeout } from "../lib/effect"
 
 function isSessionAutomode(session: Session.Interface, sessionID: SessionID): Effect.Effect<boolean> {
   return Effect.gen(function* () {
@@ -254,12 +255,49 @@ describe("watch - no auto flag", () => {
 
 describe("watch - user replies first (race)", () => {
 
+  function raceLayer(): any {
+    // Deliberation takes 500ms so the user always wins the race
+    const delayedJudge: any = Layer.succeed(
+      Judge.Service,
+      Judge.Service.of({
+        judge: () =>
+          Effect.gen(function* () {
+            yield* Effect.sleep("500 millis")
+            return { outcome: "allowed" as const, reason: "" }
+          }),
+      }),
+    )
+    return Layer.provideMerge(baseLayer, delayedJudge)
+  }
+
+  async function runRaceTest(effect: any) {
+    const withInstance = Effect.gen(function* () {
+      const store = yield* InstanceStore.Service
+      return yield* store.provide({ directory: "/tmp/watch-race-test" }, effect)
+    })
+    return (withInstance as any).pipe(
+      (e: any) => Effect.provide(e, raceLayer()),
+      (e: any) => Effect.scoped(e),
+      (e: any) => Effect.runPromise(e),
+    )
+  }
+
   test("suppresses Judged when reply already handled", async () => {
-    await runTest(
+    await runRaceTest(
       Effect.gen(function* () {
         const scope = yield* Scope.Scope
         yield* startWatcherInline(scope)
+        const events: any = yield* EventV2Bridge.Service
         const perm = yield* Permission.Service
+
+        const judgedDeferred = yield* Deferred.make<unknown>()
+        const unsubJudged = yield* events.listen((event: any) => {
+          if (event.type === Permission.Event.Judged.type) {
+            Deferred.doneUnsafe(judgedDeferred, Effect.succeed(event.data))
+          }
+          return Effect.void
+        })
+        yield* Effect.addFinalizer(() => unsubJudged)
 
         const fiber = yield* perm.ask({
           sessionID: SessionID.make("ses_test"),
@@ -270,15 +308,31 @@ describe("watch - user replies first (race)", () => {
           ruleset: [{ permission: "bash", pattern: "*", action: "auto" }],
         }).pipe(Effect.forkScoped)
 
-        yield* Effect.sleep("100 millis")
-        const pending = yield* perm.list()
-        if (pending.length > 0) {
-          yield* perm.reply({ requestID: pending[0].id, reply: "reject" }).pipe(Effect.catch(() => Effect.void))
-        }
+        // Use pollWithTimeout so we reply as soon as the request appears
+        const pending = yield* pollWithTimeout(
+          Effect.gen(function* () {
+            const list = yield* perm.list()
+            return list.length > 0 ? list[0] : undefined
+          }),
+          "pending request never appeared",
+          "3 seconds",
+        )
+        yield* perm.reply({ requestID: pending.id, reply: "reject" }).pipe(Effect.catch(() => Effect.void))
 
         yield* Fiber.await(fiber).pipe(Effect.catch(() => Effect.void))
+
+        // Allow any stray Judged publish to arrive before we check
+        yield* Effect.sleep("200 millis")
+
+        // Assert Judged was NOT published (Deferred.await times out)
+        const judged = yield* Deferred.await(judgedDeferred).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 millis",
+            orElse: () => Effect.succeed(null as any),
+          }),
+        )
+        expect(judged).toBeNull()
       }),
-      { outcome: "allowed" },
     )
   })
 })

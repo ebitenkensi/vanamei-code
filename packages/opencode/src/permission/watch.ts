@@ -33,17 +33,16 @@ function runJudge(
     if (verdict.outcome !== "allowed") return
 
     yield* permission.reply({ requestID: request.id, reply: "once" }).pipe(
+      Effect.andThen(events.publish(Permission.Event.Judged, {
+        sessionID: request.sessionID,
+        requestID: request.id,
+        permission: request.permission,
+        patterns: request.patterns,
+        reason: "",
+        tool: request.tool,
+      })),
       Effect.catchTag("Permission.NotFoundError", () => Effect.void),
     )
-
-    yield* events.publish(Permission.Event.Judged, {
-      sessionID: request.sessionID,
-      requestID: request.id,
-      permission: request.permission,
-      patterns: request.patterns,
-      reason: "",
-      tool: request.tool,
-    })
   })
 }
 
