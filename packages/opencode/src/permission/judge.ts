@@ -9,7 +9,7 @@ import { LLMEvent } from "@opencode-ai/llm"
 import { Context, Duration, Effect, Layer, Schema, Stream } from "effect"
 import * as Option from "effect/Option"
 
-export type Verdict = { outcome: "allowed" } | { outcome: "ask"; reason: string }
+export type Verdict = { outcome: "allowed"; reason: string } | { outcome: "ask"; reason: string }
 
 export interface Interface {
   readonly judge: (input: { request: PermissionV1.Request }) => Effect.Effect<Verdict>
@@ -88,20 +88,22 @@ export const layer = Layer.effect(
         const request = input.request
 
         // 1. Resolve agent
-        const ag = yield* agents.get("permission-judge").pipe(Effect.catch(() => Effect.succeed(undefined as Agent.Info | undefined)))
+        const ag = yield* agents.get("permission-judge").pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!ag) return { outcome: "ask" as const, reason: "" }
 
         // 2. Resolve model (following ensureTitle pattern from session/prompt.ts)
-        const sess = yield* session.get(request.sessionID).pipe(
-          Effect.catch(() => Effect.succeed(undefined as Session.Info | undefined)),
-        )
+        const sess = yield* session.get(request.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
         const sessionModel = sess?.model
         if (!sessionModel) return { outcome: "ask" as const, reason: "" }
 
         const mdl = ag.model
-          ? yield* provider.getModel(ag.model.providerID, ag.model.modelID).pipe(Effect.catch(() => Effect.succeed(undefined as Provider.Model | undefined)))
+          ? yield* provider
+              .getModel(ag.model.providerID, ag.model.modelID)
+              .pipe(Effect.catch(() => Effect.succeed(undefined)))
           : ((yield* provider.getSmallModel(sessionModel.providerID)) ??
-            (yield* provider.getModel(sessionModel.providerID, sessionModel.id).pipe(Effect.catch(() => Effect.succeed(undefined as Provider.Model | undefined)))))
+            (yield* provider
+              .getModel(sessionModel.providerID, sessionModel.id)
+              .pipe(Effect.catch(() => Effect.succeed(undefined)))))
         if (!mdl) return { outcome: "ask" as const, reason: "" }
 
         // 3. Find the most recent real user message for context
@@ -113,7 +115,8 @@ export const layer = Layer.effect(
           .pipe(Effect.catch(() => Effect.succeed(Option.none<SessionV1.WithParts>())))
         if (Option.isNone(found)) return { outcome: "ask" as const, reason: "" }
         const msg = found.value
-        const userInfo = msg.info as SessionV1.User
+        const userInfo = msg.info
+        if (userInfo.role !== "user") return { outcome: "ask" as const, reason: "" }
         const textParts = msg.parts.filter((p): p is SessionV1.TextPart => p.type === "text")
         const userPrompt = textParts.map((p) => p.text).join("\n")
 
@@ -142,7 +145,10 @@ export const layer = Layer.effect(
           .pipe(
             Stream.filter(LLMEvent.is.textDelta),
             Stream.map((e) => e.text),
-            Stream.runFold(() => "", (acc: string, s: string) => acc + s),
+            Stream.runFold(
+              () => "",
+              (acc: string, s: string) => acc + s,
+            ),
             Effect.timeout(Duration.seconds(20)),
             Effect.catch((error: unknown) => {
               if (error != null && typeof error === "object" && "_tag" in error && error._tag === "TimeoutError") {
@@ -160,7 +166,7 @@ export const layer = Layer.effect(
         if (!verdict || verdict.decision === "ask") {
           return { outcome: "ask" as const, reason: verdict?.reason ?? "" }
         }
-        return { outcome: "allowed" as const }
+        return { outcome: "allowed" as const, reason: verdict.reason }
       })
 
     return Service.of({ judge })
