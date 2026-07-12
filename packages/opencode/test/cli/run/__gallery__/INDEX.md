@@ -37,6 +37,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.subagent-tree.cost.w120.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
 | `footer.statusline.accept-edits.w80.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
+| `footer.statusline.auto.w80.txt` | Statusline with the AUTO automode pill visible beside a prompt composer. |
+| `footer.statusline.auto.w120.txt` | Statusline with the AUTO automode pill visible beside a prompt composer. |
 | `footer.statusline.budget-ok.w80.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-ok.w120.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-soft.w80.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
@@ -87,3 +89,5 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `scrollback.permission-denied.w120.txt` | Muted one-line notice for a rule/hook permission denial in the bound (main) session. |
 | `scrollback.budget-crossed.w80.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
 | `scrollback.budget-crossed.w120.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
+| `scrollback.permission-judged.w80.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |
+| `scrollback.permission-judged.w120.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |

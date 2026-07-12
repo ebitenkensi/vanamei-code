@@ -131,6 +131,7 @@ type RunFooterViewProps = {
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
   onToggleThinking?: () => void
+  onAutoToggle?: () => void
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
@@ -436,6 +437,7 @@ export function RunFooterView(props: RunFooterViewProps) {
     onVariant: openVariant,
     onRows: props.onRows,
     onStatus: props.onStatus,
+    onAutoToggle: props.onAutoToggle,
   })
   const shell = createMemo(() => prompt() && composer.shell())
   const menu = createMemo(() => prompt() && composer.visible())
@@ -517,6 +519,10 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     if (stats.pills.modified && modifiedCount() > 0) {
       items.push({ text: `✎ ${modifiedCount()}`, color: theme().success })
+    }
+
+    if (props.state().automode) {
+      items.push({ text: "AUTO", color: theme().highlight })
     }
 
     return items

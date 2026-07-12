@@ -184,6 +184,7 @@ function footerState(input: Partial<FooterState> = {}): FooterState {
     exit: 0,
     permissionMode: "normal",
     judging: false,
+    automode: undefined,
     ...input,
   }
 }
@@ -925,6 +926,13 @@ const SCROLLBACK_BUDGET_HARD_COMMIT: StreamCommit = {
   source: "system",
 }
 
+const SCROLLBACK_JUDGED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ Auto-allowed bash(ls) — safe operation",
+  phase: "start",
+  source: "system",
+}
+
 const SCROLLBACK_CASES: { name: string; description: string; commits: StreamCommit[] }[] = [
   {
     name: "scrollback.markdown",
@@ -1011,6 +1019,11 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
     description:
       "Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only).",
     commits: [SCROLLBACK_BUDGET_SOFT_COMMIT, SCROLLBACK_BUDGET_HARD_COMMIT],
+  },
+  {
+    name: "scrollback.permission-judged",
+    description: "Muted one-line notice for an auto-allowed permission by the LLM permission judge.",
+    commits: [SCROLLBACK_JUDGED_COMMIT],
   },
 ]
 
@@ -1364,6 +1377,17 @@ const CASES: GalleryCase[] = [
         width,
         height,
         state: { permissionMode: "accept-edits" },
+      }),
+  },
+  {
+    name: "footer.statusline.auto",
+    description: "Statusline with the AUTO automode pill visible beside a prompt composer.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        state: { automode: true },
       }),
   },
   {

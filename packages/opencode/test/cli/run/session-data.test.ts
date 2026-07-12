@@ -667,6 +667,79 @@ describe("run session data", () => {
     expect(out.commits).toEqual([])
   })
 
+  test("surfaces a permission.judged event as a system notice with permission, first pattern, and reason", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["ls", "git status"],
+        reason: "safe operation",
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash(ls) — safe operation",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("falls back to 'no reason' when permission.judged reason is empty", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        permission: "read",
+        patterns: ["/tmp/file.txt"],
+        reason: "",
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed read(/tmp/file.txt) — no reason",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("omits pattern parentheses when permission.judged has no patterns", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: [],
+        reason: "trusted",
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash — trusted",
+      }),
+    ])
+  })
+
+  test("ignores permission.judged events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-2",
+        permission: "bash",
+        patterns: ["*"],
+        reason: "n/a",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
   test("emits structured context/cost numbers for the statusline pills", () => {
     const out = reduceWithLimits(
       createSessionData(),

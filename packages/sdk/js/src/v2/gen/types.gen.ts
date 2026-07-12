@@ -207,6 +207,7 @@ export type Session = {
   metadata?: {
     [key: string]: unknown
   }
+  automode?: boolean
   time: {
     created: number
     updated: number
@@ -2264,6 +2265,7 @@ export type GlobalSession = {
   metadata?: {
     [key: string]: unknown
   }
+  automode?: boolean
   time: {
     created: number
     updated: number
@@ -3967,6 +3969,7 @@ export type SessionV2Info = {
   title: string
   location: LocationRef
   subpath?: string
+  automode?: boolean
   revert?: RevertState
 }
 
@@ -9737,6 +9740,7 @@ export type SessionUpdateData = {
     metadata?: {
       [key: string]: unknown
     }
+    automode?: boolean
     permission?: PermissionRuleset
     time?: {
       archived?: number

@@ -156,6 +156,7 @@ type RuntimeState = {
   includeFiles: boolean
   permissionMode: import("./mode.shared").PermissionMode
   pendingPermission?: PermissionRequest
+  automode?: boolean
 }
 
 function hasSession(input: RunRuntimeInput, state: RuntimeState) {
@@ -295,6 +296,18 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       state.pendingPermission = undefined
       await ctx.sdk.permission.reply({ requestID: pending.id, reply: "once" })
       footer.event({ type: "stream.view", view: { type: "prompt" } })
+    },
+    onAutoToggle: async () => {
+      if (!state.sessionID) {
+        return
+      }
+
+      const current = state.automode ?? false
+      state.automode = !current
+      footer.event({ type: "stream.patch", patch: { automode: state.automode } })
+      log?.write("auto.toggle", { automode: state.automode })
+
+      await ctx.sdk.session.update({ sessionID: state.sessionID, automode: state.automode })
     },
     onQuestionReply: async (next) => {
       if (state.demo?.questionReply(next)) {

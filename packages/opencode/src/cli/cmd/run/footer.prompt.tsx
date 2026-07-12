@@ -80,6 +80,7 @@ type PromptInput = {
   onAgent: () => void
   onSessions: () => void
   onVariant: () => void
+  onAutoToggle?: () => void
   onRows: (rows: number) => void
   onStatus: (text: string) => void
 }
@@ -428,6 +429,7 @@ export function createPromptState(input: PromptInput): PromptState {
       } satisfies SlashOption,
       { kind: "slash", name: "new", display: "/new", description: "start a new session" } satisfies SlashOption,
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
+      { kind: "slash", name: "auto", display: "/auto", description: "toggle LLM permission judge" } satisfies SlashOption,
     ]
     const hidden = new Set(builtins.map((item) => item.name))
     const showSkillMenu = !shell() && skillCommands().length > 0 && !hasSkillsCommand()
@@ -921,6 +923,12 @@ export function createPromptState(input: PromptInput): PromptState {
       if (next.action === "variant") {
         cancelAutocomplete()
         input.onVariant()
+        return
+      }
+
+      if (next.name === "auto") {
+        cancelAutocomplete()
+        input.onAutoToggle?.()
         return
       }
 

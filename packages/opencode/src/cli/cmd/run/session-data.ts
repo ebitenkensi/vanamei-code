@@ -183,6 +183,13 @@ function formatPermissionDenied(properties: { permission: string; patterns: stri
   return `✗ permission denied: ${properties.permission}${suffix}`
 }
 
+function formatPermissionJudged(properties: { permission: string; patterns: string[]; reason?: string }): string {
+  const pattern = properties.patterns[0]
+  const suffix = pattern ? `(${pattern})` : ""
+  const reason = properties.reason?.trim() || "no reason"
+  return `⏺ Auto-allowed ${properties.permission}${suffix} — ${reason}`
+}
+
 function msgErr(id: string): string {
   return `msg:${id}:error`
 }
@@ -1203,6 +1210,20 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     commits.push({
       kind: "system",
       text: formatPermissionDenied(event.properties),
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  if (event.type === "permission.judged") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    commits.push({
+      kind: "system",
+      text: formatPermissionJudged(event.properties),
       phase: "start",
       source: "system",
     })

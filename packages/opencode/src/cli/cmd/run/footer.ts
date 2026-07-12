@@ -113,6 +113,7 @@ type RunFooterOptions = {
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
   onPermissionModeCycle?: () => void
+  onAutoToggle?: () => void
   treeSitterClient?: TreeSitterClient
 }
 
@@ -405,6 +406,7 @@ export class RunFooter implements FooterApi {
               onSessionSelect: options.onSessionSelect,
               onSessionsOpen: options.onSessionsOpen,
               onToggleThinking: () => footer.toggleThinking(),
+              onAutoToggle: options.onAutoToggle,
             })
           },
         }),

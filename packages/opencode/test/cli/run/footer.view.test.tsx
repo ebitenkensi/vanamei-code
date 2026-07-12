@@ -1521,6 +1521,33 @@ test("direct footer mode label reflects a custom agent", async () => {
   }
 })
 
+test("direct footer shows AUTO pill when automode is enabled", async () => {
+  const app = await renderFooter({
+    width: 130,
+    state: { automode: true },
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).toContain("AUTO")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer hides AUTO pill when automode is off", async () => {
+  const app = await renderFooter({ width: 130, state: { automode: false } })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).not.toContain("AUTO")
+  } finally {
+    app.cleanup()
+  }
+})
+
 test("direct footer command panel selecting an agent dispatches onAgentSelect", async () => {
   const selected: string[] = []
   const app = await renderFooter({

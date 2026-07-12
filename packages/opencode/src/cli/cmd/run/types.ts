@@ -102,6 +102,7 @@ export type FooterState = {
   // Permission mode cycle state (P1). P3 will also surface judging state here.
   permissionMode: PermissionMode
   judging: boolean
+  automode?: boolean
 }
 
 // A partial update to FooterState. The footer merges this onto the current state.
