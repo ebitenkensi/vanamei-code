@@ -124,6 +124,7 @@ type RunFooterViewProps = {
   subagent?: () => FooterSubagentState
   queuedPrompts?: () => FooterQueuedPrompt[]
   todos?: () => FooterTodoItem[]
+  todoSummary?: () => boolean
   thinking?: () => FooterThinkingState | undefined
   sessions?: () => FooterSessionTab[]
   sessionID?: () => string | undefined
@@ -801,7 +802,7 @@ export function RunFooterView(props: RunFooterViewProps) {
         fallback={
           <box width="100%" flexDirection="column" gap={0}>
             <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
-              <RunFooterTodoPanel todos={props.todos!} theme={theme} />
+              <RunFooterTodoPanel todos={props.todos!} theme={theme} todoSummary={props.todoSummary} />
             </Show>
 
             <Show when={active().type === "prompt"}>
@@ -1248,7 +1249,7 @@ function RunFooterThinkingPanel(props: {
   )
 }
 
-function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme }) {
+function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme; todoSummary?: () => boolean }) {
   function glyph(status: string) {
     if (status === "in_progress" || status === "pending") return "☐"
     return "☒"
@@ -1260,48 +1261,63 @@ function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () =>
     return props.theme().muted
   }
 
-  const visible = createMemo(() => props.todos().slice(0, MAX_TODO_ROWS))
-  const overflow = createMemo(() => props.todos().length - MAX_TODO_ROWS)
+  const summary = () => props.todoSummary?.() ?? false
 
   return (
     <box
       width="100%"
-      height={todoPanelRowCount(props.todos())}
+      height={summary() ? 1 : todoPanelRowCount(props.todos())}
       flexShrink={0}
       flexDirection="column"
       backgroundColor="transparent"
       paddingLeft={1}
       paddingRight={1}
     >
-      <For each={visible()}>
-        {(item) => (
-          <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-            <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
-              {glyph(item.status)}
-            </text>
-            <text wrapMode="none" truncate flexGrow={1}>
-              <span
-                style={{
-                  fg:
-                    item.status === "in_progress"
-                      ? props.theme().warning
-                      : item.status === "completed"
-                        ? props.theme().muted
-                        : props.theme().muted,
-                  bold: item.status === "in_progress",
-                  strikethrough: item.status === "completed",
-                }}
-              >
-                {item.content}
-              </span>
-            </text>
-          </box>
-        )}
-      </For>
-      <Show when={overflow() > 0}>
-        <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
+      <Show
+        when={summary()}
+        fallback={
+          <>
+            <For each={props.todos().slice(0, MAX_TODO_ROWS)}>
+              {(item) => (
+                <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+                  <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
+                    {glyph(item.status)}
+                  </text>
+                  <text wrapMode="none" truncate flexGrow={1}>
+                    <span
+                      style={{
+                        fg:
+                          item.status === "in_progress"
+                            ? props.theme().warning
+                            : item.status === "completed"
+                              ? props.theme().muted
+                              : props.theme().muted,
+                        bold: item.status === "in_progress",
+                        strikethrough: item.status === "completed",
+                      }}
+                    >
+                      {item.content}
+                    </span>
+                  </text>
+                </box>
+              )}
+            </For>
+            <Show when={props.todos().length > MAX_TODO_ROWS}>
+              <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
+                <text fg={props.theme().muted} wrapMode="none" truncate>
+                  … +{props.todos().length - MAX_TODO_ROWS} more
+                </text>
+              </box>
+            </Show>
+          </>
+        }
+      >
+        <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+          <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+            ☒
+          </text>
           <text fg={props.theme().muted} wrapMode="none" truncate>
-            … +{overflow()} more
+            {props.todos().length} tasks completed
           </text>
         </box>
       </Show>

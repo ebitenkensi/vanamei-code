@@ -230,6 +230,8 @@ export class RunFooter implements FooterApi {
   private setQueuedPrompts: Setter<FooterQueuedPrompt[]>
   private todos: Accessor<FooterTodoItem[]>
   private setTodos: Setter<FooterTodoItem[]>
+  private todoSummary: Accessor<boolean>
+  private setTodoSummary: Setter<boolean>
   private thinking: Accessor<FooterThinkingState | undefined>
   private setThinking: Setter<FooterThinkingState | undefined>
   private sessions: Accessor<FooterSessionTab[]>
@@ -239,6 +241,7 @@ export class RunFooter implements FooterApi {
   private autocomplete = false
   private interruptTimeout: NodeJS.Timeout | undefined
   private exitTimeout: NodeJS.Timeout | undefined
+  private todoHideTimer: NodeJS.Timeout | undefined
   private noticeTimeout: NodeJS.Timeout | undefined
   private subagentDoneTimers = new Map<string, NodeJS.Timeout>()
   // Sessions whose finished tab already lingered out. Every snapshot is rebuilt
@@ -337,6 +340,9 @@ export class RunFooter implements FooterApi {
     const [todos, setTodos] = createSignal<FooterTodoItem[]>([])
     this.todos = todos
     this.setTodos = setTodos
+    const [todoSummary, setTodoSummary] = createSignal(false)
+    this.todoSummary = todoSummary
+    this.setTodoSummary = setTodoSummary
     const [thinking, setThinking] = createSignal<FooterThinkingState | undefined>()
     this.thinking = thinking
     this.setThinking = setThinking
@@ -365,6 +371,7 @@ export class RunFooter implements FooterApi {
               subagent: footer.subagent,
               queuedPrompts: footer.queuedPrompts,
               todos: footer.todos,
+              todoSummary: footer.todoSummary,
               thinking: footer.thinking,
               sessions: footer.sessions,
               sessionID: options.sessionID,
@@ -543,8 +550,24 @@ export class RunFooter implements FooterApi {
         return
       }
 
-      this.setTodos(next.todos)
-      this.applyHeight()
+      this.clearTodoHideTimer()
+      const allDone = next.todos.length > 0 && next.todos.every((t) => t.status === "completed")
+      if (allDone) {
+        this.setTodoSummary(true)
+        this.setTodos(next.todos)
+        this.applyHeight()
+        this.todoHideTimer = setTimeout(() => {
+          this.todoHideTimer = undefined
+          if (this.isGone) return
+          this.setTodoSummary(false)
+          this.setTodos([])
+          this.applyHeight()
+        }, 2500)
+      } else {
+        this.setTodoSummary(false)
+        this.setTodos(next.todos)
+        this.applyHeight()
+      }
       return
     }
 
@@ -805,6 +828,10 @@ export class RunFooter implements FooterApi {
   private todoPanelRows(): number {
     if (!this.todoPanelVisible()) {
       return 0
+    }
+
+    if (this.todoSummary()) {
+      return 1
     }
 
     return todoPanelRowCount(this.todos())
@@ -1161,6 +1188,15 @@ export class RunFooter implements FooterApi {
     this.interruptTimeout = undefined
   }
 
+  private clearTodoHideTimer(): void {
+    if (!this.todoHideTimer) {
+      return
+    }
+
+    clearTimeout(this.todoHideTimer)
+    this.todoHideTimer = undefined
+  }
+
   private clearNoticeTimer(reset = true): void {
     if (!this.noticeTimeout) {
       if (reset) {
@@ -1339,6 +1375,7 @@ export class RunFooter implements FooterApi {
     this.notifyClose()
     this.clearInterruptTimer()
     this.clearExitTimer()
+    this.clearTodoHideTimer()
     this.clearNoticeTimer()
     for (const sessionID of [...this.subagentDoneTimers.keys()]) this.clearSubagentDoneTimer(sessionID)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
