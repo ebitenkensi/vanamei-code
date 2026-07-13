@@ -73,13 +73,13 @@ registerOpencodeSpinner()
 // A blinking ● dot for the thinking panel and judging indicator.
 // Respects animationsEnabled: when disabled, shows a static ●.
 function BlinkingDot(props: { theme: () => RunFooterTheme; color?: () => RGBA }) {
-  const enabled = (() => {
+  const enabled = (): boolean => {
     try {
       return useKV().get("animations_enabled", true)
     } catch {
       return true
     }
-  })()
+  }
   const [frame, setFrame] = createSignal(0)
 
   createEffect(() => {
