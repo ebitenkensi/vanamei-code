@@ -1057,13 +1057,15 @@ describe("run stream transport", () => {
       src.push(assistant("msg-thinking"))
       src.push(reasoningUpdated(reasoningPart("thinking-1", "msg-thinking", "")))
       src.push(textDelta("msg-thinking", "thinking-1", "plan"))
-      await waitFor(() => ui.commits.find((commit) => commit.kind === "reasoning" && commit.text === "✻ Thinking…"))
+      // Streaming reasoning no longer commits a header; the footer thinking
+      // event is the observable signal that the delta reached the reducer.
+      await waitFor(() =>
+        ui.events.find((event) => event.type === "stream.thinking" && event.thinking.text.includes("plan")),
+      )
       ui.commits.length = 0
 
       expect(await transport.replayOnResize({ localRows: () => [], reset: () => Promise.resolve() })).toBe(true)
-      expect(ui.commits.filter((commit) => commit.kind === "reasoning").map((commit) => commit.text)).toEqual([
-        "plan",
-      ])
+      expect(ui.commits.filter((commit) => commit.kind === "reasoning").map((commit) => commit.text)).toEqual(["plan"])
     } finally {
       src.close()
       await transport.close()

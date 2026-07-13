@@ -309,9 +309,7 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
     {
       header: "● Update Todos",
       title: undefined,
-      include: [
-        "  ⎿  Done",
-      ],
+      include: ["  ⎿  Done"],
       exclude: ["Updating", "todos completed"],
       start: toolCommit({
         tool: "todowrite",

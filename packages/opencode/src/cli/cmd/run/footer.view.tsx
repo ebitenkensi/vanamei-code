@@ -70,7 +70,7 @@ import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
 
-// A blinking ● dot for the thinking panel and judging indicator.
+// A blinking ● dot for the judging indicator.
 // Respects animationsEnabled: when disabled, shows a static ●.
 function BlinkingDot(props: { theme: () => RunFooterTheme; color?: () => RGBA }) {
   const enabled = (): boolean => {
@@ -90,9 +90,7 @@ function BlinkingDot(props: { theme: () => RunFooterTheme; color?: () => RGBA })
 
   const dotColor = () => props.color?.() ?? props.theme().muted
 
-  return (
-    <text fg={dotColor()}>{enabled() ? (frame() % 2 === 0 ? "●" : " ") : "●"}</text>
-  )
+  return <text fg={dotColor()}>{enabled() ? (frame() % 2 === 0 ? "●" : " ") : "●"}</text>
 }
 
 const EMPTY_BORDER = {
@@ -157,7 +155,6 @@ type RunFooterViewProps = {
   onQueuedRemove: (messageID: string) => Promise<boolean>
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
-  onToggleThinking?: () => void
   onAutoToggle?: () => void
 }
 
@@ -175,6 +172,24 @@ export function todoPanelRowCount(todos: FooterTodoItem[]): number {
   }
 
   return Math.min(todos.length, MAX_TODO_ROWS) + (todos.length > MAX_TODO_ROWS ? 1 : 0)
+}
+
+export const MAX_THINKING_ROWS = 10
+
+// Rolling tail of the live thinking text, pre-wrapped to terminal width so
+// each row is exactly one cell row. First row carries the tool-style ⎿
+// marker so the block reads as one unit with the committed "● Thinking…"
+// header directly above the footer.
+export function thinkingTailRows(text: string, width: number): string[] {
+  const cols = Math.max(10, width - 5)
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .flatMap((line) =>
+      Array.from({ length: Math.ceil(line.length / cols) }, (_, i) => line.slice(i * cols, (i + 1) * cols)),
+    )
+    .slice(-MAX_THINKING_ROWS)
+    .map((row, index) => (index === 0 ? `  ⎿  ${row}` : `     ${row}`))
 }
 
 export function RunFooterView(props: RunFooterViewProps) {
@@ -709,20 +724,6 @@ export function RunFooterView(props: RunFooterViewProps) {
     bindings: props.tuiConfig.keybinds.get("session.queued_prompts"),
   }))
 
-  useBindings(() => ({
-    mode: OPENCODE_BASE_MODE,
-    enabled: active().type === "prompt" && (props.thinking?.()?.active ?? false),
-    commands: [
-      {
-        name: "session.toggle.thinking",
-        title: "Toggle thinking panel",
-        category: "Session",
-        run: () => props.onToggleThinking?.(),
-      },
-    ],
-    bindings: props.tuiConfig.keybinds.get("display_thinking"),
-  }))
-
   createEffect(() => {
     const current = route()
     if (current.type !== "subagent") {
@@ -801,16 +802,12 @@ export function RunFooterView(props: RunFooterViewProps) {
         when={inspecting()}
         fallback={
           <box width="100%" flexDirection="column" gap={0}>
-            <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
-              <RunFooterTodoPanel todos={props.todos!} theme={theme} todoSummary={props.todoSummary} />
+            <Show when={active().type === "prompt"}>
+              <RunFooterThinkingPanel thinking={() => props.thinking?.()} theme={theme} />
             </Show>
 
-            <Show when={active().type === "prompt"}>
-              <RunFooterThinkingPanel
-                thinking={() => props.thinking?.()}
-                theme={theme}
-                onToggle={props.onToggleThinking}
-              />
+            <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
+              <RunFooterTodoPanel todos={props.todos!} theme={theme} todoSummary={props.todoSummary} />
             </Show>
 
             <For each={[promptView()]}>
@@ -1051,7 +1048,8 @@ export function RunFooterView(props: RunFooterViewProps) {
                     <box flexShrink={0} flexDirection="row" gap={0}>
                       <BlinkingDot theme={theme} />
                       <text fg={theme().muted} wrapMode="none" truncate flexShrink={0}>
-                        {" "}judging…
+                        {" "}
+                        judging…
                       </text>
                     </box>
                   </Show>
@@ -1166,90 +1164,56 @@ export function RunFooterView(props: RunFooterViewProps) {
   )
 }
 
-export const MAX_THINKING_ROWS = 4
-
-export function thinkingPanelRowCount(state: FooterThinkingState | undefined): number {
-  if (!state?.active) {
-    return 0
-  }
-
-  if (!state.expanded) {
-    return 1
-  }
-
-  return Math.min(state.lines, MAX_THINKING_ROWS)
-}
-
+// Live thinking block rendered as the topmost footer element: a blinking
+// "● Thinking…" header over the rolling ⎿ rows, at column 0 so it matches the
+// static block committed to scrollback when the reasoning part ends.
 function RunFooterThinkingPanel(props: {
   thinking: () => FooterThinkingState | undefined
   theme: () => RunFooterTheme
-  onToggle?: () => void
 }) {
-  const state = createMemo(() => props.thinking())
-  const visible = createMemo(() => state()?.active === true)
+  const term = useTerminalDimensions()
+  const rows = createMemo(() => {
+    const state = props.thinking()
+    if (!state?.active) {
+      return []
+    }
+
+    return thinkingTailRows(state.text, term().width)
+  })
 
   return (
-    <Show when={visible()}>
+    <Show when={rows().length > 0}>
       <box
         width="100%"
-        height={thinkingPanelRowCount(state())}
-        flexShrink={0}
+        height={rows().length + 1}
         flexDirection="column"
+        gap={0}
+        flexShrink={0}
         backgroundColor="transparent"
-        paddingLeft={1}
-        paddingRight={1}
       >
-          <Show
-            when={state()?.expanded}
-            fallback={
-              <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-                <box flexShrink={0} width={1}>
-                  <BlinkingDot theme={props.theme} />
-                </box>
-                <text wrapMode="none" truncate flexGrow={1}>
-                  <span style={{ fg: props.theme().muted, dim: true }}>
-                    Thinking… ({state()?.lines ?? 0} lines)
-                  </span>
-                </text>
-                <Show when={props.onToggle}>
-                  <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
-                    [toggle]
-                  </text>
-                </Show>
-              </box>
-            }
-          >
-            <box width="100%" flexDirection="column" gap={0} flexShrink={0}>
-              <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-                <box flexShrink={0} width={1}>
-                  <BlinkingDot theme={props.theme} />
-                </box>
-                <text wrapMode="none" truncate flexGrow={1}>
-                  <span style={{ fg: props.theme().muted, dim: true }}>
-                    Thinking ({state()?.lines ?? 0} lines)
-                  </span>
-                </text>
-                <Show when={props.onToggle}>
-                  <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
-                    [collapse]
-                  </text>
-                </Show>
-              </box>
-            <box width="100%" flexGrow={1} flexShrink={1} backgroundColor="transparent" paddingLeft={1}>
-              <text wrapMode="word" truncate flexGrow={1}>
-                <span style={{ fg: props.theme().muted, dim: true }}>
-                  {state()?.text ?? ""}
-                </span>
-              </text>
-            </box>
-          </box>
-        </Show>
+        <box width="100%" height={1} flexDirection="row" gap={0} flexShrink={0} backgroundColor="transparent">
+          <BlinkingDot theme={props.theme} />
+          <text wrapMode="none" truncate height={1}>
+            <span style={{ fg: props.theme().muted, dim: true }}> Thinking…</span>
+          </text>
+        </box>
+        <For each={rows()}>
+          {(row) => (
+            <text wrapMode="none" truncate height={1}>
+              <span style={{ fg: props.theme().muted, dim: true }}>{row}</span>
+            </text>
+          )}
+        </For>
       </box>
     </Show>
   )
 }
 
-function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme; todoSummary?: () => boolean }) {
+function RunFooterTodoPanel(props: {
+  todos: () => FooterTodoItem[]
+  theme: () => RunFooterTheme
+  todoSummary?: () => boolean
+}) {
   function glyph(status: string) {
     if (status === "in_progress" || status === "pending") return "☐"
     return "☒"

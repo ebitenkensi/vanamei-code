@@ -35,7 +35,7 @@ import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { subagentTreeRowCount } from "./footer.subagent-tree"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
-import { RunFooterView, todoPanelRowCount } from "./footer.view"
+import { RunFooterView, thinkingTailRows, todoPanelRowCount } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import type {
@@ -127,7 +127,6 @@ const AGENT_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
 const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
-const MAX_THINKING_ROWS = 10
 const THEME_REFRESH_DELAYS = [1000, 1000] as const
 // How long a completed/cancelled/error subagent tab lingers in the tree
 // below the composer before it's pruned, so the footer doesn't accumulate
@@ -412,7 +411,6 @@ export class RunFooter implements FooterApi {
               onQueuedRemove: footer.handleQueuedRemove,
               onSessionSelect: options.onSessionSelect,
               onSessionsOpen: options.onSessionsOpen,
-              onToggleThinking: () => footer.toggleThinking(),
               onAutoToggle: options.onAutoToggle,
             })
           },
@@ -576,7 +574,7 @@ export class RunFooter implements FooterApi {
         return
       }
 
-      this.setThinking((prev) => ({ ...next.thinking, expanded: prev?.expanded ?? false }))
+      this.setThinking(next.thinking)
       this.applyHeight()
       return
     }
@@ -825,6 +823,16 @@ export class RunFooter implements FooterApi {
     return this.view().type === "prompt" && this.todos().length > 0
   }
 
+  private thinkingPanelRows(): number {
+    const state = this.thinking()
+    if (!state?.active || this.view().type !== "prompt") {
+      return 0
+    }
+
+    const rows = thinkingTailRows(state.text, this.renderer.terminalWidth)
+    return rows.length === 0 ? 0 : rows.length + 1
+  }
+
   private todoPanelRows(): number {
     if (!this.todoPanelVisible()) {
       return 0
@@ -835,33 +843,6 @@ export class RunFooter implements FooterApi {
     }
 
     return todoPanelRowCount(this.todos())
-  }
-
-  private thinkingPanelVisible(): boolean {
-    return this.view().type === "prompt" && this.thinking()?.active === true
-  }
-
-  private thinkingPanelRows(): number {
-    const state = this.thinking()
-    if (!state?.active) {
-      return 0
-    }
-
-    if (!state.expanded) {
-      return 1
-    }
-
-    return Math.min(state.lines, MAX_THINKING_ROWS)
-  }
-
-  public toggleThinking(): void {
-    const current = this.thinking()
-    if (!current?.active) {
-      return
-    }
-
-    this.setThinking({ ...current, expanded: !current.expanded })
-    this.applyHeight()
   }
 
   private subagentTreeRows(): number {

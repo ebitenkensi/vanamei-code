@@ -16,7 +16,7 @@ import {
   RunSubagentSelectBody,
   RunVariantSelectBody,
 } from "@/cli/cmd/run/footer.command"
-import { RunFooterView } from "@/cli/cmd/run/footer.view"
+import { MAX_THINKING_ROWS, RunFooterView, thinkingTailRows } from "@/cli/cmd/run/footer.view"
 import { RunEntryContent } from "@/cli/cmd/run/scrollback.writer"
 import { RUN_THEME_FALLBACK, type RunTheme } from "@/cli/cmd/run/theme"
 import type {
@@ -1925,4 +1925,16 @@ test("direct footer todo panel shows an overflow row past the max", async () => 
   } finally {
     app.cleanup()
   }
+})
+
+test("thinkingTailRows wraps to width, drops blank lines, and marks only the first row", () => {
+  expect(thinkingTailRows("aaaaaaaaaaaa\n\nbb", 15)).toEqual(["  ⎿  aaaaaaaaaa", "     aa", "     bb"])
+})
+
+test("thinkingTailRows keeps only the newest rows up to the max", () => {
+  const rows = thinkingTailRows(Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n"), 80)
+
+  expect(rows).toHaveLength(MAX_THINKING_ROWS)
+  expect(rows[0]).toBe("  ⎿  line-6")
+  expect(rows.slice(1)).toEqual(Array.from({ length: 9 }, (_, index) => `     line-${index + 7}`))
 })

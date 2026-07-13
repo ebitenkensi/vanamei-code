@@ -129,7 +129,7 @@ export function entryFlags(commit: StreamCommit): EntryFlags {
 
 export function entryDone(commit: StreamCommit): boolean {
   if (commit.kind === "reasoning") {
-    return commit.phase !== "progress"
+    return true
   }
 
   if (commit.kind === "assistant") {
@@ -188,7 +188,11 @@ export function entryBody(commit: StreamCommit): RunEntryBody {
     }
 
     if (commit.phase === "final") {
-      return commit.interrupted ? textBody("reasoning interrupted") : RUN_ENTRY_NONE
+      if (commit.interrupted) {
+        return textBody("  ⎿  interrupted")
+      }
+
+      return textBody(raw ? `  ⎿  ${raw}` : "")
     }
 
     return reasoningBody(raw)

@@ -544,18 +544,12 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
       return
     }
     if (kind === "reasoning" && chunk) {
-      // Compact header: emit one line into scrollback, full text goes to footer panel
+      // Defer the "● Thinking…" header to reasoningSummary: while streaming it
+      // lives in the footer panel (with a blinking dot), and only the finished
+      // block is committed to scrollback.
       const clean = chunk.replace(/\[REDACTED\]/g, "")
       data.sent.set(partID, text.length)
       data.visible.set(partID, (data.visible.get(partID) ?? "") + clean)
-      commits.push({
-        kind,
-        text: "✻ Thinking…",
-        phase: "start",
-        source: kind,
-        messageID: msg,
-        partID,
-      })
       return
     }
     if (kind === "assistant" && chunk) {
@@ -566,21 +560,12 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     }
   }
 
-  // Subsequent reasoning chunks: accumulate text for the footer panel and push a
-  // progress commit so reasoning content streams into scrollback incrementally.
+  // Subsequent reasoning chunks: accumulate silently into visible (footer panel),
+  // never push a progress commit into scrollback. The header and summary are
+  // committed together by reasoningSummary once the part ends.
   if (kind === "reasoning") {
     data.sent.set(partID, text.length)
     data.visible.set(partID, (data.visible.get(partID) ?? "") + chunk)
-    if (chunk) {
-      commits.push({
-        kind,
-        text: chunk,
-        phase: "progress",
-        source: kind,
-        messageID: msg,
-        partID,
-      })
-    }
     return
   }
 
@@ -609,6 +594,33 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     messageID: msg,
     partID,
     interrupted: true,
+  })
+}
+
+// Commits the finished thinking block: the "● Thinking…" header followed by
+// the tool-style "⎿ N lines" summary. Emitted only once a reasoning part
+// finishes; while streaming, the block lives in the footer panel instead.
+function reasoningSummary(data: SessionData, commits: SessionCommit[], partID: string) {
+  const lines = (data.visible.get(partID) ?? "").split("\n").filter((line) => line.trim() !== "").length
+  if (lines === 0) {
+    return
+  }
+
+  commits.push({
+    kind: "reasoning",
+    text: "● Thinking…",
+    phase: "start",
+    source: "reasoning",
+    messageID: data.msg.get(partID),
+    partID,
+  })
+  commits.push({
+    kind: "reasoning",
+    text: lines === 1 ? "1 line" : `${lines} lines`,
+    phase: "final",
+    source: "reasoning",
+    messageID: data.msg.get(partID),
+    partID,
   })
 }
 
@@ -657,6 +669,10 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
 
     if (!data.end.has(partID)) {
       continue
+    }
+
+    if (kind === "reasoning") {
+      reasoningSummary(data, commits, partID)
     }
 
     data.ids.add(partID)
@@ -839,6 +855,30 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
     }
 
     flushPart(data, commits, partID, true)
+
+    // Reasoning streams silently, so an aborted part has no committed header
+    // yet: emit the header plus an interrupted final so the block still reads
+    // "● Thinking…" / "⎿ interrupted". Parts with no visible text stay silent.
+    if (data.part.get(partID) === "reasoning" && (data.visible.get(partID) ?? "").trim()) {
+      commits.push({
+        kind: "reasoning",
+        text: "● Thinking…",
+        phase: "start",
+        source: "reasoning",
+        messageID: data.msg.get(partID),
+        partID,
+      })
+      commits.push({
+        kind: "reasoning",
+        text: "",
+        phase: "final",
+        source: "reasoning",
+        messageID: data.msg.get(partID),
+        partID,
+        interrupted: true,
+      })
+    }
+
     data.ids.add(partID)
     drop(data, partID)
   }
@@ -1150,6 +1190,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         }
       }
       return out(data, commits)
+    }
+
+    if (kind === "reasoning") {
+      reasoningSummary(data, commits, part.id)
     }
 
     data.ids.add(part.id)
