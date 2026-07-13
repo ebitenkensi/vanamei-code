@@ -52,6 +52,8 @@ import type {
   FooterPatch,
   FooterSubagentState,
   FooterSubagentTab,
+  FooterThinkingState,
+  FooterTodoState,
   FooterView,
   LocalReplayAnchor,
   LocalReplayRow,
@@ -328,6 +330,8 @@ function pickView(data: SessionData, subagent: SubagentData, order: Map<string, 
 function composeFooter(input: {
   patch?: FooterPatch
   subagent?: FooterSubagentState
+  todos?: FooterTodoState
+  thinking?: FooterThinkingState
   current: FooterView
   previous: FooterView
 }) {
@@ -337,6 +341,20 @@ function composeFooter(input: {
     footer = {
       ...footer,
       subagent: input.subagent,
+    }
+  }
+
+  if (input.todos) {
+    footer = {
+      ...footer,
+      todos: input.todos,
+    }
+  }
+
+  if (input.thinking) {
+    footer = {
+      ...footer,
+      thinking: input.thinking,
     }
   }
 
@@ -590,11 +608,13 @@ function createLayer(input: StreamInput) {
           }
         }
 
-        const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState) => {
+        const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState, todos?: FooterTodoState, thinking?: FooterThinkingState) => {
           const current = pickView(state.data, state.subagent, state.blockers)
           const footer = composeFooter({
             patch,
             subagent: nextSubagent,
+            todos,
+            thinking,
             current,
             previous: state.footerView,
           })
@@ -1043,7 +1063,7 @@ function createLayer(input: StreamInput) {
           }
           releaseBlocker(event)
 
-          syncFooter(next.commits, next.footer?.patch, changed ? currentSubagentState() : undefined)
+          syncFooter(next.commits, next.footer?.patch, changed ? currentSubagentState() : undefined, next.footer?.todos, next.footer?.thinking)
 
           touch(event)
           yield* mark(event)
