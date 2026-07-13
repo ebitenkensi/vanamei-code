@@ -20,22 +20,37 @@ export const layer = Layer.effectDiscard(
     const judgeRequest = (request: PermissionV1.Request) =>
       Effect.gen(function* () {
         const verdict = yield* judge.judge({ request })
-        if (verdict.outcome !== "allowed") return
+        if (verdict.outcome === "allowed") {
+          yield* permission.reply({ requestID: request.id, reply: "once" }).pipe(
+            Effect.andThen(
+              events.publish(Permission.Event.Judged, {
+                sessionID: request.sessionID,
+                requestID: request.id,
+                permission: request.permission,
+                patterns: request.patterns,
+                outcome: "allowed",
+                reason: verdict.reason,
+                tool: request.tool,
+              }),
+            ),
+            // NotFoundError means the user replied first; their answer wins.
+            Effect.catchTag("Permission.NotFoundError", () => Effect.void),
+          )
+          return
+        }
 
-        yield* permission.reply({ requestID: request.id, reply: "once" }).pipe(
-          Effect.andThen(
-            events.publish(Permission.Event.Judged, {
-              sessionID: request.sessionID,
-              requestID: request.id,
-              permission: request.permission,
-              patterns: request.patterns,
-              reason: verdict.reason,
-              tool: request.tool,
-            }),
-          ),
-          // NotFoundError means the user replied first; their answer wins.
-          Effect.catchTag("Permission.NotFoundError", () => Effect.void),
-        )
+        // Judge asked — publish Judged with outcome "ask" so the TUI knows it
+        // is safe to show the ask screen. The deferred stays pending so the
+        // user can answer.
+        yield* events.publish(Permission.Event.Judged, {
+          sessionID: request.sessionID,
+          requestID: request.id,
+          permission: request.permission,
+          patterns: request.patterns,
+          outcome: "ask",
+          reason: verdict.reason,
+          tool: request.tool,
+        })
       })
 
     const unsubscribe = yield* events.listen((event) => {

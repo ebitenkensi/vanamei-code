@@ -73,6 +73,8 @@ export type SessionData = {
   shell: Map<string, ShellCall>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
+  pendingJudge: Map<string, PermissionRequest>
+  judgeReasons: Map<string, string>
   role: Map<string, MessageRole>
   msg: Map<string, string>
   part: Map<string, PartKind>
@@ -111,6 +113,8 @@ export function createSessionData(
     shell: new Map(),
     permissions: [],
     questions: [],
+    pendingJudge: new Map(),
+    judgeReasons: new Map(),
     role: new Map(),
     msg: new Map(),
     part: new Map(),
@@ -245,10 +249,17 @@ export function blockerStatus(view: FooterView) {
 }
 
 function pickSessionView(data: SessionData): FooterView {
-  return pickBlockerView({
+  const view = pickBlockerView({
     permission: data.permissions[0],
     question: data.questions[0],
   })
+  if (view.type === "permission") {
+    const reason = data.judgeReasons.get(view.request.id)
+    if (reason !== undefined) {
+      return { ...view, judgeReason: reason }
+    }
+  }
+  return view
 }
 
 function queueFooter(data: SessionData): FooterOutput {
@@ -1157,6 +1168,16 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
+    // If the request is eligible for LLM judging (auto), delay the ask
+    // screen until the judge returns. Store in pendingJudge; the
+    // permission.judged event will move it to data.permissions if the
+    // judge rejects (outcome "ask").
+    if (event.properties.auto === true) {
+      const request = enrichPermission(data, event.properties)
+      data.pendingJudge.set(request.id, request)
+      return out(data, commits, patch({ judging: true }))
+    }
+
     upsert(data.permissions, enrichPermission(data, event.properties))
     return queueOut(data, commits)
   }
@@ -1166,6 +1187,8 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
+    data.pendingJudge.delete(event.properties.requestID)
+    data.judgeReasons.delete(event.properties.requestID)
     if (!remove(data.permissions, event.properties.requestID)) {
       return out(data, commits)
     }
@@ -1230,13 +1253,43 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
+    const requestID = event.properties.requestID
+    const pending = data.pendingJudge.get(requestID)
+    if (!pending) {
+      // Not in pendingJudge — either already replied (cleanup in
+      // permission.replied below removed it) or was not auto-eligible.
+      return out(data, commits)
+    }
+
+    const outcome = (event.properties as { outcome?: string }).outcome
+    data.pendingJudge.delete(requestID)
+    const stillJudging = data.pendingJudge.size > 0
+
+    if (outcome === "ask") {
+      // Judge escalated: show the ask screen now, with the judge's reason.
+      upsert(data.permissions, enrichPermission(data, pending))
+      data.judgeReasons.set(requestID, event.properties.reason || "")
+      commits.push({
+        kind: "system",
+        text: `● LLM judge escalated to manual approval — ${event.properties.reason || "no reason"}`,
+        phase: "start",
+        source: "system",
+      })
+
+      return out(data, commits, {
+        view: pickSessionView(data),
+        patch: { judging: stillJudging },
+      })
+    }
+
+    // outcome === "allowed": auto-allowed by judge.
     commits.push({
       kind: "system",
       text: formatPermissionJudged(event.properties),
       phase: "start",
       source: "system",
     })
-    return out(data, commits)
+    return out(data, commits, patch({ judging: stillJudging }))
   }
 
   // AUTO pill state follows the server's session record. The /auto toggle

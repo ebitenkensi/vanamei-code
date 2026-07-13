@@ -80,6 +80,7 @@ const Judged = define({
     requestID: ID,
     permission: Schema.String,
     patterns: Schema.Array(Schema.String),
+    outcome: Schema.Literals(["allowed", "ask"]),
     reason: Schema.String,
     tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
   },

@@ -12,6 +12,7 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
 import { Spinner } from "@/cli/ui/component/spinner"
+import { useKV } from "@/cli/ui/context/kv"
 
 import { RGBA } from "@opentui/core"
 import { budgetState } from "@opencode-ai/core/session/runner/budget"
@@ -68,6 +69,31 @@ import type { RunFooterTheme, RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
+
+// A blinking ● dot for the thinking panel and judging indicator.
+// Respects animationsEnabled: when disabled, shows a static ●.
+function BlinkingDot(props: { theme: () => RunFooterTheme; color?: () => RGBA }) {
+  const enabled = (() => {
+    try {
+      return useKV().get("animations_enabled", true)
+    } catch {
+      return true
+    }
+  })()
+  const [frame, setFrame] = createSignal(0)
+
+  createEffect(() => {
+    if (!enabled()) return
+    const id = setInterval(() => setFrame((i) => i + 1), 600)
+    onCleanup(() => clearInterval(id))
+  })
+
+  const dotColor = () => props.color?.() ?? props.theme().muted
+
+  return (
+    <text fg={dotColor()}>{enabled() ? (frame() % 2 === 0 ? "●" : " ") : "●"}</text>
+  )
+}
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -313,6 +339,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   })
   const permissionMode = createMemo<PermissionMode>(() => props.state().permissionMode)
   const permissionModeIndicator = createMemo(() => modeIndicator(permissionMode()))
+  const judging = createMemo(() => props.state().judging)
   const promptView = createMemo(() => {
     if (active().type !== "prompt") {
       return active().type
@@ -1019,6 +1046,15 @@ export function RunFooterView(props: RunFooterViewProps) {
                   paddingRight={1}
                   backgroundColor="transparent"
                 >
+                  <Show when={judging()}>
+                    <box flexShrink={0} flexDirection="row" gap={0}>
+                      <BlinkingDot theme={theme} />
+                      <text fg={theme().muted} wrapMode="none" truncate flexShrink={0}>
+                        {" "}judging…
+                      </text>
+                    </box>
+                  </Show>
+
                   <Show when={busy() && !exiting()}>
                     <Show when={interruptLabel()}>
                       {(label) => (
@@ -1162,36 +1198,42 @@ function RunFooterThinkingPanel(props: {
         paddingLeft={1}
         paddingRight={1}
       >
-        <Show
-          when={state()?.expanded}
-          fallback={
-            <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-              <text wrapMode="none" truncate flexGrow={1}>
-                <span style={{ fg: props.theme().muted, dim: true }}>
-                  ✻ Thinking… ({state()?.lines ?? 0} lines)
-                </span>
-              </text>
-              <Show when={props.onToggle}>
-                <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
-                  [toggle]
+          <Show
+            when={state()?.expanded}
+            fallback={
+              <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+                <box flexShrink={0} width={1}>
+                  <BlinkingDot theme={props.theme} />
+                </box>
+                <text wrapMode="none" truncate flexGrow={1}>
+                  <span style={{ fg: props.theme().muted, dim: true }}>
+                    Thinking… ({state()?.lines ?? 0} lines)
+                  </span>
                 </text>
-              </Show>
-            </box>
-          }
-        >
-          <box width="100%" flexDirection="column" gap={0} flexShrink={0}>
-            <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-              <text wrapMode="none" truncate flexGrow={1}>
-                <span style={{ fg: props.theme().muted, dim: true }}>
-                  ✻ Thinking ({state()?.lines ?? 0} lines)
-                </span>
-              </text>
-              <Show when={props.onToggle}>
-                <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
-                  [collapse]
+                <Show when={props.onToggle}>
+                  <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+                    [toggle]
+                  </text>
+                </Show>
+              </box>
+            }
+          >
+            <box width="100%" flexDirection="column" gap={0} flexShrink={0}>
+              <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+                <box flexShrink={0} width={1}>
+                  <BlinkingDot theme={props.theme} />
+                </box>
+                <text wrapMode="none" truncate flexGrow={1}>
+                  <span style={{ fg: props.theme().muted, dim: true }}>
+                    Thinking ({state()?.lines ?? 0} lines)
+                  </span>
                 </text>
-              </Show>
-            </box>
+                <Show when={props.onToggle}>
+                  <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+                    [collapse]
+                  </text>
+                </Show>
+              </box>
             <box width="100%" flexGrow={1} flexShrink={1} backgroundColor="transparent" paddingLeft={1}>
               <text wrapMode="word" truncate flexGrow={1}>
                 <span style={{ fg: props.theme().muted, dim: true }}>

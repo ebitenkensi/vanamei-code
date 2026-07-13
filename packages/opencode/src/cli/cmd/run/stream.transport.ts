@@ -167,6 +167,7 @@ function sid(event: Event): string | undefined {
     event.type === "session.next.shell.ended" ||
     event.type === "permission.asked" ||
     event.type === "permission.replied" ||
+    event.type === "permission.judged" ||
     event.type === "permission.denied" ||
     event.type === "question.asked" ||
     event.type === "question.replied" ||

@@ -623,6 +623,8 @@ function compactDetail(detail: DetailState) {
   next.announced = detail.data.announced
   next.permissions = detail.data.permissions
   next.questions = detail.data.questions
+  next.pendingJudge = detail.data.pendingJudge
+  next.judgeReasons = detail.data.judgeReasons
   next.ids = compactIDs(detail)
   next.tools = new Set([...detail.data.tools].filter((item) => partIDs.has(item)))
   next.call = compactCallMap(detail)
@@ -896,6 +898,8 @@ export function reduceSubagentData(input: {
     event.type === "message.part.delta" ||
     event.type === "permission.asked" ||
     event.type === "permission.replied" ||
+    event.type === "permission.judged" ||
+    event.type === "permission.denied" ||
     event.type === "question.asked" ||
     event.type === "question.replied" ||
     event.type === "question.rejected" ||
