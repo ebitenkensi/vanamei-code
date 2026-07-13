@@ -1129,7 +1129,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   )
 }
 
-export const MAX_THINKING_ROWS = 10
+export const MAX_THINKING_ROWS = 4
 
 export function thinkingPanelRowCount(state: FooterThinkingState | undefined): number {
   if (!state?.active) {
