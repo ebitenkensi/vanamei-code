@@ -638,8 +638,9 @@ function bashWorkdir(p: ToolProps<typeof BashTool>): string {
 
 function headerBash(p: ToolProps<typeof BashTool>): ToolHeader {
   const cmd = p.input.command ?? ""
+  const cmdOneLine = cmd.replace(/\s*\n\s*/g, " ")
   const dir = bashWorkdir(p)
-  const label = cmd ? `Bash(${cmd})` : "Bash"
+  const label = cmd ? `Bash(${cmdOneLine})` : "Bash"
   return dir ? { label, suffix: `in ${dir}` } : { label }
 }
 
@@ -953,10 +954,23 @@ function permList(p: ToolPermissionProps): ToolPermissionInfo {
 
 function permBash(p: ToolPermissionProps<typeof BashTool>): ToolPermissionInfo {
   const cmd = p.input.command || ""
+  const cmdLines: string[] = []
+  if (cmd) {
+    const lines = cmd.split("\n")
+    const kept = lines.slice(0, 2)
+    const hidden = lines.length - kept.length
+    cmdLines.push(`$ ${kept[0]}`)
+    if (kept[1] !== undefined) {
+      cmdLines.push(kept[1])
+    }
+    if (hidden > 0) {
+      cmdLines.push(`… +${hidden} lines`)
+    }
+  }
   return {
     icon: "#",
     title: "Shell command",
-    lines: cmd ? [`$ ${cmd}`] : p.patterns.map((item) => `- ${item}`),
+    lines: cmd ? cmdLines : p.patterns.map((item) => `- ${item}`),
   }
 }
 
@@ -1238,7 +1252,7 @@ function runBash(p: ToolProps<typeof BashTool>): ToolInline {
   const command = p.input.command || ""
   return {
     icon: "$",
-    title: command ? `Bash (${command})` : "Bash",
+    title: command ? `Bash (${command.replace(/\s*\n\s*/g, " ")})` : "Bash",
     mode: "block",
     body: p.frame.status === "completed" ? text(p.frame.state.output).trim() : undefined,
   }
@@ -1406,7 +1420,12 @@ function headerBody(ctx: ToolFrame): RunEntryBody {
 export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody | undefined {
   if (commit.shell) {
     if (commit.phase === "start") {
-      return textBody(`$ ${commit.shell.command}`)
+      const cmd = commit.shell.command
+      const lines = cmd.split("\n")
+      const hidden = Math.max(0, lines.length - 2)
+      const kept = hidden > 0 ? lines.slice(0, 2) : lines
+      const content = `$ ${kept.join("\n    ")}`
+      return { type: "text" as const, content, truncated: hidden || undefined }
     }
 
     if (commit.phase === "progress") {
