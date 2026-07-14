@@ -667,16 +667,39 @@ describe("run session data", () => {
     expect(out.commits).toEqual([])
   })
 
-  test("surfaces a permission.judged event as a system notice with permission, first pattern, and reason", () => {
-    const out = reduce(createSessionData(), {
+  // An auto-eligible ask goes to pendingJudge (no ask screen); the judged
+  // event with outcome "allowed" surfaces the muted auto-allow notice.
+  function judgeAllowed(input: { permission: string; patterns: string[]; reason: string }) {
+    const asked = reduce(createSessionData(), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: input.permission,
+        patterns: input.patterns,
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    })
+    expect(asked.commits).toEqual([])
+    expect(asked.footer).toEqual({ patch: { judging: true } })
+
+    return reduce(asked.data, {
       type: "permission.judged",
       properties: {
         sessionID: "session-1",
-        permission: "bash",
-        patterns: ["ls", "git status"],
-        reason: "safe operation",
+        requestID: "perm-1",
+        permission: input.permission,
+        patterns: input.patterns,
+        outcome: "allowed",
+        reason: input.reason,
       },
     })
+  }
+
+  test("surfaces a permission.judged event as a system notice with permission, first pattern, and reason", () => {
+    const out = judgeAllowed({ permission: "bash", patterns: ["ls", "git status"], reason: "safe operation" })
 
     expect(out.commits).toEqual([
       expect.objectContaining({
@@ -685,18 +708,11 @@ describe("run session data", () => {
         phase: "start",
       }),
     ])
+    expect(out.footer).toEqual({ patch: { judging: false } })
   })
 
   test("falls back to 'no reason' when permission.judged reason is empty", () => {
-    const out = reduce(createSessionData(), {
-      type: "permission.judged",
-      properties: {
-        sessionID: "session-1",
-        permission: "read",
-        patterns: ["/tmp/file.txt"],
-        reason: "",
-      },
-    })
+    const out = judgeAllowed({ permission: "read", patterns: ["/tmp/file.txt"], reason: "" })
 
     expect(out.commits).toEqual([
       expect.objectContaining({
@@ -708,15 +724,7 @@ describe("run session data", () => {
   })
 
   test("omits pattern parentheses when permission.judged has no patterns", () => {
-    const out = reduce(createSessionData(), {
-      type: "permission.judged",
-      properties: {
-        sessionID: "session-1",
-        permission: "bash",
-        patterns: [],
-        reason: "trusted",
-      },
-    })
+    const out = judgeAllowed({ permission: "bash", patterns: [], reason: "trusted" })
 
     expect(out.commits).toEqual([
       expect.objectContaining({
@@ -724,6 +732,55 @@ describe("run session data", () => {
         text: "⏺ Auto-allowed bash — trusted",
       }),
     ])
+  })
+
+  // Production order: the judge replies "once" (permission.replied) before
+  // publishing permission.judged, so the judged event arrives after
+  // pendingJudge was cleared. The notice and the judging reset must survive.
+  test("surfaces the auto-allow notice when permission.replied arrives before permission.judged", () => {
+    let data = createSessionData()
+    data = reduce(data, {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    }).data
+
+    const replied = reduce(data, {
+      type: "permission.replied",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        reply: "once",
+      },
+    })
+    expect(replied.footer).toEqual({ patch: { judging: false } })
+
+    const judged = reduce(replied.data, {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        permission: "bash",
+        patterns: ["ls"],
+        outcome: "allowed",
+        reason: "safe operation",
+      },
+    })
+
+    expect(judged.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash(ls) — safe operation",
+      }),
+    ])
+    expect(judged.footer).toEqual({ patch: { judging: false } })
   })
 
   test("ignores permission.judged events for other sessions", () => {

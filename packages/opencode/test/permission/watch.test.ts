@@ -69,6 +69,7 @@ type JudgedData = {
   requestID: string
   permission: string
   patterns: string[]
+  outcome: "allowed" | "ask"
   reason: string
   tool?: { messageID: string; callID: string }
 }
@@ -107,6 +108,7 @@ describe("watch with auto flag", () => {
           requestID: expect.stringMatching(/^per/),
           permission: "bash",
           patterns: ["ls"],
+          outcome: "allowed",
           reason: "safe operation",
           tool: undefined,
         })
@@ -121,14 +123,16 @@ describe("watch with auto flag", () => {
     expect(judged).toBe(true)
   })
 
-  test("ask verdict leaves the prompt pending and publishes nothing", async () => {
+  test("ask verdict leaves the prompt pending and publishes Judged with outcome ask", async () => {
     await runTest(
       Effect.gen(function* () {
-        const awaitJudged = yield* collectJudged("300 millis")
+        const awaitJudged = yield* collectJudged()
         const permission = yield* Permission.Service
 
         const ask = yield* permission.ask(askInput("auto")).pipe(Effect.forkScoped)
-        expect(yield* awaitJudged).toBeUndefined()
+        const data = yield* awaitJudged
+        expect(data?.outcome).toBe("ask")
+        expect(data?.reason).toBe("destructive command")
 
         const pending = yield* permission.list()
         expect(pending).toHaveLength(1)

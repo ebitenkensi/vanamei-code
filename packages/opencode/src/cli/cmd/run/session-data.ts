@@ -1231,9 +1231,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    data.pendingJudge.delete(event.properties.requestID)
+    // A judge auto-allow replies before publishing permission.judged, so this
+    // may be the event that clears a pendingJudge entry — recompute judging.
+    const hadPending = data.pendingJudge.delete(event.properties.requestID)
     data.judgeReasons.delete(event.properties.requestID)
     if (!remove(data.permissions, event.properties.requestID)) {
+      if (hadPending) {
+        return out(data, commits, patch({ judging: data.pendingJudge.size > 0 }))
+      }
       return out(data, commits)
     }
 
@@ -1299,18 +1304,17 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
     const requestID = event.properties.requestID
     const pending = data.pendingJudge.get(requestID)
-    if (!pending) {
-      // Not in pendingJudge — either already replied (cleanup in
-      // permission.replied below removed it) or was not auto-eligible.
-      return out(data, commits)
-    }
-
     const outcome = (event.properties as { outcome?: string }).outcome
     data.pendingJudge.delete(requestID)
     const stillJudging = data.pendingJudge.size > 0
 
     if (outcome === "ask") {
       // Judge escalated: show the ask screen now, with the judge's reason.
+      // Without a pendingJudge entry the request was already replied — there
+      // is no prompt left to surface.
+      if (!pending) {
+        return out(data, commits, patch({ judging: stillJudging }))
+      }
       upsert(data.permissions, enrichPermission(data, pending))
       data.judgeReasons.set(requestID, event.properties.reason || "")
       commits.push({
@@ -1326,7 +1330,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       })
     }
 
-    // outcome === "allowed": auto-allowed by judge.
+    // outcome === "allowed": auto-allowed by judge. The judge replies "once"
+    // before publishing Judged, so permission.replied has usually already
+    // cleared pendingJudge — the notice must not depend on the entry.
     commits.push({
       kind: "system",
       text: formatPermissionJudged(event.properties),
