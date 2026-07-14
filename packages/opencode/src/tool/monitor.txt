@@ -8,7 +8,7 @@ Start parameters:
 - persistent: if true, monitor lives for the session lifetime ignoring timeout. Default false.
 - timeout_ms: timeout in milliseconds. Default 300000, max 3600000, only for non-persistent monitors.
 
-Each stdout line is injected as an event notification. A flood guard kills monitors that produce more than 20 batches in 60 seconds.
+Each stdout line is injected as an event notification. A flood guard kills monitors that produce more than 20 batches or 1MB of output in 60 seconds.
 
 The monitor survives the tool call (ctx.abort is ignored).
 

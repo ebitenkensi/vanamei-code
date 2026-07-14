@@ -6,14 +6,16 @@ import { Session } from "@/session/session"
 import { SessionID } from "../session/schema"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { MonitorV1 } from "@opencode-ai/schema/monitor-v1"
-import { Effect, Option, Schema, Scope, Stream, Queue, Fiber } from "effect"
+import { Deferred, Effect, Option, Schema, Scope, Stream, Queue, Fiber } from "effect"
 import { ChildProcess, type ChildProcessSpawner as CPS } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 
 const id = "monitor"
 
 const Parameters = Schema.Struct({
-  action: Schema.optional(Schema.Union([Schema.Literal("start"), Schema.Literal("list"), Schema.Literal("stop")])).annotate({
+  action: Schema.optional(
+    Schema.Union([Schema.Literal("start"), Schema.Literal("list"), Schema.Literal("stop")]),
+  ).annotate({
     description: "Action: start (default), list running monitors, or stop a monitor",
   }),
   command: Schema.optional(Schema.String).annotate({
@@ -49,6 +51,8 @@ const MAX_TIMEOUT_MS = 3_600_000
 const BATCH_WINDOW_MS = 500
 const FLOOD_LIMIT = 20
 const FLOOD_WINDOW_MS = 60_000
+const FLOOD_BYTES = 1_048_576
+const QUEUE_CAPACITY = 1_000
 
 function genMonitorID(): string {
   return "mon_" + Math.random().toString(36).slice(2)
@@ -79,8 +83,7 @@ function killAll(entries: Map<string, MonitorEntry>): Effect.Effect<void> {
   if (entries.size === 0) return Effect.void
   return Effect.forEach(
     Array.from(entries.values()),
-    (entry) =>
-      entry.proc.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.catch(() => Effect.void)),
+    (entry) => entry.proc.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.catch(() => Effect.void)),
     { discard: true },
   ).pipe(Effect.ignore)
 }
@@ -109,9 +112,7 @@ export const MonitorTool = Tool.define(
 
         // --- list ---
         if (action === "list") {
-          const sessionEntries = Array.from(entries.entries()).filter(
-            ([_, e]) => e.sessionID === ctx.sessionID,
-          )
+          const sessionEntries = Array.from(entries.entries()).filter(([_, e]) => e.sessionID === ctx.sessionID)
           if (sessionEntries.length === 0) {
             return {
               title: "Monitor List",
@@ -151,13 +152,15 @@ export const MonitorTool = Tool.define(
           }
           entries.delete(params.monitor_id)
           yield* killEntry(entry)
-          yield* events.publish(MonitorV1.Event.Stopped, {
-            sessionID: ctx.sessionID,
-            monitorID: params.monitor_id,
-            description: entry.description,
-            reason: "stopped",
-            exitCode: undefined,
-          }).pipe(Effect.ignore)
+          yield* events
+            .publish(MonitorV1.Event.Stopped, {
+              sessionID: ctx.sessionID,
+              monitorID: params.monitor_id,
+              description: entry.description,
+              reason: "stopped",
+              exitCode: undefined,
+            })
+            .pipe(Effect.ignore)
           return {
             title: `Monitor Stopped: ${entry.description}`,
             metadata: { monitorID: params.monitor_id },
@@ -203,7 +206,10 @@ export const MonitorTool = Tool.define(
           detached: process.platform !== "win32",
         })
 
-        const handle = yield* spawner.spawn(cmd)
+        // Tie the process to the tool-layer scope, not the per-call scope:
+        // spawn's Scope requirement kills the child when its scope closes,
+        // and the monitor must outlive the tool call that started it.
+        const handle = yield* Scope.provide(scope)(spawner.spawn(cmd))
 
         const entry: MonitorEntry = {
           proc: handle,
@@ -218,31 +224,74 @@ export const MonitorTool = Tool.define(
 
         // Background fiber: read stdout, batch, inject
         yield* Effect.gen(function* () {
-          const queue = yield* Queue.unbounded<string>()
+          // Dropping queue so a flooding child (`yes hello`) cannot grow the
+          // heap: the flusher drains at most 10 lines per 500ms, and an
+          // unbounded queue fills memory faster than the flood guard can fire
+          // (observed OOM kill). Dropped lines are fine — the guard kills a
+          // flooding child anyway, and well-behaved monitors stay far below
+          // capacity.
+          const queue = yield* Queue.dropping<string>(QUEUE_CAPACITY)
           const stamps: number[] = []
+          // Flood teardown must run in this fiber, not in the reader/flusher:
+          // proc.kill waits for the stdio streams to close, so killing from
+          // inside the stdout consumer deadlocks (nobody drains the pipe).
+          const flooded = yield* Deferred.make<void>()
 
-          // Reader: stdout lines → queue
-          yield* Effect.forkScoped(
-            Stream.runForEach(
-              Stream.splitLines(Stream.decodeText(handle.stdout)),
-              (line) => Queue.offer(queue, line).pipe(Effect.ignore),
-            ).pipe(Effect.ignore),
+          // Readers and flusher are children of this background fiber (which
+          // lives in the tool-layer scope) — forkScoped would attach them to
+          // the per-call scope and interrupt them when the tool call returns.
+          // Reader: stdout chunks → lines → queue, with a byte-rate guard.
+          // Flood detection must happen at the chunk level, before line
+          // splitting: a flooding child (`yes hello`) delivers bytes faster
+          // than a per-line pipeline can process, so the heap balloons before
+          // the downstream batch guard can fire (observed OOM kill).
+          const decoder = new TextDecoder()
+          let partial = ""
+          let windowStart = Date.now()
+          let windowBytes = 0
+          // Once the byte guard trips, keep consuming chunks without decoding
+          // so the pipe drains to EOF and the kill can complete.
+          let drainOnly = false
+          const stdoutReader = yield* Effect.forkChild(
+            Effect.gen(function* () {
+              yield* Stream.runForEach(handle.stdout, (chunk) =>
+                Effect.gen(function* () {
+                  if (drainOnly) return
+                  const now = Date.now()
+                  if (now - windowStart >= FLOOD_WINDOW_MS) {
+                    windowStart = now
+                    windowBytes = 0
+                  }
+                  windowBytes += chunk.byteLength
+                  if (windowBytes > FLOOD_BYTES) {
+                    drainOnly = true
+                    yield* Deferred.succeed(flooded, undefined)
+                    return
+                  }
+                  partial += decoder.decode(chunk, { stream: true })
+                  const lines = partial.split("\n")
+                  partial = lines.pop() ?? ""
+                  yield* Queue.offerAll(queue, lines).pipe(Effect.ignore)
+                }),
+              )
+              // Emit a final unterminated line so output without a trailing
+              // newline is not lost at EOF.
+              if (partial.length > 0 && !drainOnly) yield* Queue.offer(queue, partial).pipe(Effect.ignore)
+            }).pipe(Effect.ignore),
           )
 
           // Reader: stderr → ring buffer
-          yield* Effect.forkScoped(
-            Stream.runForEach(
-              Stream.decodeText(handle.stderr),
-              (chunk) =>
-                Effect.sync(() => {
-                  const e = entries.get(monitorID)
-                  if (e) e.stderr = appendStderr(e.stderr, chunk)
-                }),
+          yield* Effect.forkChild(
+            Stream.runForEach(Stream.decodeText(handle.stderr), (chunk) =>
+              Effect.sync(() => {
+                const e = entries.get(monitorID)
+                if (e) e.stderr = appendStderr(e.stderr, chunk)
+              }),
             ).pipe(Effect.ignore),
           )
 
           // Flusher: batch and inject every 500ms
-          const flusher = yield* Effect.forkScoped(
+          const flusher = yield* Effect.forkChild(
             Effect.gen(function* () {
               while (true) {
                 yield* Effect.sleep(BATCH_WINDOW_MS)
@@ -262,7 +311,7 @@ export const MonitorTool = Tool.define(
                   stamps.shift()
                 }
                 if (stamps.length > FLOOD_LIMIT) {
-                  yield* runExit(monitorID, "flooded", null, ctx, ops, sessions)
+                  yield* Deferred.succeed(flooded, undefined)
                   return
                 }
 
@@ -272,52 +321,64 @@ export const MonitorTool = Tool.define(
             }),
           )
 
-          // Wait for exit or timeout
+          // Wait for exit, timeout, or flood
           let reason: "exit" | "timeout" | "flooded" | "stopped" = "exit"
-          const race: { tag: "exit"; code: number } | { tag: "timeout" } = yield* Effect.raceAll([
+          const race: { tag: "exit"; code: number } | { tag: "timeout" } | { tag: "flooded" } = yield* Effect.raceAll([
             handle.exitCode.pipe(
               Effect.map((code): { tag: "exit"; code: number } => ({ tag: "exit", code: code as unknown as number })),
             ),
+            Deferred.await(flooded).pipe(Effect.map((): { tag: "flooded" } => ({ tag: "flooded" }))),
             ...(persistent
               ? []
-              : [
-                  Effect.sleep(timeoutMs).pipe(
-                    Effect.map((): { tag: "timeout" } => ({ tag: "timeout" })),
-                  ),
-                ]),
+              : [Effect.sleep(timeoutMs).pipe(Effect.map((): { tag: "timeout" } => ({ tag: "timeout" })))]),
           ])
 
-          let exitCode: number | null
+          let exitCode: number | null = null
+          if (race.tag === "exit") exitCode = race.code
           if (race.tag === "timeout") {
             reason = "timeout"
             yield* killEntry(entry)
-            exitCode = null
-          } else {
-            exitCode = race.code
+          }
+          if (race.tag === "flooded") {
+            reason = "flooded"
+            yield* killEntry(entry)
           }
 
           // Clean up flusher
           yield* Fiber.interrupt(flusher).pipe(Effect.ignore)
 
-          // Flush remaining lines from queue
-          const remaining: string[] = []
-          let rem = yield* Queue.poll(queue)
-          while (Option.isSome(rem)) {
-            remaining.push(rem.value)
-            rem = yield* Queue.poll(queue)
-          }
-          if (remaining.length > 0) {
-            yield* doInject(monitorID, remaining, ctx, ops, sessions)
+          // Let the stdout reader drain buffered output to EOF before the
+          // final flush so lines written just before exit are not lost.
+          yield* Fiber.await(stdoutReader).pipe(Effect.ignore)
+
+          // The stop action already tore down the entry and published
+          // monitor.stopped; don't publish a second stopped event for the
+          // kill-induced exit.
+          if (!entries.has(monitorID)) return
+
+          // Flush remaining lines from queue, but not leftovers of a flood
+          if (reason !== "flooded") {
+            const remaining: string[] = []
+            let rem = yield* Queue.poll(queue)
+            while (Option.isSome(rem)) {
+              remaining.push(rem.value)
+              rem = yield* Queue.poll(queue)
+            }
+            if (remaining.length > 0) {
+              yield* doInject(monitorID, remaining, ctx, ops, sessions)
+            }
           }
 
           entries.delete(monitorID)
-          yield* events.publish(MonitorV1.Event.Stopped, {
-            sessionID: ctx.sessionID,
-            monitorID,
-            description: entry.description,
-            reason,
-            exitCode: exitCode ?? undefined,
-          }).pipe(Effect.ignore)
+          yield* events
+            .publish(MonitorV1.Event.Stopped, {
+              sessionID: ctx.sessionID,
+              monitorID,
+              description: entry.description,
+              reason,
+              exitCode: exitCode ?? undefined,
+            })
+            .pipe(Effect.ignore)
           yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
         }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
 
@@ -344,9 +405,7 @@ export const MonitorTool = Tool.define(
       sessions: Session.Interface,
     ): Effect.Effect<void> {
       return Effect.gen(function* () {
-        const session = yield* sessions.get(ctx.sessionID).pipe(
-          Effect.catch(() => Effect.succeed(undefined as any)),
-        )
+        const session = yield* sessions.get(ctx.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined as any)))
         const agent = session?.agent ?? ctx.agent
         const entry = entries.get(monitorID)
         const label = entry ? `${entry.description} (${monitorID})` : monitorID
@@ -364,7 +423,9 @@ export const MonitorTool = Tool.define(
             ],
           })
           .pipe(Effect.ignore)
-        yield* events.publish(MonitorV1.Event.Event, { sessionID: ctx.sessionID, monitorID, description: label, lines }).pipe(Effect.ignore)
+        yield* events
+          .publish(MonitorV1.Event.Event, { sessionID: ctx.sessionID, monitorID, description: label, lines })
+          .pipe(Effect.ignore)
       })
     }
 
@@ -378,9 +439,7 @@ export const MonitorTool = Tool.define(
       sessions: Session.Interface,
     ): Effect.Effect<void> {
       return Effect.gen(function* () {
-        const session = yield* sessions.get(ctx.sessionID).pipe(
-          Effect.catch(() => Effect.succeed(undefined as any)),
-        )
+        const session = yield* sessions.get(ctx.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined as any)))
         const agent = session?.agent ?? ctx.agent
         yield* ops
           .prompt({
@@ -396,24 +455,6 @@ export const MonitorTool = Tool.define(
             ],
           })
           .pipe(Effect.ignore)
-      })
-    }
-
-    function runExit(
-      monitorID: string,
-      reason: "exit" | "timeout" | "flooded" | "stopped",
-      exitCode: number | null,
-      ctx: Tool.Context,
-      ops: TaskPromptOps,
-      sessions: Session.Interface,
-    ): Effect.Effect<void> {
-      return Effect.gen(function* () {
-        const entry = entries.get(monitorID)
-        if (!entry) return
-        entries.delete(monitorID)
-        yield* killEntry(entry)
-        yield* events.publish(MonitorV1.Event.Stopped, { sessionID: ctx.sessionID, monitorID, description: entry.description, reason, exitCode: exitCode ?? undefined }).pipe(Effect.ignore)
-        yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
       })
     }
 

@@ -36,14 +36,7 @@ const eventV2BridgeMock = Layer.succeed(
 )
 
 const monitorLayer = Layer.mergeAll(
-  LayerNode.compile(
-    LayerNode.group([
-      CrossSpawnSpawner.node,
-      Session.node,
-      Truncate.node,
-      Agent.node,
-    ]),
-  ),
+  LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
   eventV2BridgeMock,
   testInstanceStoreLayer,
 )
@@ -95,8 +88,7 @@ const baseCtx: Tool.Context = {
   ask: () => Effect.void,
 }
 
-const runIn = <A, E, R>(dir: string, self: Effect.Effect<A, E, R>) =>
-  self.pipe(provideInstance(dir))
+const runIn = <A, E, R>(dir: string, self: Effect.Effect<A, E, R>) => self.pipe(provideInstance(dir))
 
 describe("tool.monitor", () => {
   it.live("start spawns a process and injects output line as event", () =>
@@ -107,14 +99,17 @@ describe("tool.monitor", () => {
       const def = yield* tool.init()
       const localCtx = { ...baseCtx, extra: { promptOps: ops } }
 
-      const result = yield* runIn(tmp, def.execute(
-        {
-          action: "start",
-          command: "echo hello",
-          description: "test monitor",
-        },
-        localCtx,
-      ))
+      const result = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "echo hello",
+            description: "test monitor",
+          },
+          localCtx,
+        ),
+      )
 
       expect(result.metadata).toHaveProperty("monitorID")
       expect(result.output).toContain("Monitor started")
@@ -147,6 +142,52 @@ describe("tool.monitor", () => {
     ),
   )
 
+  // Regression: in production every tool call runs in its own scope that
+  // closes as soon as the call returns. The monitor (process + readers) must
+  // survive that closure — a scope-tied spawn killed the child at call end
+  // and no event or exit injection ever happened.
+  it.live("monitor survives the per-call scope closing after start returns", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const { ops, calls } = makeStubOps()
+      const tool = yield* MonitorTool
+      const def = yield* tool.init()
+      const localCtx = { ...baseCtx, extra: { promptOps: ops } }
+
+      const result = yield* runIn(
+        tmp,
+        Effect.scoped(
+          def.execute(
+            {
+              action: "start",
+              command: "sleep 1; echo delayed-line",
+              description: "call-scope-test",
+            },
+            localCtx,
+          ),
+        ),
+      )
+      expect(result.output).toContain("Monitor started")
+
+      // The per-call scope is closed now; the line arrives afterwards.
+      yield* Effect.sleep(2500)
+
+      const injected = calls.find(
+        (call) => call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("delayed-line"),
+      )
+      expect(injected).toBeDefined()
+      const exitInjected = calls.find(
+        (call) => call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor exited"),
+      )
+      expect(exitInjected).toBeDefined()
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
+  )
+
   it.live("list shows running monitors for this session", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped()
@@ -155,14 +196,17 @@ describe("tool.monitor", () => {
       const def = yield* tool.init()
       const localCtx = { ...baseCtx, extra: { promptOps: ops } }
 
-      yield* runIn(tmp, def.execute(
-        {
-          action: "start",
-          command: "sleep 5",
-          description: "list-test",
-        },
-        localCtx,
-      ))
+      yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "sleep 5",
+            description: "list-test",
+          },
+          localCtx,
+        ),
+      )
 
       const listResult = yield* runIn(tmp, def.execute({ action: "list" }, localCtx))
       expect(listResult.output).toContain("list-test")
@@ -194,24 +238,30 @@ describe("tool.monitor", () => {
       const def = yield* tool.init()
       const localCtx = { ...baseCtx, extra: { promptOps: ops } }
 
-      const startResult = yield* runIn(tmp, def.execute(
-        {
-          action: "start",
-          command: "sleep 10",
-          description: "stop-test",
-        },
-        localCtx,
-      ))
+      const startResult = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "sleep 10",
+            description: "stop-test",
+          },
+          localCtx,
+        ),
+      )
 
       const monitorID = startResult.metadata.monitorID as string
 
-      const stopResult = yield* runIn(tmp, def.execute(
-        {
-          action: "stop",
-          monitor_id: monitorID,
-        },
-        localCtx,
-      ))
+      const stopResult = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "stop",
+            monitor_id: monitorID,
+          },
+          localCtx,
+        ),
+      )
 
       expect(stopResult.output).toContain("stopped")
 
@@ -231,13 +281,16 @@ describe("tool.monitor", () => {
       const tool = yield* MonitorTool
       const def = yield* tool.init()
 
-      const result = yield* runIn(tmp, def.execute(
-        {
-          action: "stop",
-          monitor_id: "mon_nonexistent",
-        },
-        baseCtx,
-      ))
+      const result = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "stop",
+            monitor_id: "mon_nonexistent",
+          },
+          baseCtx,
+        ),
+      )
 
       expect(result.output).toContain("not found")
     }),
@@ -251,15 +304,18 @@ describe("tool.monitor", () => {
       const def = yield* tool.init()
       const localCtx = { ...baseCtx, extra: { promptOps: ops } }
 
-      yield* runIn(tmp, def.execute(
-        {
-          action: "start",
-          command: "sleep 30",
-          description: "timeout-test",
-          timeout_ms: 100,
-        },
-        localCtx,
-      ))
+      yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "sleep 30",
+            description: "timeout-test",
+            timeout_ms: 100,
+          },
+          localCtx,
+        ),
+      )
 
       // Wait for timeout to trigger
       yield* Effect.sleep(1500)
@@ -281,45 +337,49 @@ describe("tool.monitor", () => {
     ),
   )
 
-  it.live("flood guard kills noisy monitor", () =>
-    Effect.gen(function* () {
-      const tmp = yield* tmpdirScoped()
-      const { ops, calls } = makeStubOps()
-      const tool = yield* MonitorTool
-      const def = yield* tool.init()
-      const localCtx = { ...baseCtx, extra: { promptOps: ops } }
+  it.live(
+    "flood guard kills noisy monitor",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* tmpdirScoped()
+        const { ops, calls } = makeStubOps()
+        const tool = yield* MonitorTool
+        const def = yield* tool.init()
+        const localCtx = { ...baseCtx, extra: { promptOps: ops } }
 
-      const startResult = yield* runIn(tmp, def.execute(
-        {
-          action: "start",
-          command: "for i in $(seq 1 50); do echo floodline$i; done",
-          description: "flood-test",
-          timeout_ms: 5000,
-        },
-        localCtx,
-      ))
+        // A real flood: `yes` writes as fast as the pipe accepts. The
+        // dropping queue must keep memory flat while the guard counts
+        // inject batches (FLOOD_LIMIT+1 batches ≈ 10.5s) and kills the child.
+        const startResult = yield* runIn(
+          tmp,
+          def.execute(
+            {
+              action: "start",
+              command: "yes floodline",
+              description: "flood-test",
+              persistent: true,
+            },
+            localCtx,
+          ),
+        )
 
-      const monitorID = startResult.metadata.monitorID as string
+        const monitorID = startResult.metadata.monitorID as string
 
-      // Wait for process to exit and events to be injected
-      yield* Effect.sleep(2000)
+        let exitText = ""
+        for (let i = 0; i < 40 && !exitText; i++) {
+          yield* Effect.sleep(500)
+          const exit = calls.find(
+            (call) => call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor exited"),
+          )
+          if (exit) exitText = (exit.parts[0] as any).text as string
+        }
 
-      // Check that events were injected
-      const eventCalls = calls.filter(
-        (call) => call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor event"),
-      )
-      expect(eventCalls.length).toBeGreaterThan(0)
+        expect(exitText).toContain("reason=flooded")
 
-      // Check that exit notification was sent
-      const exitCalls = calls.filter(
-        (call) => call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor exited"),
-      )
-      expect(exitCalls.length).toBeGreaterThan(0)
-
-      // Monitor should be gone from list after exit
-      const listResult = yield* runIn(tmp, def.execute({ action: "list" }, localCtx))
-      expect(listResult.output).not.toContain(monitorID)
-    }),
-    25_000,
+        // Monitor should be gone from list after the guard fired
+        const listResult = yield* runIn(tmp, def.execute({ action: "list" }, localCtx))
+        expect(listResult.output).not.toContain(monitorID)
+      }),
+    30_000,
   )
 })
