@@ -179,6 +179,12 @@ function sid(event: Event): string | undefined {
     return event.properties.sessionID
   }
 
+  // V1 monitor events are not part of the generated Event union yet; route
+  // them by their raw payload so the muted scrollback rows reach the reducer.
+  if ((event.type as string) === "monitor.event" || (event.type as string) === "monitor.stopped") {
+    return (event.properties as { sessionID?: string }).sessionID
+  }
+
   return undefined
 }
 
@@ -609,7 +615,13 @@ function createLayer(input: StreamInput) {
           }
         }
 
-        const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState, todos?: FooterTodoState, thinking?: FooterThinkingState) => {
+        const syncFooter = (
+          commits: StreamCommit[],
+          patch?: FooterPatch,
+          nextSubagent?: FooterSubagentState,
+          todos?: FooterTodoState,
+          thinking?: FooterThinkingState,
+        ) => {
           const current = pickView(state.data, state.subagent, state.blockers)
           const footer = composeFooter({
             patch,
@@ -1064,7 +1076,13 @@ function createLayer(input: StreamInput) {
           }
           releaseBlocker(event)
 
-          syncFooter(next.commits, next.footer?.patch, changed ? currentSubagentState() : undefined, next.footer?.todos, next.footer?.thinking)
+          syncFooter(
+            next.commits,
+            next.footer?.patch,
+            changed ? currentSubagentState() : undefined,
+            next.footer?.todos,
+            next.footer?.thinking,
+          )
 
           touch(event)
           yield* mark(event)
