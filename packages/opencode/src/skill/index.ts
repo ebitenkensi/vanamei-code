@@ -237,8 +237,10 @@ const loadSkills = Effect.fnUntraced(function* (
   discovered: DiscoveryState,
   events: EventV2Bridge.Service["Service"],
 ) {
+  // Sequential on purpose: duplicate names resolve last-wins, so registration
+  // must follow discovery order (external dirs, then config dirs) — unbounded
+  // concurrency made the winner a parse-completion race.
   yield* Effect.forEach(discovered.matches, (match) => add(state, match, events), {
-    concurrency: "unbounded",
     discard: true,
   })
 
