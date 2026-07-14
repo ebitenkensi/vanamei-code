@@ -4,6 +4,8 @@ import { ToolJsonSchema } from "./json-schema"
 import type { TaskPromptOps } from "./task"
 import { Session } from "@/session/session"
 import { SessionID } from "../session/schema"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { MonitorV1 } from "@opencode-ai/schema/monitor-v1"
 import { Effect, Option, Schema, Scope, Stream, Queue, Fiber } from "effect"
 import { ChildProcess, type ChildProcessSpawner as CPS } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
@@ -65,25 +67,6 @@ function appendStderr(ring: string, chunk: string): string {
   return combined.slice(idx)
 }
 
-// Stub for P1 — wired to real schema in P2
-function publishMonitorEvent(_event: {
-  monitorID: string
-  description: string
-  lines: string[]
-}): Effect.Effect<void> {
-  return Effect.void
-}
-
-// Stub for P1 — wired to real schema in P2
-function publishMonitorStopped(_event: {
-  monitorID: string
-  description: string
-  reason: string
-  exitCode: number | null
-}): Effect.Effect<void> {
-  return Effect.void
-}
-
 function makeShellEnv(ctx: Tool.Context, extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -112,6 +95,7 @@ export const MonitorTool = Tool.define(
     const spawner = yield* ChildProcessSpawner
     const sessions = yield* Session.Service
     const scope = yield* Scope.Scope
+    const events = yield* EventV2Bridge.Service
 
     const entries = new Map<string, MonitorEntry>()
     yield* Effect.addFinalizer(() => killAll(entries))
@@ -167,12 +151,13 @@ export const MonitorTool = Tool.define(
           }
           entries.delete(params.monitor_id)
           yield* killEntry(entry)
-          yield* publishMonitorStopped({
+          yield* events.publish(MonitorV1.Event.Stopped, {
+            sessionID: ctx.sessionID,
             monitorID: params.monitor_id,
             description: entry.description,
             reason: "stopped",
-            exitCode: null,
-          })
+            exitCode: undefined,
+          }).pipe(Effect.ignore)
           return {
             title: `Monitor Stopped: ${entry.description}`,
             metadata: { monitorID: params.monitor_id },
@@ -288,7 +273,7 @@ export const MonitorTool = Tool.define(
           )
 
           // Wait for exit or timeout
-          let reason = "exited"
+          let reason: "exit" | "timeout" | "flooded" | "stopped" = "exit"
           const race: { tag: "exit"; code: number } | { tag: "timeout" } = yield* Effect.raceAll([
             handle.exitCode.pipe(
               Effect.map((code): { tag: "exit"; code: number } => ({ tag: "exit", code: code as unknown as number })),
@@ -326,12 +311,13 @@ export const MonitorTool = Tool.define(
           }
 
           entries.delete(monitorID)
-          yield* publishMonitorStopped({
+          yield* events.publish(MonitorV1.Event.Stopped, {
+            sessionID: ctx.sessionID,
             monitorID,
             description: entry.description,
             reason,
-            exitCode,
-          })
+            exitCode: exitCode ?? undefined,
+          }).pipe(Effect.ignore)
           yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
         }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
 
@@ -378,14 +364,14 @@ export const MonitorTool = Tool.define(
             ],
           })
           .pipe(Effect.ignore)
-        yield* publishMonitorEvent({ monitorID, description: label, lines })
+        yield* events.publish(MonitorV1.Event.Event, { sessionID: ctx.sessionID, monitorID, description: label, lines }).pipe(Effect.ignore)
       })
     }
 
     function doExitInject(
       monitorID: string,
       description: string,
-      reason: string,
+      reason: "exit" | "timeout" | "flooded" | "stopped",
       exitCode: number | null,
       ctx: Tool.Context,
       ops: TaskPromptOps,
@@ -415,7 +401,7 @@ export const MonitorTool = Tool.define(
 
     function runExit(
       monitorID: string,
-      reason: string,
+      reason: "exit" | "timeout" | "flooded" | "stopped",
       exitCode: number | null,
       ctx: Tool.Context,
       ops: TaskPromptOps,
@@ -426,7 +412,7 @@ export const MonitorTool = Tool.define(
         if (!entry) return
         entries.delete(monitorID)
         yield* killEntry(entry)
-        yield* publishMonitorStopped({ monitorID, description: entry.description, reason, exitCode })
+        yield* events.publish(MonitorV1.Event.Stopped, { sessionID: ctx.sessionID, monitorID, description: entry.description, reason, exitCode: exitCode ?? undefined }).pipe(Effect.ignore)
         yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
       })
     }

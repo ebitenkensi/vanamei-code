@@ -11,6 +11,7 @@ import { LegacyEvent } from "./legacy-event"
 import { LspEvent } from "./lsp-event"
 import { McpEvent } from "./mcp-event"
 import { ModelsDev } from "./models-dev"
+import { MonitorV1 } from "./monitor-v1"
 import { Permission } from "./permission"
 import { PermissionV1 } from "./permission-v1"
 import { Plugin } from "./plugin"
@@ -68,6 +69,7 @@ export const Definitions = Event.inventory(
   ...SessionTodo.Event.Definitions,
   ...LspEvent.Definitions,
   ...PermissionV1.Event.Definitions,
+  ...MonitorV1.Event.Definitions,
   ...TuiEvent.Definitions,
   ...McpEvent.Definitions,
   ...LegacyEvent.Definitions,

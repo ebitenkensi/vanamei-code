@@ -19,6 +19,22 @@ import { MonitorTool } from "../../src/tool/monitor"
 import type { TaskPromptOps } from "../../src/tool/task"
 import { testInstanceStoreLayer, provideInstance, tmpdirScoped } from "../fixture/fixture"
 
+const eventV2BridgeMock = Layer.succeed(
+  EventV2Bridge.Service,
+  EventV2Bridge.Service.of({
+    publish: () => Effect.void as any,
+    subscribe: () => [] as any,
+    all: () => [] as any,
+    durable: () => [] as any,
+    listen: () => Effect.succeed(Effect.void),
+    project: () => Effect.void,
+    replay: () => Effect.void,
+    replayAll: () => Effect.succeed(undefined),
+    remove: () => Effect.void,
+    claim: () => Effect.void,
+  }),
+)
+
 const monitorLayer = Layer.mergeAll(
   LayerNode.compile(
     LayerNode.group([
@@ -28,6 +44,7 @@ const monitorLayer = Layer.mergeAll(
       Agent.node,
     ]),
   ),
+  eventV2BridgeMock,
   testInstanceStoreLayer,
 )
 

@@ -933,6 +933,20 @@ const SCROLLBACK_JUDGED_COMMIT: StreamCommit = {
   source: "system",
 }
 
+const SCROLLBACK_MONITOR_EVENT_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ monitor(server health): OK (+2 more)",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_MONITOR_STOPPED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ monitor(server health) stopped — exit",
+  phase: "start",
+  source: "system",
+}
+
 const SCROLLBACK_CASES: { name: string; description: string; commits: StreamCommit[] }[] = [
   {
     name: "scrollback.markdown",
@@ -1024,6 +1038,16 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
     name: "scrollback.permission-judged",
     description: "Muted one-line notice for an auto-allowed permission by the LLM permission judge.",
     commits: [SCROLLBACK_JUDGED_COMMIT],
+  },
+  {
+    name: "scrollback.monitor-event",
+    description: "Muted one-line notice for a monitor event line batch with +N more indicator.",
+    commits: [SCROLLBACK_MONITOR_EVENT_COMMIT],
+  },
+  {
+    name: "scrollback.monitor-stopped",
+    description: "Muted one-line notice for a monitor stopped event with the exit reason.",
+    commits: [SCROLLBACK_MONITOR_STOPPED_COMMIT],
   },
 ]
 

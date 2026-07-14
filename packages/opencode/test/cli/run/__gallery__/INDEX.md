@@ -91,3 +91,7 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `scrollback.budget-crossed.w120.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
 | `scrollback.permission-judged.w80.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |
 | `scrollback.permission-judged.w120.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |
+| `scrollback.monitor-event.w80.txt` | Muted one-line notice for a monitor event line batch with +N more indicator. |
+| `scrollback.monitor-event.w120.txt` | Muted one-line notice for a monitor event line batch with +N more indicator. |
+| `scrollback.monitor-stopped.w80.txt` | Muted one-line notice for a monitor stopped event with the exit reason. |
+| `scrollback.monitor-stopped.w120.txt` | Muted one-line notice for a monitor stopped event with the exit reason. |

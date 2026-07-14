@@ -1336,6 +1336,39 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     return out(data, commits, patch({ judging: stillJudging }))
   }
 
+  // Monitor one-line muted notices for the bound (main) session.
+  if ((event.type as string) === "monitor.event") {
+    const props = event.properties as { sessionID: string; description: string; lines: string[] }
+    if (props.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    const first = props.lines[0] ?? ""
+    const suffix = props.lines.length > 1 ? ` (+${props.lines.length - 1} more)` : ""
+    commits.push({
+      kind: "system",
+      text: `⏺ monitor(${props.description}): ${first}${suffix}`,
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  if ((event.type as string) === "monitor.stopped") {
+    const props = event.properties as { sessionID: string; description: string; reason: string }
+    if (props.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    commits.push({
+      kind: "system",
+      text: `⏺ monitor(${props.description}) stopped — ${props.reason}`,
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
   // AUTO pill state follows the server's session record. The /auto toggle
   // round-trips through session.update, so this event both confirms the
   // toggle and reflects changes made by other clients.

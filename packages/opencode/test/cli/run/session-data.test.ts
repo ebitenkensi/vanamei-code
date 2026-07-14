@@ -740,6 +740,93 @@ describe("run session data", () => {
     expect(out.commits).toEqual([])
   })
 
+  test("surfaces a monitor.event line as a system notice with description, first line, and +N more suffix", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "server health",
+        lines: ["OK", "cpu: 45%", "mem: 2.1G"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(server health): OK (+2 more)",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("surfaces a monitor.event line without +N more suffix when only one line", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "ping",
+        lines: ["pong"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(ping): pong",
+      }),
+    ])
+  })
+
+  test("surfaces a monitor.stopped event as a system notice with description and reason", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.stopped",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "server health",
+        reason: "exit",
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(server health) stopped — exit",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("ignores monitor.event events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-2",
+        monitorID: "mon_abc",
+        description: "other",
+        lines: ["data"],
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
+  test("ignores monitor.stopped events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.stopped",
+      properties: {
+        sessionID: "session-2",
+        monitorID: "mon_abc",
+        description: "other",
+        reason: "exit",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
   test("emits structured context/cost numbers for the statusline pills", () => {
     const out = reduceWithLimits(
       createSessionData(),
