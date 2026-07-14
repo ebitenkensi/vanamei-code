@@ -138,7 +138,7 @@ describe("tool.monitor", () => {
       )
       expect(exitInjected).toBeDefined()
       if (!exitInjected || exitInjected.parts[0]?.type !== "text") return
-      expect(exitInjected.parts[0].text).toContain("reason=exited")
+      expect(exitInjected.parts[0].text).toContain("reason=exit")
     }).pipe(
       Effect.timeoutOrElse({
         duration: "10 seconds",
