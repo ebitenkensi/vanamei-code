@@ -1,0 +1,442 @@
+import * as Tool from "./tool"
+import DESCRIPTION from "./monitor.txt"
+import { ToolJsonSchema } from "./json-schema"
+import type { TaskPromptOps } from "./task"
+import { Session } from "@/session/session"
+import { SessionID } from "../session/schema"
+import { Effect, Option, Schema, Scope, Stream, Queue, Fiber } from "effect"
+import { ChildProcess, type ChildProcessSpawner as CPS } from "effect/unstable/process"
+import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
+
+const id = "monitor"
+
+const Parameters = Schema.Struct({
+  action: Schema.optional(Schema.Union([Schema.Literal("start"), Schema.Literal("list"), Schema.Literal("stop")])).annotate({
+    description: "Action: start (default), list running monitors, or stop a monitor",
+  }),
+  command: Schema.optional(Schema.String).annotate({
+    description: "Shell command to run (required for start)",
+  }),
+  description: Schema.optional(Schema.String).annotate({
+    description: "Short description shown in list and notifications (required for start)",
+  }),
+  persistent: Schema.optional(Schema.Boolean).annotate({
+    description: "If true, monitor lives for the session lifetime ignoring timeout",
+  }),
+  timeout_ms: Schema.optional(Schema.Number).annotate({
+    description: "Timeout in milliseconds. Default 300000, max 3600000. Only for non-persistent monitors",
+  }),
+  monitor_id: Schema.optional(Schema.String).annotate({
+    description: "Monitor ID to stop (required for stop)",
+  }),
+})
+
+type MonitorEntry = {
+  proc: CPS.ChildProcessHandle
+  sessionID: SessionID
+  description: string
+  command: string
+  persistent: boolean
+  startedAt: number
+  stderr: string
+}
+
+const MAX_STDERR = 4096
+const DEFAULT_TIMEOUT_MS = 300_000
+const MAX_TIMEOUT_MS = 3_600_000
+const BATCH_WINDOW_MS = 500
+const FLOOD_LIMIT = 20
+const FLOOD_WINDOW_MS = 60_000
+
+function genMonitorID(): string {
+  return "mon_" + Math.random().toString(36).slice(2)
+}
+
+function appendStderr(ring: string, chunk: string): string {
+  const combined = ring + chunk
+  if (Buffer.byteLength(combined, "utf-8") <= MAX_STDERR) return combined
+  let bytes = Buffer.byteLength(combined, "utf-8")
+  let idx = 0
+  while (bytes > MAX_STDERR && idx < combined.length) {
+    const charByte = Buffer.byteLength(combined[idx]!, "utf-8")
+    bytes -= charByte
+    idx++
+  }
+  return combined.slice(idx)
+}
+
+// Stub for P1 — wired to real schema in P2
+function publishMonitorEvent(_event: {
+  monitorID: string
+  description: string
+  lines: string[]
+}): Effect.Effect<void> {
+  return Effect.void
+}
+
+// Stub for P1 — wired to real schema in P2
+function publishMonitorStopped(_event: {
+  monitorID: string
+  description: string
+  reason: string
+  exitCode: number | null
+}): Effect.Effect<void> {
+  return Effect.void
+}
+
+function makeShellEnv(ctx: Tool.Context, extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    OPENCODE_SESSION_ID: ctx.sessionID,
+    ...extraEnv,
+  }
+}
+
+function killAll(entries: Map<string, MonitorEntry>): Effect.Effect<void> {
+  if (entries.size === 0) return Effect.void
+  return Effect.forEach(
+    Array.from(entries.values()),
+    (entry) =>
+      entry.proc.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.catch(() => Effect.void)),
+    { discard: true },
+  ).pipe(Effect.ignore)
+}
+
+function killEntry(entry: MonitorEntry): Effect.Effect<void> {
+  return entry.proc.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.catch(() => Effect.void))
+}
+
+export const MonitorTool = Tool.define(
+  id,
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner
+    const sessions = yield* Session.Service
+    const scope = yield* Scope.Scope
+
+    const entries = new Map<string, MonitorEntry>()
+    yield* Effect.addFinalizer(() => killAll(entries))
+
+    const run = (
+      params: Schema.Schema.Type<typeof Parameters>,
+      ctx: Tool.Context,
+    ): Effect.Effect<Tool.ExecuteResult<Record<string, unknown>>> => {
+      return Effect.gen(function* () {
+        const action = params.action ?? "start"
+
+        // --- list ---
+        if (action === "list") {
+          const sessionEntries = Array.from(entries.entries()).filter(
+            ([_, e]) => e.sessionID === ctx.sessionID,
+          )
+          if (sessionEntries.length === 0) {
+            return {
+              title: "Monitor List",
+              metadata: {},
+              output: "no monitors running",
+            }
+          }
+          const output = sessionEntries
+            .map(
+              ([monitorID, e]) =>
+                `- ${monitorID}: running | ${e.description} | ${e.persistent ? "persistent" : "non-persistent"} | ${new Date(e.startedAt).toISOString()} | ${e.command}`,
+            )
+            .join("\n")
+          return {
+            title: "Monitor List",
+            metadata: {},
+            output,
+          }
+        }
+
+        // --- stop ---
+        if (action === "stop") {
+          if (!params.monitor_id) {
+            return {
+              title: "Monitor Stop",
+              metadata: {},
+              output: "error: monitor_id is required for stop",
+            }
+          }
+          const entry = entries.get(params.monitor_id)
+          if (!entry || entry.sessionID !== ctx.sessionID) {
+            return {
+              title: "Monitor Stop",
+              metadata: {},
+              output: `monitor ${params.monitor_id} not found`,
+            }
+          }
+          entries.delete(params.monitor_id)
+          yield* killEntry(entry)
+          yield* publishMonitorStopped({
+            monitorID: params.monitor_id,
+            description: entry.description,
+            reason: "stopped",
+            exitCode: null,
+          })
+          return {
+            title: `Monitor Stopped: ${entry.description}`,
+            metadata: { monitorID: params.monitor_id },
+            output: `monitor ${params.monitor_id} (${entry.description}) stopped`,
+          }
+        }
+
+        // --- start (default) ---
+        if (!params.command || !params.description) {
+          return {
+            title: "Monitor Start Error",
+            metadata: {},
+            output: "error: command and description are required for start",
+          }
+        }
+
+        yield* ctx.ask({
+          permission: id,
+          patterns: [params.command],
+          always: ["*"],
+          metadata: {},
+        })
+
+        const ops = ctx.extra?.promptOps as TaskPromptOps
+        if (!ops) {
+          return {
+            title: "Monitor Start Error",
+            metadata: {},
+            output: "error: promptOps not available in context",
+          }
+        }
+
+        const persistent = params.persistent === true
+        const timeoutMs = Math.min(params.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+        const monitorID = genMonitorID()
+        const env = makeShellEnv(ctx)
+
+        const cmd = ChildProcess.make(params.command, [], {
+          shell: true,
+          cwd: process.cwd(),
+          env,
+          stdin: "ignore",
+          detached: process.platform !== "win32",
+        })
+
+        const handle = yield* spawner.spawn(cmd)
+
+        const entry: MonitorEntry = {
+          proc: handle,
+          sessionID: ctx.sessionID,
+          description: params.description,
+          command: params.command,
+          persistent,
+          startedAt: Date.now(),
+          stderr: "",
+        }
+        entries.set(monitorID, entry)
+
+        // Background fiber: read stdout, batch, inject
+        yield* Effect.gen(function* () {
+          const queue = yield* Queue.unbounded<string>()
+          const stamps: number[] = []
+
+          // Reader: stdout lines → queue
+          yield* Effect.forkScoped(
+            Stream.runForEach(
+              Stream.splitLines(Stream.decodeText(handle.stdout)),
+              (line) => Queue.offer(queue, line).pipe(Effect.ignore),
+            ).pipe(Effect.ignore),
+          )
+
+          // Reader: stderr → ring buffer
+          yield* Effect.forkScoped(
+            Stream.runForEach(
+              Stream.decodeText(handle.stderr),
+              (chunk) =>
+                Effect.sync(() => {
+                  const e = entries.get(monitorID)
+                  if (e) e.stderr = appendStderr(e.stderr, chunk)
+                }),
+            ).pipe(Effect.ignore),
+          )
+
+          // Flusher: batch and inject every 500ms
+          const flusher = yield* Effect.forkScoped(
+            Effect.gen(function* () {
+              while (true) {
+                yield* Effect.sleep(BATCH_WINDOW_MS)
+
+                // Drain available lines (up to 10 per batch)
+                const items: string[] = []
+                let next = yield* Queue.poll(queue)
+                while (Option.isSome(next) && items.length < 10) {
+                  items.push(next.value)
+                  next = yield* Queue.poll(queue)
+                }
+                if (items.length === 0) continue
+
+                // Flood check
+                stamps.push(Date.now())
+                while (stamps.length > 0 && stamps[0]! < Date.now() - FLOOD_WINDOW_MS) {
+                  stamps.shift()
+                }
+                if (stamps.length > FLOOD_LIMIT) {
+                  yield* runExit(monitorID, "flooded", null, ctx, ops, sessions)
+                  return
+                }
+
+                // Inject batch
+                yield* doInject(monitorID, items, ctx, ops, sessions)
+              }
+            }),
+          )
+
+          // Wait for exit or timeout
+          let reason = "exited"
+          const race: { tag: "exit"; code: number } | { tag: "timeout" } = yield* Effect.raceAll([
+            handle.exitCode.pipe(
+              Effect.map((code): { tag: "exit"; code: number } => ({ tag: "exit", code: code as unknown as number })),
+            ),
+            ...(persistent
+              ? []
+              : [
+                  Effect.sleep(timeoutMs).pipe(
+                    Effect.map((): { tag: "timeout" } => ({ tag: "timeout" })),
+                  ),
+                ]),
+          ])
+
+          let exitCode: number | null
+          if (race.tag === "timeout") {
+            reason = "timeout"
+            yield* killEntry(entry)
+            exitCode = null
+          } else {
+            exitCode = race.code
+          }
+
+          // Clean up flusher
+          yield* Fiber.interrupt(flusher).pipe(Effect.ignore)
+
+          // Flush remaining lines from queue
+          const remaining: string[] = []
+          let rem = yield* Queue.poll(queue)
+          while (Option.isSome(rem)) {
+            remaining.push(rem.value)
+            rem = yield* Queue.poll(queue)
+          }
+          if (remaining.length > 0) {
+            yield* doInject(monitorID, remaining, ctx, ops, sessions)
+          }
+
+          entries.delete(monitorID)
+          yield* publishMonitorStopped({
+            monitorID,
+            description: entry.description,
+            reason,
+            exitCode,
+          })
+          yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
+        }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
+
+        return {
+          title: params.description,
+          metadata: { monitorID, persistent } as Record<string, unknown>,
+          output: [
+            `Monitor started: ${params.description}`,
+            `Monitor ID: ${monitorID}`,
+            `Persistent: ${persistent}`,
+            persistent ? "" : `Timeout: ${timeoutMs}ms`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        }
+      }).pipe(Effect.orDie) as any
+    }
+
+    function doInject(
+      monitorID: string,
+      lines: string[],
+      ctx: Tool.Context,
+      ops: TaskPromptOps,
+      sessions: Session.Interface,
+    ): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        const session = yield* sessions.get(ctx.sessionID).pipe(
+          Effect.catch(() => Effect.succeed(undefined as any)),
+        )
+        const agent = session?.agent ?? ctx.agent
+        const entry = entries.get(monitorID)
+        const label = entry ? `${entry.description} (${monitorID})` : monitorID
+        yield* ops
+          .prompt({
+            sessionID: ctx.sessionID,
+            agent,
+            variant: undefined,
+            parts: [
+              {
+                type: "text",
+                synthetic: true,
+                text: `[monitor event] ${label}\n${lines.join("\n")}\n\nThis is an automated monitor notification, not user input. Act on it if needed.`,
+              },
+            ],
+          })
+          .pipe(Effect.ignore)
+        yield* publishMonitorEvent({ monitorID, description: label, lines })
+      })
+    }
+
+    function doExitInject(
+      monitorID: string,
+      description: string,
+      reason: string,
+      exitCode: number | null,
+      ctx: Tool.Context,
+      ops: TaskPromptOps,
+      sessions: Session.Interface,
+    ): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        const session = yield* sessions.get(ctx.sessionID).pipe(
+          Effect.catch(() => Effect.succeed(undefined as any)),
+        )
+        const agent = session?.agent ?? ctx.agent
+        yield* ops
+          .prompt({
+            sessionID: ctx.sessionID,
+            agent,
+            variant: undefined,
+            parts: [
+              {
+                type: "text",
+                synthetic: true,
+                text: `[monitor exited] ${description} (${monitorID}) reason=${reason} exit=${exitCode ?? "none"}`,
+              },
+            ],
+          })
+          .pipe(Effect.ignore)
+      })
+    }
+
+    function runExit(
+      monitorID: string,
+      reason: string,
+      exitCode: number | null,
+      ctx: Tool.Context,
+      ops: TaskPromptOps,
+      sessions: Session.Interface,
+    ): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        const entry = entries.get(monitorID)
+        if (!entry) return
+        entries.delete(monitorID)
+        yield* killEntry(entry)
+        yield* publishMonitorStopped({ monitorID, description: entry.description, reason, exitCode })
+        yield* doExitInject(monitorID, entry.description, reason, exitCode, ctx, ops, sessions)
+      })
+    }
+
+    return {
+      description: DESCRIPTION,
+      parameters: Parameters,
+      jsonSchema: ToolJsonSchema.fromSchema(Parameters),
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
+        run(params, ctx).pipe(Effect.orDie),
+    }
+  }),
+)

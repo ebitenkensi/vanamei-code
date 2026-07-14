@@ -1,0 +1,17 @@
+A tool that launches a background command and streams its stdout lines as asynchronous notifications into the current session.
+
+Actions: start (default), list, stop.
+
+Start parameters:
+- command (required): shell command to run. Each stdout line becomes a notification event. Exit ends monitoring.
+- description (required): short human-readable label shown in notifications and list.
+- persistent: if true, monitor lives for the session lifetime ignoring timeout. Default false.
+- timeout_ms: timeout in milliseconds. Default 300000, max 3600000, only for non-persistent monitors.
+
+Each stdout line is injected as an event notification. A flood guard kills monitors that produce more than 20 batches in 60 seconds.
+
+The monitor survives the tool call (ctx.abort is ignored).
+
+Use persistent:true for session-lifetime watchers (e.g. agmsg watch.sh).
+
+Stop requires the monitor_id from list output.
