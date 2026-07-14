@@ -59,9 +59,4 @@ describe("run footer width", () => {
     const hidden = footerWidthPolicy(79)
     expect(hidden.statusline.showPills).toBe(false)
   })
-
-  test("shows the full context form once spacious", () => {
-    expect(footerWidthPolicy(149).statusline.pills.ctxFull).toBe(false)
-    expect(footerWidthPolicy(150).statusline.pills.ctxFull).toBe(true)
-  })
 })

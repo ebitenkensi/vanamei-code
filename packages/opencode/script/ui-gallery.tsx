@@ -1381,7 +1381,7 @@ const CASES: GalleryCase[] = [
   },
   {
     name: "footer.statusline.auto",
-    description: "Statusline with the AUTO automode pill visible beside a prompt composer.",
+    description: "Statusline with the AUTO automode indicator beside the agent name.",
     height: 8,
     render: (width, height) =>
       renderFooterView({

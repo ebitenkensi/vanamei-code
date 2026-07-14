@@ -534,14 +534,9 @@ export function RunFooterView(props: RunFooterViewProps) {
     const percent = contextPercent()
     const tokens = contextTokens()
     if (percent !== null) {
-      const text = stats.pills.ctxFull ? `◆ ${Locale.number(tokens)} (${percent}%)` : `◆ ${percent}%`
-      items.push({ text, color: ctxColor() })
+      items.push({ text: `◆ ${percent}%`, color: ctxColor() })
     } else if (tokens > 0) {
       items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
-    }
-
-    if (activeTabs().length > 0) {
-      items.push({ text: `◆ ${activeTabs().length} agents`, color: theme().highlight })
     }
 
     if (stats.pills.cost) {
@@ -564,15 +559,13 @@ export function RunFooterView(props: RunFooterViewProps) {
       items.push({ text: `✎ ${modifiedCount()}`, color: theme().success })
     }
 
-    if (props.state().automode) {
-      items.push({ text: "AUTO", color: theme().highlight })
-    }
-
     return items
   })
   const modelStatus = createMemo(() => {
+    // Hidden while a turn is running so the busy statusline keeps room for
+    // status text, pills, and hints.
     const current = props.currentModel()
-    if (!prompt() || shell() || !current) {
+    if (!prompt() || shell() || busy() || !current) {
       return
     }
 
@@ -1030,6 +1023,14 @@ export function RunFooterView(props: RunFooterViewProps) {
                   <box paddingRight={1} flexShrink={0}>
                     <text fg={theme().warning} wrapMode="none" truncate flexShrink={0}>
                       {permissionModeIndicator().label}
+                    </text>
+                  </box>
+                </Show>
+
+                <Show when={props.state().automode}>
+                  <box paddingRight={1} flexShrink={0}>
+                    <text fg={theme().highlight} wrapMode="none" truncate flexShrink={0}>
+                      AUTO
                     </text>
                   </box>
                 </Show>

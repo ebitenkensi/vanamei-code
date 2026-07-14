@@ -1136,24 +1136,22 @@ test("direct footer shows editable prompts and additional queued work while runn
     const mode = statusItems[0]
     const main = statusItems[1]
     const spinner = main.getChildren()[0]
-    const model = statusItems[2]
     const queued = statusItems[3]
     const hint = statusItems.at(-1)!
 
     expect(spinner).toBeDefined()
-    expect(frame).toContain("a-model-name-long-enough-to-force-responsive-truncation")
+    // The model name is hidden while a turn is running.
+    expect(frame).not.toContain("a-model-name")
     expect(frame).toContain("3 queued")
     expect(frame).toContain("ctrl+b background")
     expect(frame).toContain("ctrl+x q 3 queued")
     expect(frame).toContain("ctrl+x down subagents")
     expect(frame).toContain("ctrl+p cmd")
-    expect(frame).toContain("a-model-name-long-enough-to-force-responsive-truncation")
     expect(frame).toContain("subagents · ctrl+p cmd")
     expect(frame).not.toContain("1 agent")
     expect(statusline.backgroundColor.toInts()).toEqual(transparent)
     expect(mode.backgroundColor.toInts()).toEqual(transparent)
     expect(main.backgroundColor.toInts()).toEqual(transparent)
-    expect(model.backgroundColor.toInts()).toEqual(transparent)
     expect(queued.backgroundColor.toInts()).toEqual(transparent)
     expect(hint.backgroundColor.toInts()).toEqual(transparent)
   } finally {
@@ -1260,7 +1258,7 @@ test("direct footer renders all four info pills separated by middots", async () 
   }
 })
 
-test("direct footer shows the full context form once spacious", async () => {
+test("direct footer keeps the ctx pill percentage-only even when spacious", async () => {
   const app = await renderFooter({
     width: 150,
     state: { contextTokens: 159_600, contextPercent: 16 },
@@ -1270,7 +1268,8 @@ test("direct footer shows the full context form once spacious", async () => {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("◆ 159.6K (16%)")
+    expect(frame).toContain("◆ 16%")
+    expect(frame).not.toContain("159.6K")
   } finally {
     app.cleanup()
   }

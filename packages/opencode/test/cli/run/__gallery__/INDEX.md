@@ -37,8 +37,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.subagent-tree.cost.w120.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
 | `footer.statusline.accept-edits.w80.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
-| `footer.statusline.auto.w80.txt` | Statusline with the AUTO automode pill visible beside a prompt composer. |
-| `footer.statusline.auto.w120.txt` | Statusline with the AUTO automode pill visible beside a prompt composer. |
+| `footer.statusline.auto.w80.txt` | Statusline with the AUTO automode indicator beside the agent name. |
+| `footer.statusline.auto.w120.txt` | Statusline with the AUTO automode indicator beside the agent name. |
 | `footer.statusline.budget-ok.w80.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-ok.w120.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-soft.w80.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
