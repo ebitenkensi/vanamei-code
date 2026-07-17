@@ -19,4 +19,3 @@ export const ServerShutdownApi = HttpApi.make("server-shutdown")
       .middleware(Authorization),
   )
 
-

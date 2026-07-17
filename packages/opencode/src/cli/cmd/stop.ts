@@ -1,7 +1,6 @@
 import { cmd } from "./cmd"
 import { UI } from "@/cli/ui"
 import { Discovery } from "@/server/discovery"
-import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Project } from "@/project/project"
 import { Effect } from "effect"
 

@@ -43,7 +43,7 @@ export function remove(projectID: string) {
 export async function healthCheck(url: string, password: string): Promise<boolean> {
   try {
     const auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-    const response = await fetch(url, {
+    await fetch(url, {
       headers: { Authorization: auth },
       signal: AbortSignal.timeout(5000),
     })

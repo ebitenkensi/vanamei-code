@@ -14,7 +14,7 @@ Claude Code の `/bg` 相当。
 - mDNS 以外のネットワーク発見の新規実装（ファイルベース発見レコードのみ）。
 - 既存 `serve` モードの挙動変更なし。
 
-## 設計判断（マスター承認済み）
+## 設計判断（claude 承認済み）
 
 - 発見レコードは**プロジェクト単位**: `<Global.Path.data>/server/<projectID>/server.json`（0600）。
 - P4 SIGHUP 自動デタッチは**デフォルト ON**。設定 `opencode.detach.sighup` で無効化可。
