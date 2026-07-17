@@ -15,6 +15,22 @@ export async function executeDetach(input: DetachInput) {
   const password = crypto.randomBytes(24).toString("base64url")
   process.env.OPENCODE_SERVER_PASSWORD = password
 
+  // Daemonize FIRST, before any await: redirect stdout/stderr to a log file so
+  // the TUI renderer cannot crash on a disconnected terminal while the event
+  // loop is yielded during the dynamic import below.
+  const logPath = path.join(Global.Path.log, `detach-${input.projectID}.log`)
+  const logFd = fs.openSync(logPath, "a")
+  const logWrite = (chunk: unknown) => {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer)
+    if (buf.length > 0) fs.writeSync(logFd, buf)
+  }
+  process.stdout.write = logWrite as unknown as typeof process.stdout.write
+  process.stderr.write = logWrite as unknown as typeof process.stderr.write
+
+  // Release stdin
+  process.stdin.pause()
+  process.stdin.unref()
+
   const { Server } = await import("@/server/server")
   const listener = await Server.listen({ port: 0, hostname: "127.0.0.1" })
 
@@ -33,20 +49,6 @@ export async function executeDetach(input: DetachInput) {
     "@/server/routes/instance/httpapi/handlers/server"
   )
   registerListener(listener.stop, input.projectID)
-
-  // Daemonize: redirect stdout/stderr to a log file
-  const logPath = path.join(Global.Path.log, `detach-${input.projectID}.log`)
-  const logFd = fs.openSync(logPath, "a")
-  const logWrite = (chunk: unknown) => {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer)
-    if (buf.length > 0) fs.writeSync(logFd, buf)
-  }
-  process.stdout.write = logWrite as unknown as typeof process.stdout.write
-  process.stderr.write = logWrite as unknown as typeof process.stderr.write
-
-  // Release stdin
-  process.stdin.pause()
-  process.stdin.unref()
 
   // Ignore SIGHUP after detach
   process.on("SIGHUP", () => {})

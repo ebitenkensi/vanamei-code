@@ -26,6 +26,7 @@ import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@openc
 import { Discovery } from "@/server/discovery"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { executeDetach } from "./run/detach"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -931,7 +932,6 @@ export const RunCommand = effectCmd({
         }) as typeof globalThis.fetch
 
         const onDetach = async () => {
-          const { executeDetach } = await import("./run/detach")
           const listener = await executeDetach({
             directory: directory ?? root,
             projectID,

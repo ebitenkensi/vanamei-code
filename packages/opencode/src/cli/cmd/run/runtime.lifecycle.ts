@@ -115,7 +115,12 @@ function shutdown(renderer: CliRenderer): void {
   }
 
   if (!renderer.isDestroyed) {
-    renderer.destroy()
+    try {
+      renderer.destroy()
+    } catch {
+      // Terminal is already broken (e.g. pty master closed). Best-effort
+      // cosmetic cleanup must never crash the process.
+    }
   }
 }
 
@@ -202,6 +207,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       autoFocus: false,
       openConsoleOnError: false,
       exitOnCtrlC: false,
+      exitSignals: [],
       useKittyKeyboard: { events: process.platform === "win32" },
       screenMode: "split-footer",
       footerHeight: FOOTER_HEIGHT,
@@ -365,7 +371,11 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
         unregisterKeymap?.()
         shutdown(renderer)
         if (!wroteExit) {
-          process.stdout.write("\n")
+          try {
+            process.stdout.write("\n")
+          } catch {
+            // Terminal is already broken; best-effort.
+          }
         }
         source.cleanup?.()
       }
