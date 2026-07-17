@@ -2,6 +2,7 @@ import type { Argv } from "yargs"
 import { Effect, Schema } from "effect"
 import type { AppServices } from "@/effect/app-runtime"
 import type { InstanceStore } from "@/project/instance-store"
+import { DetachState } from "./detach-state"
 import { cmd, type WithDoubleDash } from "./cmd/cmd"
 
 /**
@@ -90,7 +91,9 @@ export const effectCmd = <Args, A>(opts: EffectCmdOpts<Args, A>) =>
       try {
         await AppRuntime.runPromise(opts.handler(args).pipe(Effect.provideService(InstanceRef, ctx)))
       } finally {
-        await AppRuntime.runPromise(store.dispose(ctx))
+        if (!DetachState.active()) {
+          await AppRuntime.runPromise(store.dispose(ctx))
+        }
       }
     },
   })

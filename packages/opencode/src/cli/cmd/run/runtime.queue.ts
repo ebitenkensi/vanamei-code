@@ -10,7 +10,7 @@
 // Resolves when the footer closes and all in-flight work finishes.
 import * as Locale from "@/util/locale"
 import { MessageID, PartID } from "@/session/schema"
-import { isExitCommand, isNewCommand } from "./prompt.shared"
+import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand } from "./prompt.shared"
 import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./types"
 
 type Trace = {
@@ -29,6 +29,8 @@ export type QueueInput = {
   trace?: Trace
   onSend?: (prompt: RunPrompt) => void
   onNewSession?: () => void | Promise<void>
+  onDetach?: () => Promise<void>
+  onShutdown?: () => Promise<void>
   run: (prompt: RunPrompt, signal: AbortSignal) => Promise<void>
 }
 
@@ -272,6 +274,24 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
 
     if (prompt.mode !== "shell" && isExitCommand(prompt.text)) {
       input.footer.close()
+      return
+    }
+
+    if (prompt.mode !== "shell" && isDetachCommand(prompt.text)) {
+      if (input.onDetach) {
+        const fn = input.onDetach
+        input.onDetach = undefined // guard: only one detach per session
+        void fn().then(() => input.footer.close())
+      }
+      return
+    }
+
+    if (prompt.mode !== "shell" && isShutdownCommand(prompt.text)) {
+      if (input.onShutdown) {
+        const fn = input.onShutdown
+        input.onShutdown = undefined // guard: only one shutdown per session
+        void fn().then(() => input.footer.close())
+      }
       return
     }
 

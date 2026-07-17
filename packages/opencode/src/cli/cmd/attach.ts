@@ -1,15 +1,18 @@
 import { cmd } from "./cmd"
 import { UI } from "@/cli/ui"
+import { Discovery } from "@/server/discovery"
+import { Project } from "@/project/project"
+import { Effect } from "effect"
 
 export const AttachCommand = cmd({
-  command: "attach <url>",
+  command: "attach [url]",
   describe: "attach to a running opencode server",
   builder: (yargs) =>
     yargs
       .positional("url", {
         type: "string",
-        describe: "http://localhost:4096",
-        demandOption: true,
+        describe: "http://localhost:4096 (omit for auto-discovery from discovery record)",
+        demandOption: false,
       })
       .option("dir", {
         type: "string",
@@ -68,20 +71,50 @@ export const AttachCommand = cmd({
       process.stderr.write("opencode: --mini is now the default and the flag is deprecated\n")
     }
 
+    let attachUrl = args.url
+
+    // When URL is omitted, discover from the project's discovery record
+    if (!attachUrl) {
+      const dir = args.dir ?? process.cwd()
+      const { AppRuntime } = await import("@/effect/app-runtime")
+      const projectID = await AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const project = yield* Project.Service
+          const info = yield* project.fromDirectory(dir)
+          return info.project.id
+        }),
+      ).catch(() => undefined)
+
+      if (!projectID) {
+        UI.error("Failed to resolve project ID for auto-discovery")
+        process.exit(1)
+      }
+
+      const rec = await Discovery.resolve(projectID)
+      attachUrl = rec.url
+
+      // Inherit password from the discovery record if not explicitly provided
+      if (!args.password) {
+        args.password = rec.password
+      }
+      if (!args.username) {
+        args.username = rec.username
+      }
+    }
+
     const directory = (() => {
       if (!args.dir) return undefined
       try {
         process.chdir(args.dir)
         return process.cwd()
       } catch {
-        // If the directory doesn't exist locally (remote attach), pass it through.
         return args.dir
       }
     })()
 
     const { runMini } = await import("./run")
     await runMini({
-      attach: args.url,
+      attach: attachUrl,
       directory,
       password: args.password,
       username: args.username,

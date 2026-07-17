@@ -27,7 +27,9 @@ import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
+import { DetachState } from "./cli/detach-state"
 import { PluginCommand } from "./cli/cmd/plug"
+import { StopCommand } from "./cli/cmd/stop"
 import { Heap } from "./cli/heap"
 
 const args = hideBin(process.argv)
@@ -100,6 +102,7 @@ const cli = yargs(args)
   .command(PrCommand)
   .command(SessionCommand)
   .command(PluginCommand)
+  .command(StopCommand)
   .command(DbCommand)
   .fail((msg, err) => {
     if (
@@ -134,9 +137,11 @@ try {
   }
   process.exitCode = 1
 } finally {
-  // Some subprocesses don't react properly to SIGTERM and similar signals.
-  // Most notably, some docker-container-based MCP servers don't handle such signals unless
-  // run using `docker run --init`.
-  // Explicitly exit to avoid any hanging subprocesses.
-  process.exit()
+  if (!DetachState.active()) {
+    // Some subprocesses don't react properly to SIGTERM and similar signals.
+    // Most notably, some docker-container-based MCP servers don't handle such signals unless
+    // run using `docker run --init`.
+    // Explicitly exit to avoid any hanging subprocesses.
+    process.exit()
+  }
 }
