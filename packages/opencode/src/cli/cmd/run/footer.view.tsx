@@ -893,7 +893,11 @@ export function RunFooterView(props: RunFooterViewProps) {
                               closePanel()
                             }}
                             onCommand={(name) => {
-                              composer.submitText(`/${name}`)
+                              composer.replacePrompt({
+                                text: `/${name} `,
+                                parts: [],
+                                command: { name, arguments: "" },
+                              })
                               closePanel()
                             }}
                             onNew={() => {
