@@ -68,6 +68,8 @@ type RunRuntimeInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
+  onDetach?: () => Promise<void>
+  onShutdown?: () => Promise<void>
 }
 
 type RunLocalInput = {
@@ -87,6 +89,7 @@ type RunLocalInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
+  onDetach?: () => Promise<void>
 }
 
 type StreamTransportModule = Pick<
@@ -446,6 +449,14 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     },
   })
   const footer = shell.footer
+
+  // SIGHUP auto-detach (P4). In local mode with onDetach available, detach on
+  // SIGHUP and close the TUI. In attach mode, exit gracefully.
+  const onSighup = input.onDetach
+    ? () => void input.onDetach!().then(() => footer.close())
+    : () => process.exit(0)
+  process.on("SIGHUP", onSighup)
+
   const rememberLocal = (commit: StreamCommit, after?: LocalReplayAnchor) => {
     state.localRows = [...state.localRows, { commit, after }].slice(-LOCAL_REPLAY_ROW_LIMIT)
   }
@@ -833,6 +844,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       footer,
       initialInput: input.initialInput,
       trace: log,
+      onDetach: input.onDetach,
+      onShutdown: input.onShutdown,
       onSend: (prompt) => {
         state.shown = true
         state.history.push(prompt)
@@ -1017,6 +1030,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       await state.stream?.then((item) => item.handle.close()).catch(() => {})
     }
   } finally {
+    process.off("SIGHUP", onSighup)
     const title = await resolveExitTitle(ctx, input, state)
 
     await shell.close({
@@ -1046,6 +1060,7 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
     replay: input.replay,
     replayLimit: input.replayLimit,
     demo: input.demo,
+    onDetach: input.onDetach,
     resolveSession: () => {
       if (session) {
         return session
@@ -1083,7 +1098,7 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 
 // Attach mode. Uses the caller-provided SDK client directly.
 export async function runInteractiveMode(
-  input: RunInput & { createSession?: CreateSession },
+  input: RunInput & { createSession?: CreateSession; onShutdown?: () => Promise<void> },
   deps?: RunRuntimeDeps,
 ): Promise<void> {
   return runInteractiveRuntime(
@@ -1095,6 +1110,7 @@ export async function runInteractiveMode(
       replay: input.replay,
       replayLimit: input.replayLimit,
       demo: input.demo,
+      onShutdown: input.onShutdown,
       boot: async () => ({
         sdk: input.sdk,
         directory: input.directory,

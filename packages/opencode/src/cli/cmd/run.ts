@@ -23,8 +23,10 @@ import { effectCmd } from "../effect-cmd"
 import { EOL } from "os"
 import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
+import { Discovery } from "@/server/discovery"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { executeDetach } from "./run/detach"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -874,6 +876,21 @@ export const RunCommand = effectCmd({
 
         const model = pick(args.model)
         const { runInteractiveMode } = await import("./run/runtime")
+        const onShutdown = async () => {
+          const headers = attachHeaders ?? {}
+          try {
+            const res = await fetch(`${args.attach}/server/shutdown`, {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              signal: AbortSignal.timeout(10000),
+            })
+            if (!res.ok) {
+              console.error("shutdown request failed:", res.status)
+            }
+          } catch (err) {
+            console.error("shutdown request error:", err)
+          }
+        }
         try {
           await runInteractiveMode({
             sdk: client,
@@ -892,6 +909,7 @@ export const RunCommand = effectCmd({
             thinking,
             backgroundSubagents: flags.experimentalBackgroundSubagents,
             demo: args.demo,
+            onShutdown,
           })
         } catch (error) {
           dieInteractive(error)
@@ -901,6 +919,8 @@ export const RunCommand = effectCmd({
 
       if (interactive && !args.attach && !args.session && !args.continue) {
         const model = pick(args.model)
+        if (!localInstance) throw new Error("InstanceRef is undefined in local mode")
+        const projectID = localInstance.project.id
         const { runInteractiveLocalMode } = await import("./run/runtime")
         const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const { Server } = await import("@/server/server")
@@ -910,6 +930,26 @@ export const RunCommand = effectCmd({
           if (auth) headers.set("Authorization", auth)
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
+
+        const onDetach = async () => {
+          const listener = await executeDetach({
+            directory: directory ?? root,
+            projectID,
+            onShutdown: async () => {
+              // no-op for local mode; shutdown is handled server-side
+            },
+          })
+          // Register SIGTERM handler for `opencode stop`
+          process.on("SIGTERM", async () => {
+            Discovery.remove(projectID)
+            try {
+              await listener.stop(true)
+            } catch {
+              // ignore
+            }
+            process.exit(0)
+          })
+        }
 
         try {
           return await runInteractiveLocalMode({
@@ -929,6 +969,7 @@ export const RunCommand = effectCmd({
             thinking,
             backgroundSubagents: flags.experimentalBackgroundSubagents,
             demo: args.demo,
+            onDetach,
           })
         } catch (error) {
           dieInteractive(error)
