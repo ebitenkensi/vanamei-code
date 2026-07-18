@@ -31,10 +31,20 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.question.custom.w120.txt` | Question dialog for a "custom" request. |
 | `footer.subagent.w80.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
 | `footer.subagent.w120.txt` | RunFooterView with the subagent inspector open on a completed tab (2-tab state). |
-| `footer.subagent-tree.w80.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
-| `footer.subagent-tree.w120.txt` | RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline. |
+| `footer.subagent-tree.w80.txt` | RunFooterView composer with the subagent tree: a running task (braille spinner as the header glyph + plain activity text) and a completed task (✓ header, ⎿ Done), above a short prompt draft and the statusline. |
+| `footer.subagent-tree.w120.txt` | RunFooterView composer with the subagent tree: a running task (braille spinner as the header glyph + plain activity text) and a completed task (✓ header, ⎿ Done), above a short prompt draft and the statusline. |
+| `footer.subagent-tree.cost.w80.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
+| `footer.subagent-tree.cost.w120.txt` | Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4). |
 | `footer.statusline.accept-edits.w80.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
+| `footer.statusline.auto.w80.txt` | Statusline with the AUTO automode indicator beside the agent name. |
+| `footer.statusline.auto.w120.txt` | Statusline with the AUTO automode indicator beside the agent name. |
+| `footer.statusline.budget-ok.w80.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
+| `footer.statusline.budget-ok.w120.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
+| `footer.statusline.budget-soft.w80.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
+| `footer.statusline.budget-soft.w120.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
+| `footer.statusline.budget-hard.w80.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
+| `footer.statusline.budget-hard.w120.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
 | `panel.command-menu.w80.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.command-menu.w120.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.model-select.w80.txt` | Standalone model picker body with a current selection and a deprecated model hidden. |
@@ -49,29 +59,39 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `panel.queued.w120.txt` | Standalone queued-prompt picker body with two pending prompts. |
 | `panel.sessions.w80.txt` | Standalone resume-session picker body listing other sessions newest first. |
 | `panel.sessions.w120.txt` | Standalone resume-session picker body listing other sessions newest first. |
-| `scrollback.markdown.w80.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter. |
-| `scrollback.markdown.w120.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter. |
-| `scrollback.table.w80.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter. |
-| `scrollback.table.w120.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter. |
-| `scrollback.text.w80.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter. |
-| `scrollback.text.w120.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter. |
+| `scrollback.markdown.w80.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ● gutter. |
+| `scrollback.markdown.w120.txt` | Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ● gutter. |
+| `scrollback.table.w80.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ● gutter. |
+| `scrollback.table.w120.txt` | Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ● gutter. |
+| `scrollback.text.w80.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ● gutter. |
+| `scrollback.text.w120.txt` | Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ● gutter. |
 | `scrollback.reasoning.w80.txt` | Reasoning entry rendered as a dimmed "_Thinking:_" markdown code block. |
 | `scrollback.reasoning.w120.txt` | Reasoning entry rendered as a dimmed "_Thinking:_" markdown code block. |
-| `scrollback.bash.w80.txt` | Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker. |
-| `scrollback.bash.w120.txt` | Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker. |
+| `scrollback.bash.w80.txt` | Completed bash tool entry: a "● Bash(cmd) in dir" header (green dot) with multi-line output hanging under a "⎿ " marker. |
+| `scrollback.bash.w120.txt` | Completed bash tool entry: a "● Bash(cmd) in dir" header (green dot) with multi-line output hanging under a "⎿ " marker. |
 | `scrollback.bash.long.w80.txt` | Completed bash tool entry with 8 output lines truncated to the first 5 plus a muted "… +N lines" notice. |
 | `scrollback.bash.long.w120.txt` | Completed bash tool entry with 8 output lines truncated to the first 5 plus a muted "… +N lines" notice. |
-| `scrollback.write.w80.txt` | Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
-| `scrollback.write.w120.txt` | Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
-| `scrollback.edit.w80.txt` | Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
-| `scrollback.edit.w120.txt` | Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
-| `scrollback.patch.w80.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
-| `scrollback.patch.w120.txt` | Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
-| `scrollback.task.w80.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
-| `scrollback.task.w120.txt` | Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
-| `scrollback.todo.w80.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
-| `scrollback.todo.w120.txt` | Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
-| `scrollback.question.w80.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |
-| `scrollback.question.w120.txt` | Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line. |
+| `scrollback.write.w80.txt` | Completed write tool entry: a "● Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
+| `scrollback.write.w120.txt` | Completed write tool entry: a "● Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot. |
+| `scrollback.edit.w80.txt` | Completed edit tool entry: a "● Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
+| `scrollback.edit.w120.txt` | Completed edit tool entry: a "● Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff. |
+| `scrollback.patch.w80.txt` | Completed apply_patch tool entry: a "● Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
+| `scrollback.patch.w120.txt` | Completed apply_patch tool entry: a "● Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading. |
+| `scrollback.task.w80.txt` | Completed task tool entry: a "● Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
+| `scrollback.task.w120.txt` | Completed task tool entry: a "● Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent's final report truncated to 5 lines plus a muted "… +N lines" notice. |
+| `scrollback.todo.w80.txt` | Completed todowrite tool entry: a "● Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
+| `scrollback.todo.w120.txt` | Completed todowrite tool entry: a "● Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted). |
+| `scrollback.question.w80.txt` | Completed question tool entry: a "● Question(N questions)" header above the gutter-indented question/answer card, no title line. |
+| `scrollback.question.w120.txt` | Completed question tool entry: a "● Question(N questions)" header above the gutter-indented question/answer card, no title line. |
 | `scrollback.error.w80.txt` | Session error entry rendered in the scrollback. |
 | `scrollback.error.w120.txt` | Session error entry rendered in the scrollback. |
+| `scrollback.permission-denied.w80.txt` | Muted one-line notice for a rule/hook permission denial in the bound (main) session. |
+| `scrollback.permission-denied.w120.txt` | Muted one-line notice for a rule/hook permission denial in the bound (main) session. |
+| `scrollback.budget-crossed.w80.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
+| `scrollback.budget-crossed.w120.txt` | Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only). |
+| `scrollback.permission-judged.w80.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |
+| `scrollback.permission-judged.w120.txt` | Muted one-line notice for an auto-allowed permission by the LLM permission judge. |
+| `scrollback.monitor-event.w80.txt` | Muted one-line notice for a monitor event line batch with +N more indicator. |
+| `scrollback.monitor-event.w120.txt` | Muted one-line notice for a monitor event line batch with +N more indicator. |
+| `scrollback.monitor-stopped.w80.txt` | Muted one-line notice for a monitor stopped event with the exit reason. |
+| `scrollback.monitor-stopped.w120.txt` | Muted one-line notice for a monitor stopped event with the exit reason. |

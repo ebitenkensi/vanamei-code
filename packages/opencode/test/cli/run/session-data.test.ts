@@ -601,6 +601,289 @@ describe("run session data", () => {
     ])
   })
 
+  test("surfaces a permission.denied event as a muted system notice with the permission and first pattern", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["git push origin main", "git push --force"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: '✗ permission denied: bash "git push origin main"',
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("truncates a long denied pattern in the permission.denied notice", () => {
+    const longPattern = "src/" + "a".repeat(80) + "/file.ts"
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "edit",
+        patterns: [longPattern],
+      },
+    })
+
+    const text = out.commits[0]?.text ?? ""
+    expect(text.startsWith('✗ permission denied: edit "')).toBe(true)
+    expect(text.length).toBeLessThan(longPattern.length)
+  })
+
+  test("omits the pattern suffix when permission.denied has no patterns", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-1",
+        permission: "doom_loop",
+        patterns: [],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "✗ permission denied: doom_loop",
+      }),
+    ])
+  })
+
+  test("ignores permission.denied events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.denied",
+      properties: {
+        sessionID: "session-2",
+        permission: "bash",
+        patterns: ["*"],
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
+  // An auto-eligible ask goes to pendingJudge (no ask screen); the judged
+  // event with outcome "allowed" surfaces the muted auto-allow notice.
+  function judgeAllowed(input: { permission: string; patterns: string[]; reason: string }) {
+    const asked = reduce(createSessionData(), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: input.permission,
+        patterns: input.patterns,
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    })
+    expect(asked.commits).toEqual([])
+    expect(asked.footer).toEqual({ patch: { judging: true } })
+
+    return reduce(asked.data, {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        permission: input.permission,
+        patterns: input.patterns,
+        outcome: "allowed",
+        reason: input.reason,
+      },
+    })
+  }
+
+  test("surfaces a permission.judged event as a system notice with permission, first pattern, and reason", () => {
+    const out = judgeAllowed({ permission: "bash", patterns: ["ls", "git status"], reason: "safe operation" })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash(ls) — safe operation",
+        phase: "start",
+      }),
+    ])
+    expect(out.footer).toEqual({ patch: { judging: false } })
+  })
+
+  test("falls back to 'no reason' when permission.judged reason is empty", () => {
+    const out = judgeAllowed({ permission: "read", patterns: ["/tmp/file.txt"], reason: "" })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed read(/tmp/file.txt) — no reason",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("omits pattern parentheses when permission.judged has no patterns", () => {
+    const out = judgeAllowed({ permission: "bash", patterns: [], reason: "trusted" })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash — trusted",
+      }),
+    ])
+  })
+
+  // Production order: the judge replies "once" (permission.replied) before
+  // publishing permission.judged, so the judged event arrives after
+  // pendingJudge was cleared. The notice and the judging reset must survive.
+  test("surfaces the auto-allow notice when permission.replied arrives before permission.judged", () => {
+    let data = createSessionData()
+    data = reduce(data, {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    }).data
+
+    const replied = reduce(data, {
+      type: "permission.replied",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        reply: "once",
+      },
+    })
+    expect(replied.footer).toEqual({ patch: { judging: false } })
+
+    const judged = reduce(replied.data, {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        permission: "bash",
+        patterns: ["ls"],
+        outcome: "allowed",
+        reason: "safe operation",
+      },
+    })
+
+    expect(judged.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ Auto-allowed bash(ls) — safe operation",
+      }),
+    ])
+    expect(judged.footer).toEqual({ patch: { judging: false } })
+  })
+
+  test("ignores permission.judged events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-2",
+        permission: "bash",
+        patterns: ["*"],
+        reason: "n/a",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
+  test("surfaces a monitor.event line as a system notice with description, first line, and +N more suffix", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "server health",
+        lines: ["OK", "cpu: 45%", "mem: 2.1G"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(server health): OK (+2 more)",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("surfaces a monitor.event line without +N more suffix when only one line", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "ping",
+        lines: ["pong"],
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(ping): pong",
+      }),
+    ])
+  })
+
+  test("surfaces a monitor.stopped event as a system notice with description and reason", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.stopped",
+      properties: {
+        sessionID: "session-1",
+        monitorID: "mon_abc",
+        description: "server health",
+        reason: "exit",
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "⏺ monitor(server health) stopped — exit",
+        phase: "start",
+      }),
+    ])
+  })
+
+  test("ignores monitor.event events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.event",
+      properties: {
+        sessionID: "session-2",
+        monitorID: "mon_abc",
+        description: "other",
+        lines: ["data"],
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
+  test("ignores monitor.stopped events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "monitor.stopped",
+      properties: {
+        sessionID: "session-2",
+        monitorID: "mon_abc",
+        description: "other",
+        reason: "exit",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+  })
+
   test("emits structured context/cost numbers for the statusline pills", () => {
     const out = reduceWithLimits(
       createSessionData(),
@@ -654,6 +937,42 @@ describe("run session data", () => {
       properties: {
         sessionID: "session-2",
         diff: [{ file: "a.ts" }],
+      },
+    })
+
+    expect(out.footer).toBeUndefined()
+  })
+
+  test("updates the AUTO pill from session.updated for the bound session", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-1",
+        info: { id: "session-1", automode: true },
+      },
+    })
+
+    expect(out.footer?.patch).toEqual({ automode: true })
+  })
+
+  test("clears the AUTO pill when session.updated omits automode", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-1",
+        info: { id: "session-1" },
+      },
+    })
+
+    expect(out.footer?.patch).toEqual({ automode: false })
+  })
+
+  test("ignores session.updated events for other sessions", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.updated",
+      properties: {
+        sessionID: "session-2",
+        info: { id: "session-2", automode: true },
       },
     })
 

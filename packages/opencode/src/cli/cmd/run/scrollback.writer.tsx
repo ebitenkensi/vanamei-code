@@ -23,7 +23,7 @@ function todoColor(theme: RunTheme, status: string) {
   return theme.block.muted
 }
 
-// Result lines hang under a tool's `⏺ ` header: the first line gets the
+// Result lines hang under a tool's `● ` header: the first line gets the
 // "  ⎿  " marker, continuation lines are indented to the same column.
 const TOOL_RESULT_TRUNCATE_LINES = 5
 
@@ -78,7 +78,7 @@ export function entryLayout(commit: StreamCommit, body: RunEntryBody = entryBody
     }
 
     // Every tool text body except the user-shell "$ command" echo is a
-    // result hanging under the tool's `⏺ ` header, so it gets the ⎿ block
+    // result hanging under the tool's `● ` header, so it gets the ⎿ block
     // layout regardless of phase or line count. The shell echo keeps its
     // inline dot-prefixed look (see needsDotPrefix below).
     if (body.type === "text" && !(commit.phase === "start" && commit.shell)) {
@@ -104,7 +104,7 @@ export function needsDotPrefix(commit: StreamCommit, body: RunEntryBody): boolea
     return body.type === "text" || body.type === "markdown"
   }
 
-  // Tool headers already draw their own "⏺ " (see the `header` body Match in
+  // Tool headers already draw their own "● " (see the `header` body Match in
   // RunEntryContent). Only the user-shell "$ command" echo still relies on
   // this generic dot-prefixing.
   if (commit.kind === "tool" && commit.shell) {
@@ -150,6 +150,9 @@ export function RunEntryContent(props: {
     const next = body()
     return next.type === "header" ? next : undefined
   })
+  // Bash's leading dot reads as "active shell" green, distinguishing it from
+  // the other tools' neutral header dot at a glance.
+  const headerIcon = createMemo(() => (props.commit.tool === "bash" ? theme().block.diffAdded : style().fg))
   const text = createMemo(() => {
     const next = body()
     return next.type === "text" ? next : undefined
@@ -191,7 +194,7 @@ export function RunEntryContent(props: {
     <Switch fallback={null}>
       <Match when={header()}>
         <text width="100%" wrapMode="none" truncate>
-          <span style={{ fg: style().fg }}>⏺ </span>
+          <span style={{ fg: headerIcon() }}>● </span>
           <span style={{ fg: theme().block.text }}>{header()!.label}</span>
           {header()!.suffix ? <span style={{ fg: theme().block.muted }}>{` ${header()!.suffix}`}</span> : null}
         </text>
@@ -199,7 +202,7 @@ export function RunEntryContent(props: {
       <Match when={text() && dotted()}>
         <box width="100%" flexDirection="row">
           <text width={2} wrapMode="none" fg={style().fg}>
-            ⏺{" "}
+            ●{" "}
           </text>
           <text flexGrow={1} flexShrink={1} wrapMode="word" fg={style().fg} attributes={style().attrs}>
             {text()!.content}
@@ -373,7 +376,7 @@ export function RunEntryContent(props: {
       <Match when={markdown() && dotted()}>
         <box width="100%" flexDirection="row">
           <text width={2} wrapMode="none" fg={style().fg}>
-            ⏺{" "}
+            ●{" "}
           </text>
           <markdown
             flexGrow={1}

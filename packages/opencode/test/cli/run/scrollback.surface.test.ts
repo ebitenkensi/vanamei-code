@@ -111,7 +111,7 @@ function reasoning(text: string, phase: StreamCommit["phase"] = "progress"): Str
   }
 }
 
-test("theme swaps restyle active reasoning without resetting the stream", async () => {
+test("theme swaps restyle active assistant without resetting the stream", async () => {
   const previousSyntax = SyntaxStyle.fromStyles({ default: { fg: "#123456" } })
   const nextSyntax = SyntaxStyle.fromStyles({ default: { fg: "#abcdef" } })
   const released: RunTheme[] = []
@@ -119,27 +119,27 @@ test("theme swaps restyle active reasoning without resetting the stream", async 
     ...RUN_THEME_FALLBACK,
     block: {
       ...RUN_THEME_FALLBACK.block,
-      subtleSyntax: previousSyntax,
+      syntax: previousSyntax,
     },
   }
   const next = {
     ...RUN_THEME_FALLBACK,
     block: {
       ...RUN_THEME_FALLBACK.block,
-      subtleSyntax: nextSyntax,
+      syntax: nextSyntax,
     },
   }
   const out = await setup({ theme: previous, onThemeRelease: (theme) => released.push(theme) })
 
   try {
-    await out.scrollback.append(reasoning("before"))
+    await out.scrollback.append(assistant("before"))
     expect(activeSyntax(out.scrollback)).toBe(previousSyntax)
 
     out.scrollback.setTheme(next)
     expect(activeSyntax(out.scrollback)).toBe(nextSyntax)
     expect(released).toEqual([])
 
-    await out.scrollback.append(reasoning("after"))
+    await out.scrollback.append(assistant("after"))
     expect(activeSyntax(out.scrollback)).toBe(nextSyntax)
     expect(released).toEqual([previous])
   } finally {
@@ -307,13 +307,9 @@ test("holds markdown code blocks until final commit and keeps newline ownership"
 test("renders todo and question summaries without boilerplate footer copy", async () => {
   const cases = [
     {
-      header: "⏺ Update Todos",
+      header: "● Update Todos",
       title: undefined,
-      include: [
-        "☒ List files under `run/`",
-        "☐ Count functions in each `run/` file",
-        "☐ Mark each tracking item complete",
-      ],
+      include: ["  ⎿  Done"],
       exclude: ["Updating", "todos completed"],
       start: toolCommit({
         tool: "todowrite",
@@ -350,7 +346,7 @@ test("renders todo and question summaries without boilerplate footer copy", asyn
       }),
     },
     {
-      header: "⏺ Question(1 question)",
+      header: "● Question(1 question)",
       title: undefined,
       include: ["What should I work on in the codebase next?", "Bug fix"],
       exclude: ["Asked", "questions completed", "# Questions"],
@@ -481,7 +477,7 @@ test("inserts spacers for new visible groups", async () => {
     try {
       expect(commits).toHaveLength(2)
       expect(renderCommit(commits[0]!).trim()).toBe("")
-      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe("⏺ Glob(**/run.ts)")
+      expect(renderCommit(commits[1]!).replace(/ +/g, " ").trim()).toBe("● Glob(**/run.ts)")
     } finally {
       destroy(commits)
     }
@@ -555,7 +551,7 @@ test.skipIf(process.platform === "win32")(
       const output = lines.join("\n")
       expect(output).toContain("❯ Hello you")
       expect(output).toContain("Say hello.")
-      expect(output).toContain("⏺ Hello.")
+      expect(output).toContain("● Hello.")
     } finally {
       out.scrollback.destroy()
     }
@@ -612,7 +608,7 @@ test("omits the current directory from bash titles", async () => {
 
     const commits = claim(out.renderer)
     try {
-      expect(render(commits)).toContain("⏺ Bash(pwd)")
+      expect(render(commits)).toContain("● Bash(pwd)")
       expect(render(commits)).not.toContain("in .")
     } finally {
       destroy(commits)
@@ -676,9 +672,9 @@ test("renders completed bash output hanging under its header and before the next
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("⏺ Bash(git status) in /tmp/demo\n  ⎿  On branch demo")
-    expect(output).toContain("nothing to commit, working tree clean\n\n⏺ oc-run-dev ahead 1")
-    expect(output).not.toContain("nothing to commit, working tree clean\n\n\n⏺ oc-run-dev ahead 1")
+    expect(output).toContain("● Bash(git status) in /tmp/demo\n  ⎿  On branch demo")
+    expect(output).toContain("nothing to commit, working tree clean\n\n● oc-run-dev ahead 1")
+    expect(output).not.toContain("nothing to commit, working tree clean\n\n\n● oc-run-dev ahead 1")
   } finally {
     out.scrollback.destroy()
   }
@@ -754,7 +750,7 @@ test("inserts a spacer before the next tool after completed multiline bash outpu
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("     total 4\n\n⏺ Glob(**/*tool*) in src/cli/cmd")
+    expect(output).toContain("     total 4\n\n● Glob(**/*tool*) in src/cli/cmd")
   } finally {
     out.scrollback.destroy()
   }
@@ -846,8 +842,8 @@ test("does not double-space before completed bash output when inline tool header
     take()
 
     const output = lines.join("\n")
-    expect(output).toContain("⏺ Grep(tool) in src/cli/cmd/run\n\n  ⎿  demo.ts")
-    expect(output).not.toContain("⏺ Grep(tool) in src/cli/cmd/run\n\n\n  ⎿  demo.ts")
+    expect(output).toContain("● Grep(tool) in src/cli/cmd/run\n\n  ⎿  demo.ts")
+    expect(output).not.toContain("● Grep(tool) in src/cli/cmd/run\n\n\n  ⎿  demo.ts")
   } finally {
     out.scrollback.destroy()
   }
@@ -979,8 +975,8 @@ test("renders plain errors with one blank line before and after the error block"
 
     const output = lines.join("\n")
     expect(output).toContain("❯ /fmt error\n\ndemo error event")
-    expect(output).toContain("demo error event\n\n⏺ next line")
-    expect(output).not.toContain("demo error event\n\n\n⏺ next line")
+    expect(output).toContain("demo error event\n\n● next line")
+    expect(output).not.toContain("demo error event\n\n\n● next line")
   } finally {
     out.scrollback.destroy()
   }
@@ -1010,7 +1006,7 @@ test("renders structured write finals once as code blocks", async () => {
     const started = claim(out.renderer)
     try {
       expect(started).toHaveLength(1)
-      expect(render(started)).toContain("⏺ Write(src/a.ts)")
+      expect(render(started)).toContain("● Write(src/a.ts)")
     } finally {
       destroy(started)
     }

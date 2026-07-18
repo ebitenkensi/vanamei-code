@@ -23,7 +23,17 @@ import { createRuntimeLifecycle } from "./runtime.lifecycle"
 import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import type { FooterView, LocalReplayAnchor, LocalReplayRow, PermissionReply, RunInput, RunPrompt, RunProvider, StreamCommit } from "./types"
+import type {
+  FooterView,
+  LocalReplayAnchor,
+  LocalReplayRow,
+  PermissionReply,
+  RunAgent,
+  RunInput,
+  RunPrompt,
+  RunProvider,
+  StreamCommit,
+} from "./types"
 
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
@@ -132,6 +142,9 @@ type RuntimeState = {
   localRows: LocalReplayRow[]
   sessionTitle?: string
   agent: string | undefined
+  // Catalog snapshot for the current agent's budget lookup (P4), fed to the
+  // stream transport's client-side budget-crossing detection.
+  agents: RunAgent[]
   switching?: Promise<void>
   demo?: ReturnType<typeof createRunDemo>
   selectSubagent?: (sessionID: string | undefined) => void
@@ -216,6 +229,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     localRows: [],
     sessionTitle: ctx.sessionTitle,
     agent: ctx.agent,
+    agents: [],
     includeFiles: true,
     permissionMode: "normal",
   }
@@ -281,6 +295,24 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       state.pendingPermission = undefined
       await ctx.sdk.permission.reply({ requestID: pending.id, reply: "once" })
       footer.event({ type: "stream.view", view: { type: "prompt" } })
+    },
+    onAutoToggle: async () => {
+      if (!state.sessionID) {
+        return
+      }
+
+      // The server record is the source of truth: fetch before flipping so a
+      // toggle never desyncs after resume, session switch, or external change.
+      const response = await ctx.sdk.session.get({ sessionID: state.sessionID }).catch(() => undefined)
+      if (!response?.data || footer.isClosed) {
+        return
+      }
+
+      const next = !(response.data.automode ?? false)
+      footer.event({ type: "stream.patch", patch: { automode: next } })
+      log?.write("auto.toggle", { automode: next })
+
+      await ctx.sdk.session.update({ sessionID: state.sessionID, automode: next })
     },
     onQuestionReply: async (next) => {
       if (state.demo?.questionReply(next)) {
@@ -441,6 +473,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       return
     }
 
+    state.agents = agents
     footer.event({
       type: "catalog",
       agents,
@@ -493,6 +526,24 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     footer.event({
       type: "stream.patch",
       patch: { modified: diff.length },
+    })
+  }
+
+  // Initial fetch for the AUTO automode pill, mirroring loadDiff above.
+  // Live updates after this come from session.updated events (session-data.ts).
+  const loadAutomode = async (): Promise<void> => {
+    if (footer.isClosed || !state.sessionID) {
+      return
+    }
+
+    const response = await ctx.sdk.session.get({ sessionID: state.sessionID }).catch(() => undefined)
+    if (!response?.data || footer.isClosed) {
+      return
+    }
+
+    footer.event({
+      type: "stream.patch",
+      patch: { automode: response.data.automode === true },
     })
   }
 
@@ -605,6 +656,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         replayLimit: input.replayLimit,
         limits: () => state.limits,
         providers: () => state.providers,
+        budget: () => state.agents.find((item) => item.name === state.agent)?.budget,
         footer,
         trace: log,
         permissionMode: () => state.permissionMode,
@@ -702,6 +754,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
           contextPercent: null,
           cost: 0,
           modified: 0,
+          automode: false,
           first: info.first,
         },
       })
@@ -714,6 +767,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       await ensureStream()
       await loadTodos().catch(() => {})
       await loadDiff().catch(() => {})
+      await loadAutomode().catch(() => {})
       await state.demo?.start()
     } catch (error) {
       footer.event({
@@ -847,6 +901,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
                   contextPercent: null,
                   cost: 0,
                   modified: 0,
+                  automode: false,
                   first: true,
                 },
               })
@@ -939,6 +994,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       await ensureStream()
       await loadTodos().catch(() => {})
       await loadDiff().catch(() => {})
+      await loadAutomode().catch(() => {})
     }
 
     if (!eager && input.resolveSession) {

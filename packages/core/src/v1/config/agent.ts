@@ -35,6 +35,15 @@ const AgentSchema = Schema.StructWithRest(
       description: "Maximum number of agentic iterations before forcing text-only response",
     }),
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
+    budget: Schema.optional(
+      Schema.Struct({
+        soft: Schema.optional(Schema.Number),
+        hard: Schema.optional(Schema.Number),
+      }),
+    ).annotate({
+      description:
+        "Session cost budget in USD. Reaching 'soft' injects a wind-down notice; reaching 'hard' forces a final text-only response.",
+    }),
     permission: Schema.optional(ConfigPermissionV1.Info),
   }),
   [Schema.Record(Schema.String, Schema.Any)],
@@ -53,6 +62,7 @@ const KNOWN_KEYS = new Set([
   "color",
   "steps",
   "maxSteps",
+  "budget",
   "options",
   "permission",
   "disable",

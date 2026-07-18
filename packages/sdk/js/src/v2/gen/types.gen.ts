@@ -71,6 +71,8 @@ export type Event =
   | EventLspUpdated
   | EventPermissionAsked
   | EventPermissionReplied
+  | EventPermissionDenied
+  | EventPermissionJudged
   | EventTuiPromptAppend2
   | EventTuiCommandExecute2
   | EventTuiToastShow2
@@ -157,7 +159,7 @@ export type SnapshotFileDiff = {
   status?: "added" | "deleted" | "modified"
 }
 
-export type PermissionAction = "allow" | "deny" | "ask"
+export type PermissionAction = "allow" | "deny" | "ask" | "auto"
 
 export type PermissionRule = {
   permission: string
@@ -205,6 +207,7 @@ export type Session = {
   metadata?: {
     [key: string]: unknown
   }
+  automode?: boolean
   time: {
     created: number
     updated: number
@@ -1389,6 +1392,7 @@ export type GlobalEvent = {
             messageID: string
             callID: string
           }
+          auto?: boolean
         }
       }
     | {
@@ -1398,6 +1402,34 @@ export type GlobalEvent = {
           sessionID: string
           requestID: string
           reply: "once" | "always" | "reject"
+        }
+      }
+    | {
+        id: string
+        type: "permission.denied"
+        properties: {
+          sessionID: string
+          permission: string
+          patterns: Array<string>
+          tool?: {
+            messageID: string
+            callID: string
+          }
+        }
+      }
+    | {
+        id: string
+        type: "permission.judged"
+        properties: {
+          sessionID: string
+          requestID: string
+          permission: string
+          patterns: Array<string>
+          reason: string
+          tool?: {
+            messageID: string
+            callID: string
+          }
         }
       }
     | {
@@ -1654,7 +1686,7 @@ export type ServerConfig = {
   cors?: Array<string>
 }
 
-export type PermissionActionConfig = "ask" | "allow" | "deny"
+export type PermissionActionConfig = "ask" | "allow" | "deny" | "auto"
 
 export type PermissionObjectConfig = {
   [key: string]: PermissionActionConfig
@@ -1705,6 +1737,10 @@ export type AgentConfig = {
   color?: string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
   steps?: number
   maxSteps?: number
+  budget?: {
+    soft?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    hard?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  }
   permission?: PermissionConfig
   [key: string]:
     | unknown
@@ -1729,6 +1765,10 @@ export type AgentConfig = {
     | "error"
     | "info"
     | number
+    | {
+        soft?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        hard?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      }
     | PermissionConfig
     | undefined
 }
@@ -2225,6 +2265,7 @@ export type GlobalSession = {
   metadata?: {
     [key: string]: unknown
   }
+  automode?: boolean
   time: {
     created: number
     updated: number
@@ -2362,6 +2403,10 @@ export type Agent = {
     [key: string]: unknown
   }
   steps?: number
+  budget?: {
+    soft?: number
+    hard?: number
+  }
 }
 
 export type LspStatus = {
@@ -2473,6 +2518,7 @@ export type PermissionRequest = {
     messageID: string
     callID: string
   }
+  auto?: boolean
 }
 
 export type PermissionNotFoundError = {
@@ -2914,6 +2960,8 @@ export type V2Event =
   | LspUpdated
   | PermissionAsked
   | PermissionReplied
+  | PermissionDenied
+  | PermissionJudged
   | TuiPromptAppend
   | TuiCommandExecute
   | TuiToastShow
@@ -3874,7 +3922,7 @@ export type ProviderRequest = {
 
 export type AgentColor = string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
 
-export type PermissionV2Effect = "allow" | "deny" | "ask"
+export type PermissionV2Effect = "allow" | "deny" | "ask" | "auto"
 
 export type PermissionV2Rule = {
   action: string
@@ -3921,6 +3969,7 @@ export type SessionV2Info = {
   title: string
   location: LocationRef
   subpath?: string
+  automode?: boolean
   revert?: RevertState
 }
 
@@ -5713,6 +5762,7 @@ export type PermissionAsked = {
       messageID: string
       callID: string
     }
+    auto?: boolean
   }
 }
 
@@ -5732,6 +5782,54 @@ export type PermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
+  }
+}
+
+export type PermissionDenied = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "permission.denied"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    permission: string
+    patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
+export type PermissionJudged = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "permission.judged"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    requestID: string
+    permission: string
+    patterns: Array<string>
+    reason: string
+    tool?: {
+      messageID: string
+      callID: string
+    }
   }
 }
 
@@ -6867,6 +6965,7 @@ export type EventPermissionAsked = {
       messageID: string
       callID: string
     }
+    auto?: boolean
   }
 }
 
@@ -6877,6 +6976,36 @@ export type EventPermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
+  }
+}
+
+export type EventPermissionDenied = {
+  id: string
+  type: "permission.denied"
+  properties: {
+    sessionID: string
+    permission: string
+    patterns: Array<string>
+    tool?: {
+      messageID: string
+      callID: string
+    }
+  }
+}
+
+export type EventPermissionJudged = {
+  id: string
+  type: "permission.judged"
+  properties: {
+    sessionID: string
+    requestID: string
+    permission: string
+    patterns: Array<string>
+    reason: string
+    tool?: {
+      messageID: string
+      callID: string
+    }
   }
 }
 
@@ -9611,6 +9740,7 @@ export type SessionUpdateData = {
     metadata?: {
       [key: string]: unknown
     }
+    automode?: boolean
     permission?: PermissionRuleset
     time?: {
       archived?: number

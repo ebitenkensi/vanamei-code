@@ -65,9 +65,9 @@ export type ToolInline = {
   body?: string
 }
 
-// Scrollback header line: `⏺ label` with an optional dim suffix (working dir,
+// Scrollback header line: `● label` with an optional dim suffix (working dir,
 // agent type, etc). Unlike ToolInline (used by the non-interactive `run`
-// command), the ⏺ icon is always the same glyph -- only label/suffix vary.
+// command), the ● icon is always the same glyph -- only label/suffix vary.
 export type ToolHeader = {
   label: string
   suffix?: string
@@ -609,26 +609,8 @@ function snapTask(p: ToolProps<typeof TaskTool>): ToolSnapshot {
   }
 }
 
-function snapTodo(p: ToolProps<typeof TodoWriteTool>): ToolSnapshot {
-  const items = list<{ status?: string; content?: string }>(p.frame.input.todos).flatMap((item) => {
-    const content = typeof item?.content === "string" ? item.content : ""
-    if (!content) {
-      return []
-    }
-
-    return [
-      {
-        status: typeof item.status === "string" ? item.status : "",
-        content,
-      },
-    ]
-  })
-
-  return {
-    kind: "todo",
-    items,
-    tail: "",
-  }
+function snapTodo(_p: ToolProps<typeof TodoWriteTool>): ToolSnapshot | undefined {
+  return undefined
 }
 
 function snapQuestion(p: ToolProps<typeof QuestionTool>): ToolSnapshot {
@@ -656,8 +638,9 @@ function bashWorkdir(p: ToolProps<typeof BashTool>): string {
 
 function headerBash(p: ToolProps<typeof BashTool>): ToolHeader {
   const cmd = p.input.command ?? ""
+  const cmdOneLine = cmd.replace(/\s*\n\s*/g, " ")
   const dir = bashWorkdir(p)
-  const label = cmd ? `Bash(${cmd})` : "Bash"
+  const label = cmd ? `Bash(${cmdOneLine})` : "Bash"
   return dir ? { label, suffix: `in ${dir}` } : { label }
 }
 
@@ -826,36 +809,8 @@ function headerTodo(): ToolHeader {
   return { label: "Update Todos" }
 }
 
-function scrollTodoFinal(p: ToolProps<typeof TodoWriteTool>): string {
-  const items = list<{ status?: string }>(p.input.todos)
-  const time = span(p.frame.state)
-  if (items.length === 0) {
-    if (!time) {
-      return "0 todos"
-    }
-
-    return `0 todos · ${time}`
-  }
-
-  const doneN = items.filter((item) => item.status === "completed").length
-  const runN = items.filter((item) => item.status === "in_progress").length
-  const left = items.length - doneN - runN
-  const tail = [`${items.length} total`]
-  if (doneN > 0) {
-    tail.push(`${doneN} done`)
-  }
-  if (runN > 0) {
-    tail.push(`${runN} active`)
-  }
-  if (left > 0) {
-    tail.push(`${left} pending`)
-  }
-
-  if (time) {
-    tail.push(time)
-  }
-
-  return tail.join(" · ")
+function scrollTodoFinal(_p: ToolProps<typeof TodoWriteTool>): string {
+  return "Done"
 }
 
 function headerQuestion(p: ToolProps<typeof QuestionTool>): ToolHeader {
@@ -999,10 +954,23 @@ function permList(p: ToolPermissionProps): ToolPermissionInfo {
 
 function permBash(p: ToolPermissionProps<typeof BashTool>): ToolPermissionInfo {
   const cmd = p.input.command || ""
+  const cmdLines: string[] = []
+  if (cmd) {
+    const lines = cmd.split("\n")
+    const kept = lines.slice(0, 2)
+    const hidden = lines.length - kept.length
+    cmdLines.push(`$ ${kept[0]}`)
+    if (kept[1] !== undefined) {
+      cmdLines.push(kept[1])
+    }
+    if (hidden > 0) {
+      cmdLines.push(`… +${hidden} lines`)
+    }
+  }
   return {
     icon: "#",
     title: "Shell command",
-    lines: cmd ? [`$ ${cmd}`] : p.patterns.map((item) => `- ${item}`),
+    lines: cmd ? cmdLines : p.patterns.map((item) => `- ${item}`),
   }
 }
 
@@ -1284,7 +1252,7 @@ function runBash(p: ToolProps<typeof BashTool>): ToolInline {
   const command = p.input.command || ""
   return {
     icon: "$",
-    title: command ? `Bash (${command})` : "Bash",
+    title: command ? `Bash (${command.replace(/\s*\n\s*/g, " ")})` : "Bash",
     mode: "block",
     body: p.frame.status === "completed" ? text(p.frame.state.output).trim() : undefined,
   }
@@ -1452,7 +1420,12 @@ function headerBody(ctx: ToolFrame): RunEntryBody {
 export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody | undefined {
   if (commit.shell) {
     if (commit.phase === "start") {
-      return textBody(`$ ${commit.shell.command}`)
+      const cmd = commit.shell.command
+      const lines = cmd.split("\n")
+      const hidden = Math.max(0, lines.length - 2)
+      const kept = hidden > 0 ? lines.slice(0, 2) : lines
+      const content = `$ ${kept.join("\n    ")}`
+      return { type: "text" as const, content, truncated: hidden || undefined }
     }
 
     if (commit.phase === "progress") {

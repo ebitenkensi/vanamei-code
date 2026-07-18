@@ -20,7 +20,7 @@ function visible(commits: Array<Parameters<typeof entryBody>[0]>) {
     }
 
     if (body.type === "header") {
-      return [body.suffix ? `⏺ ${body.label} ${body.suffix}` : `⏺ ${body.label}`]
+      return [body.suffix ? `● ${body.label} ${body.suffix}` : `● ${body.label}`]
     }
 
     if (body.type === "structured") {
@@ -406,8 +406,7 @@ describe("run subagent data", () => {
     ])
     expect(visible(snapshot.details["child-1"]?.commits ?? [])).toEqual([
       "❯ Inspect footer tabs",
-      "_Thinking:_ planning next steps",
-      "⏺ Bash(git status --short)",
+      "● Bash(git status --short)",
       "hello world",
     ])
     expect(snapshot.permissions).toEqual([
@@ -485,7 +484,8 @@ describe("run subagent data", () => {
 
     expect(visible(snapshotSubagentData(data).details["child-1"]?.commits ?? [])).toEqual([
       "❯ Inspect footer tabs",
-      "_Thinking:_ planning next steps",
+      "● Thinking…",
+      "  ⎿  1 line",
       "hello world",
     ])
   })
@@ -620,5 +620,98 @@ describe("run subagent data", () => {
     expect(snapshotSubagentData(data).tabs).toEqual([
       expect.objectContaining({ sessionID: "child-1", toolCalls: 5, activity: "Bash(git status --short)" }),
     ])
+  })
+
+  test("accumulates child session cost from message.updated and preserves it across syncTaskTab rebuilds", () => {
+    const data = createSubagentData()
+
+    bootstrapSubagentData({
+      data,
+      messages: [taskMessage("child-1", "running")],
+      children: [{ id: "child-1" }],
+      permissions: [],
+      questions: [],
+    })
+
+    reduce(data, {
+      type: "message.updated",
+      properties: {
+        sessionID: "child-1",
+        info: {
+          id: "msg-child-assistant-1",
+          role: "assistant",
+          cost: 0.03,
+        },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs).toEqual([expect.objectContaining({ sessionID: "child-1", cost: 0.03 })])
+
+    // A subsequent task part update (e.g. a toolcalls bump) rebuilds the tab
+    // via syncTaskTab/taskTab -- the previously synced cost must survive that
+    // rebuild since taskTab() has no notion of child cost itself (mirrors
+    // the activity-preservation case above).
+    reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-child-1",
+          sessionID: "parent-1",
+          messageID: "msg-child-1",
+          type: "tool",
+          callID: "call-child-1",
+          tool: "task",
+          state: {
+            status: "running",
+            input: {
+              description: "Scan reducer paths",
+              subagent_type: "explore",
+            },
+            title: "Reducer touchpoints",
+            metadata: {
+              sessionId: "child-1",
+              toolcalls: 5,
+            },
+            time: { start: 1 },
+          },
+        },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs).toEqual([
+      expect.objectContaining({ sessionID: "child-1", toolCalls: 5, cost: 0.03 }),
+    ])
+  })
+
+  test("ignores message.updated cost for user-role messages and sessions outside the known tab set", () => {
+    const data = createSubagentData()
+
+    bootstrapSubagentData({
+      data,
+      messages: [taskMessage("child-1", "running")],
+      children: [{ id: "child-1" }],
+      permissions: [],
+      questions: [],
+    })
+
+    reduce(data, {
+      type: "message.updated",
+      properties: {
+        sessionID: "child-1",
+        info: { id: "msg-user-1", role: "user" },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs[0]?.cost).toBeUndefined()
+
+    reduce(data, {
+      type: "message.updated",
+      properties: {
+        sessionID: "unknown-session",
+        info: { id: "msg-x", role: "assistant", cost: 5 },
+      },
+    })
+
+    expect(snapshotSubagentData(data).tabs[0]?.cost).toBeUndefined()
   })
 })

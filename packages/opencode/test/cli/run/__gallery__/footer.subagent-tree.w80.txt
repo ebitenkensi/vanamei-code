@@ -1,11 +1,11 @@
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ❯ check on that                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ⏺ Task(Inspect auth flow) Explore
-   ⎿  ⠋ Grep("SessionExecution")
- ⏺ Task(Migrate config schema) General
+ ⠋ Task(Inspect auth flow) Explore
+   ⎿  Grep("SessionExecution")
+ ✓ Task(Migrate config schema) General
    ⎿  Done
-BUILD                               ◆ 1 agents · ctrl+b background · ctrl+p cmd
+BUILD                                            ctrl+b background · ctrl+p cmd
 
 
 

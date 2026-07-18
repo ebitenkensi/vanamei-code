@@ -68,16 +68,24 @@ const layer = Layer.effect(
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
+      let allAuto = true
 
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
+          yield* events.publish(Event.Denied, {
+            sessionID: request.sessionID,
+            permission: request.permission,
+            patterns: request.patterns,
+            tool: request.tool,
+          })
           return yield* new PermissionV1.DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
         if (rule.action === "allow") continue
+        if (rule.action !== "auto") allAuto = false
         needsAsk = true
       }
 
@@ -92,6 +100,7 @@ const layer = Layer.effect(
         metadata: request.metadata,
         always: request.always,
         tool: request.tool,
+        auto: needsAsk ? allAuto : undefined,
       }
       yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
 
@@ -199,6 +208,19 @@ export function fromConfig(permission: ConfigPermissionV1.Info) {
 
 export function merge(...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule[] {
   return rulesets.flat()
+}
+
+// Translates a permission.ask plugin hook's returned status into an appended
+// rule at the end of the ruleset. No status (hook absent, didn't respond, or
+// failed open) leaves the ruleset unchanged so evaluate() falls through to
+// whatever the merged agent/session rules already decide.
+export function appendStatusRule(
+  ruleset: PermissionV1.Ruleset,
+  permission: string,
+  status: PermissionV1.Action | undefined,
+): PermissionV1.Ruleset {
+  if (!status) return ruleset
+  return [...ruleset, { permission, pattern: "*", action: status }]
 }
 
 export function disabled(tools: string[], ruleset: PermissionV1.Ruleset): Set<string> {

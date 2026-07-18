@@ -102,6 +102,7 @@ export type FooterState = {
   // Permission mode cycle state (P1). P3 will also surface judging state here.
   permissionMode: PermissionMode
   judging: boolean
+  automode?: boolean
 }
 
 // A partial update to FooterState. The footer merges this onto the current state.
@@ -145,6 +146,13 @@ export type FooterTodoItem = {
 }
 
 export type FooterTodoState = FooterTodoItem[]
+
+export type FooterThinkingState = {
+  active: boolean
+  text: string
+  lines: number
+  expanded: boolean
+}
 
 export type ToolTodoSnapshot = {
   kind: "todo"
@@ -214,6 +222,10 @@ export type FooterSubagentTab = {
   // derived from its most recent shell/tool commit. Undefined until the
   // first matching commit lands, and only meaningful while running.
   activity?: string
+  // Accumulated cost of the child session, extracted from its own
+  // message.updated events (mirrors FooterState.cost for the main session).
+  // Undefined/0 hides the cost from the task row.
+  cost?: number
 }
 
 export type FooterSubagentDetail = {
@@ -244,6 +256,7 @@ export type FooterOutput = {
   view?: FooterView
   subagent?: FooterSubagentState
   todos?: FooterTodoState
+  thinking?: FooterThinkingState
 }
 
 // Typed messages sent to RunFooter.event(). The prompt queue and stream
@@ -311,6 +324,10 @@ export type FooterEvent =
   | {
       type: "stream.todo"
       todos: FooterTodoState
+    }
+  | {
+      type: "stream.thinking"
+      thinking: FooterThinkingState
     }
   | {
       type: "sessions"

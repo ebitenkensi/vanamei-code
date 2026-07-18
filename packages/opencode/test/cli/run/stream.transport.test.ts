@@ -99,6 +99,42 @@ function assistant(id: string) {
   } satisfies SdkEvent
 }
 
+function assistantWithCost(id: string, cost: number) {
+  return {
+    id: `evt-${id}`,
+    type: "message.updated",
+    properties: {
+      sessionID: "session-1",
+      info: {
+        id,
+        sessionID: "session-1",
+        role: "assistant",
+        time: { created: 1 },
+        parentID: "msg-user-1",
+        modelID: "gpt-5",
+        providerID: "openai",
+        mode: "chat",
+        agent: "build",
+        path: { cwd: "/tmp", root: "/tmp" },
+        cost,
+        tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+    },
+  } satisfies SdkEvent
+}
+
+function permissionDenied(sessionID: string, permission: string, patterns: string[]) {
+  return {
+    id: `evt-denied-${sessionID}-${permission}`,
+    type: "permission.denied",
+    properties: {
+      sessionID,
+      permission,
+      patterns,
+    },
+  } satisfies SdkEvent
+}
+
 const StreamClosed = undefined as never
 
 function feed<T, R = never>(returnValue: R = StreamClosed) {
@@ -1021,13 +1057,15 @@ describe("run stream transport", () => {
       src.push(assistant("msg-thinking"))
       src.push(reasoningUpdated(reasoningPart("thinking-1", "msg-thinking", "")))
       src.push(textDelta("msg-thinking", "thinking-1", "plan"))
-      await waitFor(() => ui.commits.find((commit) => commit.kind === "reasoning" && commit.text === "Thinking: plan"))
+      // Streaming reasoning no longer commits a header; the footer thinking
+      // event is the observable signal that the delta reached the reducer.
+      await waitFor(() =>
+        ui.events.find((event) => event.type === "stream.thinking" && event.thinking.text.includes("plan")),
+      )
       ui.commits.length = 0
 
       expect(await transport.replayOnResize({ localRows: () => [], reset: () => Promise.resolve() })).toBe(true)
-      expect(ui.commits.filter((commit) => commit.kind === "reasoning").map((commit) => commit.text)).toEqual([
-        "Thinking: plan",
-      ])
+      expect(ui.commits.filter((commit) => commit.kind === "reasoning").map((commit) => commit.text)).toEqual(["plan"])
     } finally {
       src.close()
       await transport.close()
@@ -2423,6 +2461,118 @@ describe("run stream transport", () => {
 
       await Bun.sleep(50)
       expect(ui.events.some((item) => item.type === "stream.patch" && item.patch.modified !== undefined)).toBe(false)
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
+
+  test("surfaces a scrollback notice for a permission.denied event on the bound session", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({ stream: src.stream }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      footer: ui.api,
+    })
+
+    try {
+      src.push(permissionDenied("session-1", "bash", ["git push origin main"]))
+
+      const commit = await waitFor(() => ui.commits.find((item) => item.kind === "system"))
+      expect(commit).toEqual(
+        expect.objectContaining({
+          kind: "system",
+          text: '✗ permission denied: bash "git push origin main"',
+        }),
+      )
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
+
+  test("ignores permission.denied events for sessions outside the tracked tree", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({ stream: src.stream }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      footer: ui.api,
+    })
+
+    try {
+      src.push(permissionDenied("session-other", "bash", ["*"]))
+      await Bun.sleep(50)
+      expect(ui.commits.some((item) => item.kind === "system")).toBe(false)
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
+
+  test("emits a soft/hard budget-crossing scrollback notice once per tier per session", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({ stream: src.stream }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      budget: () => ({ soft: 1.5, hard: 2.5 }),
+      footer: ui.api,
+    })
+
+    try {
+      // Under soft: no crossing notice yet.
+      src.push(assistantWithCost("msg-under", 1))
+      await Bun.sleep(50)
+      expect(ui.commits.some((item) => item.kind === "system" && item.text.includes("budget"))).toBe(false)
+
+      // Crosses soft: exactly one soft notice, repeats don't refire it.
+      src.push(assistantWithCost("msg-soft", 1.52))
+      await waitFor(() => ui.commits.find((item) => item.text.includes("soft")))
+      src.push(assistantWithCost("msg-soft-again", 1.6))
+      await Bun.sleep(50)
+      expect(ui.commits.filter((item) => item.text.includes("soft $1.50 crossed")).length).toBe(1)
+
+      // Crosses hard: exactly one hard notice, repeats don't refire it either.
+      src.push(assistantWithCost("msg-hard", 2.6))
+      const hard = await waitFor(() => ui.commits.find((item) => item.text.includes("hard")))
+      expect(hard).toEqual(
+        expect.objectContaining({
+          kind: "system",
+          text: "◈ budget: hard $2.50 crossed — tools disabled, report only",
+        }),
+      )
+      src.push(assistantWithCost("msg-hard-again", 3))
+      await Bun.sleep(50)
+      expect(ui.commits.filter((item) => item.text.includes("hard $2.50 crossed")).length).toBe(1)
+    } finally {
+      src.close()
+      await transport.close()
+    }
+  })
+
+  test("does not emit budget-crossing notices when the agent has no budget configured", async () => {
+    const src = eventFeed()
+    const ui = footer()
+    const transport = await createSessionTransport({
+      sdk: sdk({ stream: src.stream }),
+      sessionID: "session-1",
+      thinking: true,
+      limits: () => ({}),
+      footer: ui.api,
+    })
+
+    try {
+      src.push(assistantWithCost("msg-nobudget", 999))
+      await Bun.sleep(50)
+      expect(ui.commits.some((item) => item.kind === "system" && item.text.includes("budget"))).toBe(false)
     } finally {
       src.close()
       await transport.close()

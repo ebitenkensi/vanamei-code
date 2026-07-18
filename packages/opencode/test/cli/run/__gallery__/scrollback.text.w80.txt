@@ -1,4 +1,4 @@
-⏺ Reworked the reducer to coalesce streaming deltas before they reach the
+● Reworked the reducer to coalesce streaming deltas before they reach the
   footer queue. The footer now flushes once per animation frame instead of once
   per SDK event, which keeps direct mode responsive under heavy tool output. No
   public API changed -- only the internal scheduling loop moved.

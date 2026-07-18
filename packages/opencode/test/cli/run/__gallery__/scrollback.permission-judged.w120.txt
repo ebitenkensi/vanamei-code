@@ -1,0 +1,1 @@
+⏺ Auto-allowed bash(ls) — safe operation

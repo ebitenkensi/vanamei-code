@@ -4,6 +4,7 @@ import { useKeyboard } from "@opentui/solid"
 import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
 import { Show, createMemo, indexArray } from "solid-js"
 import { SPINNER_BRAILLE_FRAMES } from "@/cli/ui/component/spinner"
+import * as Locale from "@/util/locale"
 import { RunEntryContent, separatorRows } from "./scrollback.writer"
 import type { FooterSubagentDetail, FooterSubagentTab, RunDiffStyle } from "./types"
 import type { RunFooterTheme, RunTheme } from "./theme"
@@ -120,7 +121,7 @@ export function RunFooterSubagentBody(props: {
                 </box>
               ) : (
                 <text fg={statusColor(footer(), current().status)} wrapMode="none" truncate flexShrink={0}>
-                  ⏺
+                  ●
                 </text>
               )}
               <text fg={footer().text} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
@@ -129,6 +130,11 @@ export function RunFooterSubagentBody(props: {
                   <span style={{ fg: footer().muted }}>{" " + subtitle()}</span>
                 </Show>
               </text>
+              <Show when={(current().cost ?? 0) > 0}>
+                <text fg={footer().muted} wrapMode="none" truncate flexShrink={0}>
+                  {Locale.money(current().cost!)}
+                </text>
+              </Show>
               <Show when={props.total() > 1 && props.index() > 0}>
                 <text fg={footer().muted} wrapMode="none" truncate flexShrink={0}>
                   {props.index()} of {props.total()}

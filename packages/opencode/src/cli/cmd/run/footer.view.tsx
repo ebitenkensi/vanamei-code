@@ -12,8 +12,10 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { registerOpencodeSpinner } from "@/cli/ui/component/register-spinner"
 import { Spinner } from "@/cli/ui/component/spinner"
+import { useKV } from "@/cli/ui/context/kv"
 
 import { RGBA } from "@opentui/core"
+import { budgetState } from "@opencode-ai/core/session/runner/budget"
 import * as Locale from "@/util/locale"
 import {
   RUN_SUBAGENT_PANEL_ROWS,
@@ -41,17 +43,14 @@ import {
   useKeymapSelector,
   type OpenTuiKeymap,
 } from "@/cli/ui/keymap"
-import {
-  modeCycle,
-  modeIndicator,
-  type PermissionMode,
-} from "./mode.shared"
+import { modeCycle, modeIndicator, type PermissionMode } from "./mode.shared"
 import type {
   FooterPromptRoute,
   FooterQueuedPrompt,
   FooterSessionTab,
   FooterState,
   FooterSubagentState,
+  FooterThinkingState,
   FooterTodoItem,
   FooterView,
   PermissionReply,
@@ -71,10 +70,28 @@ import { modelInfo } from "./variant.shared"
 
 registerOpencodeSpinner()
 
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-})
+// A blinking ● dot for the judging indicator.
+// Respects animationsEnabled: when disabled, shows a static ●.
+function BlinkingDot(props: { theme: () => RunFooterTheme; color?: () => RGBA }) {
+  const enabled = (): boolean => {
+    try {
+      return useKV().get("animations_enabled", true)
+    } catch {
+      return true
+    }
+  }
+  const [frame, setFrame] = createSignal(0)
+
+  createEffect(() => {
+    if (!enabled()) return
+    const id = setInterval(() => setFrame((i) => i + 1), 600)
+    onCleanup(() => clearInterval(id))
+  })
+
+  const dotColor = () => props.color?.() ?? props.theme().muted
+
+  return <text fg={dotColor()}>{enabled() ? (frame() % 2 === 0 ? "●" : " ") : "●"}</text>
+}
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -105,6 +122,8 @@ type RunFooterViewProps = {
   subagent?: () => FooterSubagentState
   queuedPrompts?: () => FooterQueuedPrompt[]
   todos?: () => FooterTodoItem[]
+  todoSummary?: () => boolean
+  thinking?: () => FooterThinkingState | undefined
   sessions?: () => FooterSessionTab[]
   sessionID?: () => string | undefined
   theme: () => RunTheme
@@ -136,6 +155,7 @@ type RunFooterViewProps = {
   onQueuedRemove: (messageID: string) => Promise<boolean>
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
+  onAutoToggle?: () => void
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
@@ -152,6 +172,24 @@ export function todoPanelRowCount(todos: FooterTodoItem[]): number {
   }
 
   return Math.min(todos.length, MAX_TODO_ROWS) + (todos.length > MAX_TODO_ROWS ? 1 : 0)
+}
+
+export const MAX_THINKING_ROWS = 10
+
+// Rolling tail of the live thinking text, pre-wrapped to terminal width so
+// each row is exactly one cell row. First row carries the tool-style ⎿
+// marker so the block reads as one unit with the committed "● Thinking…"
+// header directly above the footer.
+export function thinkingTailRows(text: string, width: number): string[] {
+  const cols = Math.max(10, width - 5)
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .flatMap((line) =>
+      Array.from({ length: Math.ceil(line.length / cols) }, (_, i) => line.slice(i * cols, (i + 1) * cols)),
+    )
+    .slice(-MAX_THINKING_ROWS)
+    .map((row, index) => (index === 0 ? `  ⎿  ${row}` : `     ${row}`))
 }
 
 export function RunFooterView(props: RunFooterViewProps) {
@@ -284,12 +322,17 @@ export function RunFooterView(props: RunFooterViewProps) {
       ) ?? "",
   )
   const busy = createMemo(() => props.state().phase === "running")
+  const subagentRunning = createMemo(() => tabs().some((t) => t.status === "running"))
   const armed = createMemo(() => props.state().interrupt > 0)
   const exiting = createMemo(() => props.state().exit > 0)
   const queue = createMemo(() => props.state().queue)
   const contextTokens = createMemo(() => props.state().contextTokens)
   const contextPercent = createMemo(() => props.state().contextPercent)
   const cost = createMemo(() => props.state().cost)
+  // Budget-aware cost pill (P4): the current session's agent may carry a
+  // soft/hard USD budget. Undefined when the agent has none configured, in
+  // which case the cost pill falls back to its plain (non-fraction) form.
+  const agentBudget = createMemo(() => props.agents().find((item) => item.name === props.state().agent)?.budget)
   const modifiedCount = createMemo(() => props.state().modified)
   const todoCount = createMemo(() => (props.todos?.() ?? []).filter((item) => item.status !== "completed").length)
   const interruptLabel = createMemo(() => {
@@ -312,6 +355,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   })
   const permissionMode = createMemo<PermissionMode>(() => props.state().permissionMode)
   const permissionModeIndicator = createMemo(() => modeIndicator(permissionMode()))
+  const judging = createMemo(() => props.state().judging)
   const promptView = createMemo(() => {
     if (active().type !== "prompt") {
       return active().type
@@ -430,8 +474,13 @@ export function RunFooterView(props: RunFooterViewProps) {
     onExitRequest: props.onExitRequest,
     onExit: props.onExit,
     onSkillMenu: openSkillMenu,
+    onModel: openModel,
+    onAgent: openAgent,
+    onSessions: openSessionsMenu,
+    onVariant: openVariant,
     onRows: props.onRows,
     onStatus: props.onStatus,
+    onAutoToggle: props.onAutoToggle,
   })
   const shell = createMemo(() => prompt() && composer.shell())
   const menu = createMemo(() => prompt() && composer.visible())
@@ -485,18 +534,21 @@ export function RunFooterView(props: RunFooterViewProps) {
     const percent = contextPercent()
     const tokens = contextTokens()
     if (percent !== null) {
-      const text = stats.pills.ctxFull ? `◆ ${Locale.number(tokens)} (${percent}%)` : `◆ ${percent}%`
-      items.push({ text, color: ctxColor() })
+      items.push({ text: `◆ ${percent}%`, color: ctxColor() })
     } else if (tokens > 0) {
       items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
     }
 
-    if (activeTabs().length > 0) {
-      items.push({ text: `◆ ${activeTabs().length} agents`, color: theme().highlight })
-    }
-
-    if (stats.pills.cost && cost() > 0) {
-      items.push({ text: money.format(cost()), color: theme().muted })
+    if (stats.pills.cost) {
+      const budget = agentBudget()
+      if (budget && (budget.soft !== undefined || budget.hard !== undefined)) {
+        const denom = budget.soft ?? budget.hard!
+        const state = budgetState(cost(), budget)
+        const color = state === "ok" ? theme().muted : state === "soft" ? theme().warning : theme().error
+        items.push({ text: `${Locale.money(cost())}/${Locale.money(denom)}`, color })
+      } else if (cost() > 0) {
+        items.push({ text: Locale.money(cost()), color: theme().muted })
+      }
     }
 
     if (stats.pills.todos && todoCount() > 0) {
@@ -510,8 +562,10 @@ export function RunFooterView(props: RunFooterViewProps) {
     return items
   })
   const modelStatus = createMemo(() => {
+    // Hidden while a turn is running so the busy statusline keeps room for
+    // status text, pills, and hints.
     const current = props.currentModel()
-    if (!prompt() || shell() || !current) {
+    if (!prompt() || shell() || busy() || !current) {
       return
     }
 
@@ -741,6 +795,14 @@ export function RunFooterView(props: RunFooterViewProps) {
         when={inspecting()}
         fallback={
           <box width="100%" flexDirection="column" gap={0}>
+            <Show when={active().type === "prompt"}>
+              <RunFooterThinkingPanel thinking={() => props.thinking?.()} theme={theme} />
+            </Show>
+
+            <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
+              <RunFooterTodoPanel todos={props.todos!} theme={theme} todoSummary={props.todoSummary} />
+            </Show>
+
             <For each={[promptView()]}>
               {() => (
                 <box
@@ -907,16 +969,16 @@ export function RunFooterView(props: RunFooterViewProps) {
                             }}
                           />
                         </Match>
-              <Match when={active().type === "permission"}>
-                <RunPermissionBody
-                  request={permission()!.request}
-                  theme={theme()}
-                  block={block()}
-                  diffStyle={props.diffStyle}
-                  judgeReason={permission()!.judgeReason}
-                  onReply={props.onPermissionReply}
-                />
-              </Match>
+                        <Match when={active().type === "permission"}>
+                          <RunPermissionBody
+                            request={permission()!.request}
+                            theme={theme()}
+                            block={block()}
+                            diffStyle={props.diffStyle}
+                            judgeReason={permission()!.judgeReason}
+                            onReply={props.onPermissionReply}
+                          />
+                        </Match>
                         <Match when={active().type === "question"}>
                           <RunQuestionBody
                             request={question()!.request}
@@ -945,10 +1007,6 @@ export function RunFooterView(props: RunFooterViewProps) {
               />
             </Show>
 
-            <Show when={!panel() && !menu() && (props.todos?.() ?? []).length > 0}>
-              <RunFooterTodoPanel todos={props.todos!} theme={theme} />
-            </Show>
-
             <Show when={!panel() && !menu() && tabs().length > 0}>
               <RunSubagentTree tabs={tabs} theme={theme} />
             </Show>
@@ -969,6 +1027,14 @@ export function RunFooterView(props: RunFooterViewProps) {
                   </box>
                 </Show>
 
+                <Show when={props.state().automode}>
+                  <box paddingRight={1} flexShrink={0}>
+                    <text fg={theme().highlight} wrapMode="none" truncate flexShrink={0}>
+                      AUTO
+                    </text>
+                  </box>
+                </Show>
+
                 <box
                   flexDirection="row"
                   gap={1}
@@ -979,6 +1045,16 @@ export function RunFooterView(props: RunFooterViewProps) {
                   paddingRight={1}
                   backgroundColor="transparent"
                 >
+                  <Show when={judging()}>
+                    <box flexShrink={0} flexDirection="row" gap={0}>
+                      <BlinkingDot theme={theme} />
+                      <text fg={theme().muted} wrapMode="none" truncate flexShrink={0}>
+                        {" "}
+                        judging…
+                      </text>
+                    </box>
+                  </Show>
+
                   <Show when={busy() && !exiting()}>
                     <Show when={interruptLabel()}>
                       {(label) => (
@@ -993,6 +1069,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                         mode={() => "responding"}
                         stalled={() => false}
                         color={() => theme().highlight as RGBA}
+                        animationsEnabled={() => !subagentRunning()}
                       />
                     </box>
                   </Show>
@@ -1088,7 +1165,56 @@ export function RunFooterView(props: RunFooterViewProps) {
   )
 }
 
-function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () => RunFooterTheme }) {
+// Live thinking block rendered as the topmost footer element: a blinking
+// "● Thinking…" header over the rolling ⎿ rows, at column 0 so it matches the
+// static block committed to scrollback when the reasoning part ends.
+function RunFooterThinkingPanel(props: {
+  thinking: () => FooterThinkingState | undefined
+  theme: () => RunFooterTheme
+}) {
+  const term = useTerminalDimensions()
+  const rows = createMemo(() => {
+    const state = props.thinking()
+    if (!state?.active) {
+      return []
+    }
+
+    return thinkingTailRows(state.text, term().width)
+  })
+
+  return (
+    <Show when={rows().length > 0}>
+      <box
+        width="100%"
+        height={rows().length + 1}
+        flexDirection="column"
+        gap={0}
+        flexShrink={0}
+        backgroundColor="transparent"
+      >
+        <box width="100%" height={1} flexDirection="row" gap={0} flexShrink={0} backgroundColor="transparent">
+          <BlinkingDot theme={props.theme} />
+          <text wrapMode="none" truncate height={1}>
+            <span style={{ fg: props.theme().muted, dim: true }}> Thinking…</span>
+          </text>
+        </box>
+        <For each={rows()}>
+          {(row) => (
+            <text wrapMode="none" truncate height={1}>
+              <span style={{ fg: props.theme().muted, dim: true }}>{row}</span>
+            </text>
+          )}
+        </For>
+      </box>
+    </Show>
+  )
+}
+
+function RunFooterTodoPanel(props: {
+  todos: () => FooterTodoItem[]
+  theme: () => RunFooterTheme
+  todoSummary?: () => boolean
+}) {
   function glyph(status: string) {
     if (status === "in_progress" || status === "pending") return "☐"
     return "☒"
@@ -1100,48 +1226,63 @@ function RunFooterTodoPanel(props: { todos: () => FooterTodoItem[]; theme: () =>
     return props.theme().muted
   }
 
-  const visible = createMemo(() => props.todos().slice(0, MAX_TODO_ROWS))
-  const overflow = createMemo(() => props.todos().length - MAX_TODO_ROWS)
+  const summary = () => props.todoSummary?.() ?? false
 
   return (
     <box
       width="100%"
-      height={todoPanelRowCount(props.todos())}
+      height={summary() ? 1 : todoPanelRowCount(props.todos())}
       flexShrink={0}
       flexDirection="column"
       backgroundColor="transparent"
       paddingLeft={1}
       paddingRight={1}
     >
-      <For each={visible()}>
-        {(item) => (
-          <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
-            <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
-              {glyph(item.status)}
-            </text>
-            <text wrapMode="none" truncate flexGrow={1}>
-              <span
-                style={{
-                  fg:
-                    item.status === "in_progress"
-                      ? props.theme().warning
-                      : item.status === "completed"
-                        ? props.theme().muted
-                        : props.theme().muted,
-                  bold: item.status === "in_progress",
-                  strikethrough: item.status === "completed",
-                }}
-              >
-                {item.content}
-              </span>
-            </text>
-          </box>
-        )}
-      </For>
-      <Show when={overflow() > 0}>
-        <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
+      <Show
+        when={summary()}
+        fallback={
+          <>
+            <For each={props.todos().slice(0, MAX_TODO_ROWS)}>
+              {(item) => (
+                <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+                  <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
+                    {glyph(item.status)}
+                  </text>
+                  <text wrapMode="none" truncate flexGrow={1}>
+                    <span
+                      style={{
+                        fg:
+                          item.status === "in_progress"
+                            ? props.theme().warning
+                            : item.status === "completed"
+                              ? props.theme().muted
+                              : props.theme().muted,
+                        bold: item.status === "in_progress",
+                        strikethrough: item.status === "completed",
+                      }}
+                    >
+                      {item.content}
+                    </span>
+                  </text>
+                </box>
+              )}
+            </For>
+            <Show when={props.todos().length > MAX_TODO_ROWS}>
+              <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
+                <text fg={props.theme().muted} wrapMode="none" truncate>
+                  … +{props.todos().length - MAX_TODO_ROWS} more
+                </text>
+              </box>
+            </Show>
+          </>
+        }
+      >
+        <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
+          <text fg={props.theme().muted} wrapMode="none" flexShrink={0}>
+            ☒
+          </text>
           <text fg={props.theme().muted} wrapMode="none" truncate>
-            … +{overflow()} more
+            {props.todos().length} tasks completed
           </text>
         </box>
       </Show>

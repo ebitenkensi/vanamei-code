@@ -1,4 +1,4 @@
-⏺ Direct Mode Demo
+● Direct Mode Demo
 
   This is a realistic assistant response for direct-mode formatting checks.
   It mixes bold, italic, inline code, links, code fences, and tables in one

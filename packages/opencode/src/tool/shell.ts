@@ -421,6 +421,7 @@ export const ShellTool = Tool.define(
       )
       return {
         ...process.env,
+        OPENCODE_SESSION_ID: ctx.sessionID,
         ...extra.env,
       }
     })

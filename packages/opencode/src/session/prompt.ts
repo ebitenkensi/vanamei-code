@@ -17,6 +17,7 @@ import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import { MAX_STEPS_PROMPT } from "@opencode-ai/core/session/runner/max-steps"
+import { budgetState, BUDGET_HARD_PROMPT, budgetSoftNotice } from "@opencode-ai/core/session/runner/budget"
 import { ToolRegistry } from "@/tool/registry"
 import { MCP } from "../mcp"
 import { LSP } from "@/lsp/lsp"
@@ -1084,6 +1085,10 @@ const layer = Layer.effect(
         let structured: unknown
         let step = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
+        // Session-wide assistant cost for budget enforcement, computed lazily from full
+        // message history (not the compaction-truncated `msgs` projection) the first time
+        // an agent with a budget is encountered, then accumulated per completed step.
+        let cumulativeCost: number | undefined
 
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
@@ -1177,6 +1182,15 @@ const layer = Layer.effect(
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
+          if (agent.budget && cumulativeCost === undefined) {
+            const history = yield* sessions.messages({ sessionID }).pipe(Effect.orDie)
+            cumulativeCost = history.reduce((sum, m) => (m.info.role === "assistant" ? sum + m.info.cost : sum), 0)
+          }
+          const budgetHit = agent.budget ? budgetState(cumulativeCost ?? 0, agent.budget) : "ok"
+          const budgetSoftMessage =
+            budgetHit === "soft" && agent.budget?.soft !== undefined
+              ? budgetSoftNotice(cumulativeCost ?? 0, agent.budget.soft)
+              : undefined
           msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
             Effect.provideService(RuntimeFlags.Service, flags),
             Effect.provideService(FSUtil.Service, fsys),
@@ -1278,9 +1292,16 @@ const layer = Layer.effect(
               system,
               messages: [
                 ...modelMsgs,
-                ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
+                ...(budgetHit === "hard"
+                  ? [{ role: "assistant" as const, content: BUDGET_HARD_PROMPT }]
+                  : [
+                      ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
+                      ...(budgetSoftMessage ? [{ role: "assistant" as const, content: budgetSoftMessage }] : []),
+                    ]),
               ],
-              tools,
+              // Budget "hard" forces a text-only final step: no tools reach the provider,
+              // regardless of what SessionTools.resolve above computed.
+              tools: budgetHit === "hard" ? {} : tools,
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
@@ -1331,6 +1352,7 @@ const layer = Layer.effect(
             Effect.ensuring(instruction.clear(handle.message.id)),
             Effect.onInterrupt(() => finalizeInterruptedAssistant),
           )
+          if (cumulativeCost !== undefined) cumulativeCost += msg.cost
           if (outcome === "break") break
           continue
         }

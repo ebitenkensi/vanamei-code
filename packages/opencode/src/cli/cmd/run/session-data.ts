@@ -25,8 +25,9 @@
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
+import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
-import type { FooterOutput, FooterPatch, FooterTodoItem, FooterView, StreamCommit } from "./types"
+import type { FooterOutput, FooterPatch, FooterThinkingState, FooterTodoItem, FooterView, StreamCommit } from "./types"
 
 type Tokens = {
   input?: number
@@ -72,6 +73,8 @@ export type SessionData = {
   shell: Map<string, ShellCall>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
+  pendingJudge: Map<string, PermissionRequest>
+  judgeReasons: Map<string, string>
   role: Map<string, MessageRole>
   msg: Map<string, string>
   part: Map<string, PartKind>
@@ -110,6 +113,8 @@ export function createSessionData(
     shell: new Map(),
     permissions: [],
     questions: [],
+    pendingJudge: new Map(),
+    judgeReasons: new Map(),
     role: new Map(),
     msg: new Map(),
     part: new Map(),
@@ -172,6 +177,23 @@ function isAbort(error: { name?: string } | undefined): boolean {
   return error?.name === "MessageAbortedError"
 }
 
+// Truncates a denied permission's pattern so a long glob/command doesn't blow
+// out the one-line scrollback notice (P4).
+const PERMISSION_DENIED_PATTERN_LIMIT = 60
+
+function formatPermissionDenied(properties: { permission: string; patterns: string[] }): string {
+  const pattern = properties.patterns[0]
+  const suffix = pattern ? ` "${Locale.truncateMiddle(pattern, PERMISSION_DENIED_PATTERN_LIMIT)}"` : ""
+  return `✗ permission denied: ${properties.permission}${suffix}`
+}
+
+function formatPermissionJudged(properties: { permission: string; patterns: string[]; reason?: string }): string {
+  const pattern = properties.patterns[0]
+  const suffix = pattern ? `(${pattern})` : ""
+  const reason = properties.reason?.trim() || "no reason"
+  return `⏺ Auto-allowed ${properties.permission}${suffix} — ${reason}`
+}
+
 function msgErr(id: string): string {
   return `msg:${id}:error`
 }
@@ -227,10 +249,17 @@ export function blockerStatus(view: FooterView) {
 }
 
 function pickSessionView(data: SessionData): FooterView {
-  return pickBlockerView({
+  const view = pickBlockerView({
     permission: data.permissions[0],
     question: data.questions[0],
   })
+  if (view.type === "permission") {
+    const reason = data.judgeReasons.get(view.request.id)
+    if (reason !== undefined) {
+      return { ...view, judgeReason: reason }
+    }
+  }
+  return view
 }
 
 function queueFooter(data: SessionData): FooterOutput {
@@ -515,7 +544,13 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
       return
     }
     if (kind === "reasoning" && chunk) {
-      chunk = `Thinking: ${chunk.replace(/\[REDACTED\]/g, "")}`
+      // Defer the "● Thinking…" header to reasoningSummary: while streaming it
+      // lives in the footer panel (with a blinking dot), and only the finished
+      // block is committed to scrollback.
+      const clean = chunk.replace(/\[REDACTED\]/g, "")
+      data.sent.set(partID, text.length)
+      data.visible.set(partID, (data.visible.get(partID) ?? "") + clean)
+      return
     }
     if (kind === "assistant" && chunk) {
       chunk = stripEcho(data, msg, chunk)
@@ -523,6 +558,15 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
         return
       }
     }
+  }
+
+  // Subsequent reasoning chunks: accumulate silently into visible (footer panel),
+  // never push a progress commit into scrollback. The header and summary are
+  // committed together by reasoningSummary once the part ends.
+  if (kind === "reasoning") {
+    data.sent.set(partID, text.length)
+    data.visible.set(partID, (data.visible.get(partID) ?? "") + chunk)
+    return
   }
 
   if (chunk) {
@@ -550,6 +594,33 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     messageID: msg,
     partID,
     interrupted: true,
+  })
+}
+
+// Commits the finished thinking block: the "● Thinking…" header followed by
+// the tool-style "⎿ N lines" summary. Emitted only once a reasoning part
+// finishes; while streaming, the block lives in the footer panel instead.
+function reasoningSummary(data: SessionData, commits: SessionCommit[], partID: string) {
+  const lines = (data.visible.get(partID) ?? "").split("\n").filter((line) => line.trim() !== "").length
+  if (lines === 0) {
+    return
+  }
+
+  commits.push({
+    kind: "reasoning",
+    text: "● Thinking…",
+    phase: "start",
+    source: "reasoning",
+    messageID: data.msg.get(partID),
+    partID,
+  })
+  commits.push({
+    kind: "reasoning",
+    text: lines === 1 ? "1 line" : `${lines} lines`,
+    phase: "final",
+    source: "reasoning",
+    messageID: data.msg.get(partID),
+    partID,
   })
 }
 
@@ -598,6 +669,10 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
 
     if (!data.end.has(partID)) {
       continue
+    }
+
+    if (kind === "reasoning") {
+      reasoningSummary(data, commits, partID)
     }
 
     data.ids.add(partID)
@@ -726,6 +801,20 @@ function failTool(part: ToolPart, text: string): SessionCommit {
   })
 }
 
+function extractThinking(data: SessionData): FooterThinkingState | undefined {
+  // Find the active reasoning part (the one with text but no end yet)
+  for (const [partID, kind] of data.part.entries()) {
+    if (kind !== "reasoning") continue
+    if (data.ids.has(partID)) continue
+    if (data.end.has(partID)) continue
+    const text = data.visible.get(partID) ?? data.text.get(partID) ?? ""
+    if (!text.trim()) continue
+    const lines = text.split("\n").length
+    return { active: true, text, lines, expanded: false }
+  }
+  return undefined
+}
+
 function extractTodos(input: unknown): FooterTodoItem[] | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined
@@ -766,6 +855,30 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
     }
 
     flushPart(data, commits, partID, true)
+
+    // Reasoning streams silently, so an aborted part has no committed header
+    // yet: emit the header plus an interrupted final so the block still reads
+    // "● Thinking…" / "⎿ interrupted". Parts with no visible text stay silent.
+    if (data.part.get(partID) === "reasoning" && (data.visible.get(partID) ?? "").trim()) {
+      commits.push({
+        kind: "reasoning",
+        text: "● Thinking…",
+        phase: "start",
+        source: "reasoning",
+        messageID: data.msg.get(partID),
+        partID,
+      })
+      commits.push({
+        kind: "reasoning",
+        text: "",
+        phase: "final",
+        source: "reasoning",
+        messageID: data.msg.get(partID),
+        partID,
+        interrupted: true,
+      })
+    }
+
     data.ids.add(partID)
     drop(data, partID)
   }
@@ -923,6 +1036,15 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     flushPart(data, commits, partID)
+
+    // Emit footer thinking patch for reasoning text
+    if (kind === "reasoning") {
+      const thinking = extractThinking(data)
+      if (thinking) {
+        return out(data, commits, { thinking })
+      }
+    }
+
     return out(data, commits)
   }
 
@@ -1060,17 +1182,44 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     flushPart(data, commits, part.id)
 
     if (!part.time?.end) {
+      // Emit thinking patch for reasoning text while still streaming
+      if (kind === "reasoning") {
+        const thinking = extractThinking(data)
+        if (thinking) {
+          return out(data, commits, { thinking })
+        }
+      }
       return out(data, commits)
+    }
+
+    if (kind === "reasoning") {
+      reasoningSummary(data, commits, part.id)
     }
 
     data.ids.add(part.id)
     drop(data, part.id)
+
+    // Clear thinking footer when reasoning part ends
+    if (kind === "reasoning") {
+      return out(data, commits, { thinking: { active: false, text: "", lines: 0, expanded: false } })
+    }
+
     return out(data, commits)
   }
 
   if (event.type === "permission.asked") {
     if (event.properties.sessionID !== input.sessionID) {
       return out(data, commits)
+    }
+
+    // If the request is eligible for LLM judging (auto), delay the ask
+    // screen until the judge returns. Store in pendingJudge; the
+    // permission.judged event will move it to data.permissions if the
+    // judge rejects (outcome "ask").
+    if (event.properties.auto === true) {
+      const request = enrichPermission(data, event.properties)
+      data.pendingJudge.set(request.id, request)
+      return out(data, commits, patch({ judging: true }))
     }
 
     upsert(data.permissions, enrichPermission(data, event.properties))
@@ -1082,7 +1231,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
+    // A judge auto-allow replies before publishing permission.judged, so this
+    // may be the event that clears a pendingJudge entry — recompute judging.
+    const hadPending = data.pendingJudge.delete(event.properties.requestID)
+    data.judgeReasons.delete(event.properties.requestID)
     if (!remove(data.permissions, event.properties.requestID)) {
+      if (hadPending) {
+        return out(data, commits, patch({ judging: data.pendingJudge.size > 0 }))
+      }
       return out(data, commits)
     }
 
@@ -1122,6 +1278,112 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       source: "system",
     })
     return out(data, commits)
+  }
+
+  // Rule/hook permission denials (P4). Surfaced as a muted one-line scrollback
+  // notice for the bound (main) session only -- subagent denies are not
+  // routed here (see subagent-data.ts's reduceSubagentData event list).
+  if (event.type === "permission.denied") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    commits.push({
+      kind: "system",
+      text: formatPermissionDenied(event.properties),
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  if (event.type === "permission.judged") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    const requestID = event.properties.requestID
+    const pending = data.pendingJudge.get(requestID)
+    const outcome = (event.properties as { outcome?: string }).outcome
+    data.pendingJudge.delete(requestID)
+    const stillJudging = data.pendingJudge.size > 0
+
+    if (outcome === "ask") {
+      // Judge escalated: show the ask screen now, with the judge's reason.
+      // Without a pendingJudge entry the request was already replied — there
+      // is no prompt left to surface.
+      if (!pending) {
+        return out(data, commits, patch({ judging: stillJudging }))
+      }
+      upsert(data.permissions, enrichPermission(data, pending))
+      data.judgeReasons.set(requestID, event.properties.reason || "")
+      commits.push({
+        kind: "system",
+        text: `● LLM judge escalated to manual approval — ${event.properties.reason || "no reason"}`,
+        phase: "start",
+        source: "system",
+      })
+
+      return out(data, commits, {
+        view: pickSessionView(data),
+        patch: { judging: stillJudging },
+      })
+    }
+
+    // outcome === "allowed": auto-allowed by judge. The judge replies "once"
+    // before publishing Judged, so permission.replied has usually already
+    // cleared pendingJudge — the notice must not depend on the entry.
+    commits.push({
+      kind: "system",
+      text: formatPermissionJudged(event.properties),
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits, patch({ judging: stillJudging }))
+  }
+
+  // Monitor one-line muted notices for the bound (main) session.
+  if ((event.type as string) === "monitor.event") {
+    const props = event.properties as { sessionID: string; description: string; lines: string[] }
+    if (props.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    const first = props.lines[0] ?? ""
+    const suffix = props.lines.length > 1 ? ` (+${props.lines.length - 1} more)` : ""
+    commits.push({
+      kind: "system",
+      text: `⏺ monitor(${props.description}): ${first}${suffix}`,
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  if ((event.type as string) === "monitor.stopped") {
+    const props = event.properties as { sessionID: string; description: string; reason: string }
+    if (props.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    commits.push({
+      kind: "system",
+      text: `⏺ monitor(${props.description}) stopped — ${props.reason}`,
+      phase: "start",
+      source: "system",
+    })
+    return out(data, commits)
+  }
+
+  // AUTO pill state follows the server's session record. The /auto toggle
+  // round-trips through session.update, so this event both confirms the
+  // toggle and reflects changes made by other clients.
+  if (event.type === "session.updated") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    return out(data, commits, patch({ automode: event.properties.info.automode === true }))
   }
 
   // Modified-file count for the ✎ pill (P3). Subagent sessions also emit

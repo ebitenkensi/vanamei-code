@@ -130,13 +130,19 @@ function provider(): RunProvider {
   } as RunProvider
 }
 
-function agent(input: { name: string; mode: RunAgent["mode"]; description?: string }): RunAgent {
+function agent(input: {
+  name: string
+  mode: RunAgent["mode"]
+  description?: string
+  budget?: { soft?: number; hard?: number }
+}): RunAgent {
   return {
     name: input.name,
     description: input.description,
     mode: input.mode,
     permission: [],
     options: {},
+    budget: input.budget,
   } as RunAgent
 }
 
@@ -146,6 +152,7 @@ function subagentTab(input: {
   description: string
   status?: FooterSubagentTab["status"]
   activity?: string
+  cost?: number
 }): FooterSubagentTab {
   return {
     sessionID: input.sessionID,
@@ -156,6 +163,7 @@ function subagentTab(input: {
     status: input.status ?? "running",
     lastUpdatedAt: 1,
     activity: input.activity,
+    cost: input.cost,
   }
 }
 
@@ -174,8 +182,10 @@ function footerState(input: Partial<FooterState> = {}): FooterState {
     first: false,
     interrupt: 0,
     exit: 0,
-    permissionMode: input.permissionMode ?? "normal",
+    permissionMode: "normal",
     judging: false,
+    automode: undefined,
+    ...input,
   }
 }
 
@@ -194,6 +204,16 @@ const SAMPLE_AGENTS: RunAgent[] = [
   agent({ name: "build", mode: "primary", description: "General coding agent" }),
   agent({ name: "plan", mode: "primary", description: "Planning without edits" }),
 ]
+
+// Budget-carrying agent (P4): soft/hard denominators for the statusline
+// budget pill gallery states below. Deliberately not in SAMPLE_AGENTS so
+// unrelated footer states keep rendering the plain (non-budget) cost pill.
+const BUDGET_AGENT: RunAgent = agent({
+  name: "budget-build",
+  mode: "primary",
+  description: "Budget-tracked coding agent",
+  budget: { soft: 1.5, hard: 2.5 },
+})
 
 const SAMPLE_TODOS: FooterTodoItem[] = [
   { status: "completed", content: "Set up project" },
@@ -245,6 +265,26 @@ const SAMPLE_SUBAGENT_TREE_TABS: FooterSubagentTab[] = [
     activity: 'Grep("SessionExecution")',
   }),
   subagentTab({ sessionID: "sub-2", label: "General", description: "Migrate config schema", status: "completed" }),
+]
+
+// Same tree fixture as above, but each task row also carries an accumulated
+// child-session cost (P4), muted at the row end.
+const SAMPLE_SUBAGENT_TREE_COST_TABS: FooterSubagentTab[] = [
+  subagentTab({
+    sessionID: "sub-1",
+    label: "Explore",
+    description: "Inspect auth flow",
+    status: "running",
+    activity: 'Grep("SessionExecution")',
+    cost: 0.03,
+  }),
+  subagentTab({
+    sessionID: "sub-2",
+    label: "General",
+    description: "Migrate config schema",
+    status: "completed",
+    cost: 0.11,
+  }),
 ]
 
 // entryBody() (entry.body.ts) only renders "assistant"/"tool" commits for
@@ -443,7 +483,7 @@ const QUESTION_REQUESTS: Record<string, QuestionRequest> = {
 // collapses to RUN_ENTRY_NONE unless `interrupted` is set. So markdown/table/
 // text/reasoning fixtures below all use phase "progress". Tool commits render
 // in two steps like real scrollback: the phase "start" commit becomes the
-// `⏺ ToolName(args)` header, and the completion commit hangs the result under
+// `● ToolName(args)` header, and the completion commit hangs the result under
 // it -- write/edit/apply_patch/task/todowrite/question emit their structured
 // snapshot at phase "final" with toolState "completed" (toolStructuredFinal()
 // in tool.ts gates on exactly that combination), while a completed bash entry
@@ -471,7 +511,7 @@ function toolPart(input: {
 }
 
 // Derives the phase "start" commit that precedes a tool completion commit in
-// real scrollback -- it renders the `⏺ ToolName(args)` header line. Reuses the
+// real scrollback -- it renders the `● ToolName(args)` header line. Reuses the
 // completion part's input (and metadata, which header functions like Patch's
 // file count read) with a running status.
 function toolStartOf(commit: StreamCommit): StreamCommit {
@@ -861,22 +901,68 @@ const SCROLLBACK_ERROR_COMMIT: StreamCommit = {
   source: "system",
 }
 
+// Governance UI (P4): rule/hook permission denials and budget-threshold
+// crossings both render as quiet, muted, one-line "system" notices --
+// matching how existing system lines (e.g. "resume session ...") look,
+// rather than an alarming error row.
+const SCROLLBACK_PERMISSION_DENIED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: '✗ permission denied: bash "git push origin main"',
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_BUDGET_SOFT_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "◈ budget: soft $1.50 crossed ($1.52)",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_BUDGET_HARD_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "◈ budget: hard $2.50 crossed — tools disabled, report only",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_JUDGED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ Auto-allowed bash(ls) — safe operation",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_MONITOR_EVENT_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ monitor(server health): OK (+2 more)",
+  phase: "start",
+  source: "system",
+}
+
+const SCROLLBACK_MONITOR_STOPPED_COMMIT: StreamCommit = {
+  kind: "system",
+  text: "⏺ monitor(server health) stopped — exit",
+  phase: "start",
+  source: "system",
+}
+
 const SCROLLBACK_CASES: { name: string; description: string; commits: StreamCommit[] }[] = [
   {
     name: "scrollback.markdown",
     description:
-      "Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ⏺ gutter.",
+      "Assistant markdown reply with headings, bold/italic/code spans, a fence, and two tables, hanging under a 2-column ● gutter.",
     commits: [SCROLLBACK_MARKDOWN_COMMIT],
   },
   {
     name: "scrollback.table",
     description:
-      "Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ⏺ gutter.",
+      "Assistant reply containing only a compact table, for table-only rendering checks, hanging under a 2-column ● gutter.",
     commits: [SCROLLBACK_TABLE_COMMIT],
   },
   {
     name: "scrollback.text",
-    description: "Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ⏺ gutter.",
+    description: "Assistant reply with plain wrapped prose and no markdown syntax, hanging under a 2-column ● gutter.",
     commits: [SCROLLBACK_TEXT_COMMIT],
   },
   {
@@ -887,7 +973,7 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
   {
     name: "scrollback.bash",
     description:
-      'Completed bash tool entry: a "⏺ Bash(cmd) in dir" header with multi-line output hanging under a "⎿ " marker.',
+      'Completed bash tool entry: a "● Bash(cmd) in dir" header (green dot) with multi-line output hanging under a "⎿ " marker.',
     commits: [toolStartOf(SCROLLBACK_BASH_COMMIT), SCROLLBACK_BASH_COMMIT],
   },
   {
@@ -899,43 +985,69 @@ const SCROLLBACK_CASES: { name: string; description: string; commits: StreamComm
   {
     name: "scrollback.write",
     description:
-      'Completed write tool entry: a "⏺ Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot.',
+      'Completed write tool entry: a "● Write(path)" header, a "⎿ Wrote N lines" summary, and a gutter-indented code snapshot.',
     commits: [toolStartOf(SCROLLBACK_WRITE_COMMIT), SCROLLBACK_WRITE_COMMIT],
   },
   {
     name: "scrollback.edit",
     description:
-      'Completed edit tool entry: a "⏺ Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff.',
+      'Completed edit tool entry: a "● Edit(path)" header, a "⎿ +A / -D" summary, and a gutter-indented unified diff.',
     commits: [toolStartOf(SCROLLBACK_EDIT_COMMIT), SCROLLBACK_EDIT_COMMIT],
   },
   {
     name: "scrollback.patch",
     description:
-      'Completed apply_patch tool entry: a "⏺ Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading.',
+      'Completed apply_patch tool entry: a "● Patch(N files)" header above two gutter-indented structured diff items (an update and a new file), each keeping its own per-file heading.',
     commits: [toolStartOf(SCROLLBACK_PATCH_COMMIT), SCROLLBACK_PATCH_COMMIT],
   },
   {
     name: "scrollback.task",
     description:
-      'Completed task tool entry: a "⏺ Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent\'s final report truncated to 5 lines plus a muted "… +N lines" notice.',
+      'Completed task tool entry: a "● Task(description)" header with a dim agent type, a "⎿ Done (duration)" summary, and the subagent\'s final report truncated to 5 lines plus a muted "… +N lines" notice.',
     commits: [toolStartOf(SCROLLBACK_TASK_COMMIT), SCROLLBACK_TASK_COMMIT],
   },
   {
     name: "scrollback.todo",
     description:
-      'Completed todowrite tool entry: a "⏺ Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted).',
+      'Completed todowrite tool entry: a "● Update Todos" header above a ⎿ checklist block with ☒/☐ glyphs (completed/cancelled muted+strikethrough, in_progress highlight+bold, pending muted).',
     commits: [toolStartOf(SCROLLBACK_TODO_COMMIT), SCROLLBACK_TODO_COMMIT],
   },
   {
     name: "scrollback.question",
     description:
-      'Completed question tool entry: a "⏺ Question(N questions)" header above the gutter-indented question/answer card, no title line.',
+      'Completed question tool entry: a "● Question(N questions)" header above the gutter-indented question/answer card, no title line.',
     commits: [toolStartOf(SCROLLBACK_QUESTION_COMMIT), SCROLLBACK_QUESTION_COMMIT],
   },
   {
     name: "scrollback.error",
     description: "Session error entry rendered in the scrollback.",
     commits: [SCROLLBACK_ERROR_COMMIT],
+  },
+  {
+    name: "scrollback.permission-denied",
+    description: "Muted one-line notice for a rule/hook permission denial in the bound (main) session.",
+    commits: [SCROLLBACK_PERMISSION_DENIED_COMMIT],
+  },
+  {
+    name: "scrollback.budget-crossed",
+    description:
+      "Muted budget-crossing notices: soft threshold crossed (wind-down hint) followed by hard threshold crossed (tools disabled, report only).",
+    commits: [SCROLLBACK_BUDGET_SOFT_COMMIT, SCROLLBACK_BUDGET_HARD_COMMIT],
+  },
+  {
+    name: "scrollback.permission-judged",
+    description: "Muted one-line notice for an auto-allowed permission by the LLM permission judge.",
+    commits: [SCROLLBACK_JUDGED_COMMIT],
+  },
+  {
+    name: "scrollback.monitor-event",
+    description: "Muted one-line notice for a monitor event line batch with +N more indicator.",
+    commits: [SCROLLBACK_MONITOR_EVENT_COMMIT],
+  },
+  {
+    name: "scrollback.monitor-stopped",
+    description: "Muted one-line notice for a monitor stopped event with the exit reason.",
+    commits: [SCROLLBACK_MONITOR_STOPPED_COMMIT],
   },
 ]
 
@@ -980,7 +1092,7 @@ async function capturePanel(width: number, height: number, node: () => JSX.Eleme
 
 // Mirrors entryWriter()'s body handling (scrollback.writer.tsx) so a
 // standalone RunEntryContent capture looks like a real scrollback row.
-// RunEntryContent itself draws the hanging "⏺ " gutter for dotted bodies
+// RunEntryContent itself draws the hanging "● " gutter for dotted bodies
 // (see needsDotPrefix), so this only needs the generic "⎿ " hanging-block
 // layout (with truncation) for committed tool text results.
 function scrollbackEntryBody(commit: StreamCommit): RunEntryBody {
@@ -1039,7 +1151,7 @@ async function captureSettledPanel(
 
 // Renders a scrollback entry sequence standalone (stacked RunEntryContent
 // rows, no scrollback list around it). Tool cases pass their [start,
-// completion] commits so the frame shows the `⏺ ToolName(args)` header with
+// completion] commits so the frame shows the `● ToolName(args)` header with
 // the result hanging under it, exactly like real scrollback -- both commits
 // share one entry group, so no separator row appears between them.
 // `probeHeight` is a generous upper bound: the entry is first rendered at
@@ -1258,13 +1370,25 @@ const CASES: GalleryCase[] = [
   {
     name: "footer.subagent-tree",
     description:
-      "RunFooterView composer with the subagent tree: a running task (⏺ header, braille spinner + activity) and a completed task (⎿ Done), above a short prompt draft and the statusline.",
+      "RunFooterView composer with the subagent tree: a running task (braille spinner as the header glyph + plain activity text) and a completed task (✓ header, ⎿ Done), above a short prompt draft and the statusline.",
     height: 12,
     render: (width, height) =>
       renderFooterView({
         width,
         height,
         subagent: { tabs: SAMPLE_SUBAGENT_TREE_TABS, details: {}, permissions: [], questions: [] },
+        interact: typeShortPrompt,
+      }),
+  },
+  {
+    name: "footer.subagent-tree.cost",
+    description: "Subagent tree task rows with each child session's accumulated cost shown muted at the row end (P4).",
+    height: 12,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        subagent: { tabs: SAMPLE_SUBAGENT_TREE_COST_TABS, details: {}, permissions: [], questions: [] },
         interact: typeShortPrompt,
       }),
   },
@@ -1277,6 +1401,54 @@ const CASES: GalleryCase[] = [
         width,
         height,
         state: { permissionMode: "accept-edits" },
+      }),
+  },
+  {
+    name: "footer.statusline.auto",
+    description: "Statusline with the AUTO automode indicator beside the agent name.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        state: { automode: true },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-ok",
+    description:
+      "Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 0.42 },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-soft",
+    description: "Statusline budget-fraction pill in warning color once session cost reaches the soft budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 1.52 },
+      }),
+  },
+  {
+    name: "footer.statusline.budget-hard",
+    description: "Statusline budget-fraction pill in error color once session cost reaches the hard budget.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        state: { agent: BUDGET_AGENT.name, cost: 2.5 },
       }),
   },
   {

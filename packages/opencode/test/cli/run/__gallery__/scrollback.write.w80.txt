@@ -1,4 +1,4 @@
-⏺ Write(/opt/opencode-demo/src/demo-format.ts)
+● Write(/opt/opencode-demo/src/demo-format.ts)
   ⎿  Wrote 1 line
 
       1 export const demo = 42

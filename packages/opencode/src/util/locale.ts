@@ -36,6 +36,15 @@ export function number(num: number): string {
   return num.toString()
 }
 
+const MONEY_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+})
+
+export function money(amount: number): string {
+  return MONEY_FORMAT.format(amount)
+}
+
 export function duration(input: number) {
   if (input < 1000) {
     return `${input}ms`

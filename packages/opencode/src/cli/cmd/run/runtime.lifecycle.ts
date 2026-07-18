@@ -88,6 +88,7 @@ export type LifecycleInput = {
   onSubagentSelect?: (sessionID: string | undefined) => void
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
+  onAutoToggle?: () => void
 }
 
 export type Lifecycle = {
@@ -265,6 +266,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       permissionMode: "normal",
       onPermissionReply: input.onPermissionReply,
       onPermissionModeCycle: input.onPermissionModeCycle,
+      onAutoToggle: input.onAutoToggle,
       onQuestionReply: input.onQuestionReply,
       onQuestionReject: input.onQuestionReject,
       onCycleVariant: input.onCycleVariant,

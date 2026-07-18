@@ -30,9 +30,6 @@ export function footerWidthPolicy(width: number) {
       contextHintLimit: !compact ? 0 : spacious ? undefined : model ? 2 : 1,
       showModel: model,
       pills: {
-        // Full form ("123,456 (42%)") once there's room to spare; otherwise
-        // just the percentage.
-        ctxFull: spacious,
         cost: width >= FOOTER_WIDTH_BREAKPOINTS.pillsCost,
         todos: width >= FOOTER_WIDTH_BREAKPOINTS.pillsTodos,
         modified: width >= FOOTER_WIDTH_BREAKPOINTS.pillsModified,

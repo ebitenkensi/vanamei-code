@@ -35,7 +35,7 @@ import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { subagentTreeRowCount } from "./footer.subagent-tree"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
-import { RunFooterView, todoPanelRowCount } from "./footer.view"
+import { RunFooterView, thinkingTailRows, todoPanelRowCount } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import type {
@@ -47,6 +47,8 @@ import type {
   FooterSessionTab,
   FooterState,
   FooterSubagentState,
+  FooterSubagentTab,
+  FooterThinkingState,
   FooterTodoItem,
   FooterView,
   PermissionReply,
@@ -111,6 +113,7 @@ type RunFooterOptions = {
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
   onPermissionModeCycle?: () => void
+  onAutoToggle?: () => void
   treeSitterClient?: TreeSitterClient
 }
 
@@ -125,6 +128,10 @@ const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
 const SESSIONS_ROWS = RUN_SESSIONS_PANEL_ROWS
 const NOTICE_DURATION = 3000
 const THEME_REFRESH_DELAYS = [1000, 1000] as const
+// How long a completed/cancelled/error subagent tab lingers in the tree
+// below the composer before it's pruned, so the footer doesn't accumulate
+// finished tasks indefinitely.
+const SUBAGENT_DONE_LINGER_MS = 10000
 
 function createEmptySubagentState(): FooterSubagentState {
   return {
@@ -222,6 +229,10 @@ export class RunFooter implements FooterApi {
   private setQueuedPrompts: Setter<FooterQueuedPrompt[]>
   private todos: Accessor<FooterTodoItem[]>
   private setTodos: Setter<FooterTodoItem[]>
+  private todoSummary: Accessor<boolean>
+  private setTodoSummary: Setter<boolean>
+  private thinking: Accessor<FooterThinkingState | undefined>
+  private setThinking: Setter<FooterThinkingState | undefined>
   private sessions: Accessor<FooterSessionTab[]>
   private setSessions: Setter<FooterSessionTab[]>
   private promptRoute: FooterPromptRoute = { type: "composer" }
@@ -229,7 +240,13 @@ export class RunFooter implements FooterApi {
   private autocomplete = false
   private interruptTimeout: NodeJS.Timeout | undefined
   private exitTimeout: NodeJS.Timeout | undefined
+  private todoHideTimer: NodeJS.Timeout | undefined
   private noticeTimeout: NodeJS.Timeout | undefined
+  private subagentDoneTimers = new Map<string, NodeJS.Timeout>()
+  // Sessions whose finished tab already lingered out. Every snapshot is rebuilt
+  // from the reducer's tab map, which keeps finished tasks, so without this the
+  // next subagent event resurrects the pruned row.
+  private subagentPruned = new Set<string>()
   private noticeRestoreStatus = ""
   private statusVersion = 0
   private requestExitHandler: (() => boolean) | undefined
@@ -322,6 +339,12 @@ export class RunFooter implements FooterApi {
     const [todos, setTodos] = createSignal<FooterTodoItem[]>([])
     this.todos = todos
     this.setTodos = setTodos
+    const [todoSummary, setTodoSummary] = createSignal(false)
+    this.todoSummary = todoSummary
+    this.setTodoSummary = setTodoSummary
+    const [thinking, setThinking] = createSignal<FooterThinkingState | undefined>()
+    this.thinking = thinking
+    this.setThinking = setThinking
     const [sessions, setSessions] = createSignal<FooterSessionTab[]>([])
     this.sessions = sessions
     this.setSessions = setSessions
@@ -347,6 +370,8 @@ export class RunFooter implements FooterApi {
               subagent: footer.subagent,
               queuedPrompts: footer.queuedPrompts,
               todos: footer.todos,
+              todoSummary: footer.todoSummary,
+              thinking: footer.thinking,
               sessions: footer.sessions,
               sessionID: options.sessionID,
               findFiles: options.findFiles,
@@ -386,6 +411,7 @@ export class RunFooter implements FooterApi {
               onQueuedRemove: footer.handleQueuedRemove,
               onSessionSelect: options.onSessionSelect,
               onSessionsOpen: options.onSessionsOpen,
+              onAutoToggle: options.onAutoToggle,
             })
           },
         }),
@@ -491,8 +517,29 @@ export class RunFooter implements FooterApi {
         return
       }
 
-      this.setSubagent(next.state)
-      this.applyHeight()
+      // An empty snapshot means the reducer's tab map was reset (session
+      // switch), so nothing is left to resurrect.
+      if (next.state.tabs.length === 0) {
+        this.subagentPruned.clear()
+      }
+
+      // A pruned session that reports "running" again is a new task invocation,
+      // not the finished tab coming back, so let it re-enter the tree.
+      for (const tab of next.state.tabs) {
+        if (tab.status === "running") {
+          this.subagentPruned.delete(tab.sessionID)
+        }
+      }
+
+      const state = this.subagentPruned.size
+        ? { ...next.state, tabs: next.state.tabs.filter((tab) => !this.subagentPruned.has(tab.sessionID)) }
+        : next.state
+      const prevTabCount = this.subagent().tabs.length
+      this.setSubagent(state)
+      this.syncSubagentDoneTimers(state.tabs)
+      if (state.tabs.length !== prevTabCount) {
+        this.applyHeight()
+      }
       return
     }
 
@@ -501,7 +548,33 @@ export class RunFooter implements FooterApi {
         return
       }
 
-      this.setTodos(next.todos)
+      this.clearTodoHideTimer()
+      const allDone = next.todos.length > 0 && next.todos.every((t) => t.status === "completed")
+      if (allDone) {
+        this.setTodoSummary(true)
+        this.setTodos(next.todos)
+        this.applyHeight()
+        this.todoHideTimer = setTimeout(() => {
+          this.todoHideTimer = undefined
+          if (this.isGone) return
+          this.setTodoSummary(false)
+          this.setTodos([])
+          this.applyHeight()
+        }, 2500)
+      } else {
+        this.setTodoSummary(false)
+        this.setTodos(next.todos)
+        this.applyHeight()
+      }
+      return
+    }
+
+    if (next.type === "stream.thinking") {
+      if (this.isGone) {
+        return
+      }
+
+      this.setThinking(next.thinking)
       this.applyHeight()
       return
     }
@@ -747,7 +820,17 @@ export class RunFooter implements FooterApi {
   }
 
   private todoPanelVisible(): boolean {
-    return this.view().type === "prompt" && this.promptRoute.type === "composer" && !this.autocomplete
+    return this.view().type === "prompt" && this.todos().length > 0
+  }
+
+  private thinkingPanelRows(): number {
+    const state = this.thinking()
+    if (!state?.active || this.view().type !== "prompt") {
+      return 0
+    }
+
+    const rows = thinkingTailRows(state.text, this.renderer.terminalWidth)
+    return rows.length === 0 ? 0 : rows.length + 1
   }
 
   private todoPanelRows(): number {
@@ -755,11 +838,15 @@ export class RunFooter implements FooterApi {
       return 0
     }
 
+    if (this.todoSummary()) {
+      return 1
+    }
+
     return todoPanelRowCount(this.todos())
   }
 
   private subagentTreeRows(): number {
-    if (!this.todoPanelVisible()) {
+    if (this.view().type !== "prompt" || this.promptRoute.type !== "composer" || this.autocomplete) {
       return 0
     }
 
@@ -795,7 +882,7 @@ export class RunFooter implements FooterApi {
                             ? this.base + SUBAGENT_INSPECTOR_ROWS
                             : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
-    const total = height + this.todoPanelRows() + this.subagentTreeRows()
+    const total = height + this.todoPanelRows() + this.thinkingPanelRows() + this.subagentTreeRows()
     if (total !== this.renderer.footerHeight) {
       this.renderer.footerHeight = total
     }
@@ -1012,6 +1099,67 @@ export class RunFooter implements FooterApi {
       .catch(() => {})
   }
 
+  // Schedules pruning for any tab that just went terminal, cancels a pending
+  // prune if a tab is (re)running, and drops timers for tabs the server no
+  // longer reports. Delay accounts for lastUpdatedAt instead of always
+  // running the full window, so a tab that finished mid-replay doesn't get
+  // extra linger time.
+  private syncSubagentDoneTimers(tabs: FooterSubagentTab[]): void {
+    const seen = new Set<string>()
+    for (const tab of tabs) {
+      seen.add(tab.sessionID)
+      if (tab.status === "running") {
+        this.clearSubagentDoneTimer(tab.sessionID)
+        continue
+      }
+
+      if (this.subagentDoneTimers.has(tab.sessionID)) {
+        continue
+      }
+
+      const delay = Math.max(0, SUBAGENT_DONE_LINGER_MS - (Date.now() - tab.lastUpdatedAt))
+      const sessionID = tab.sessionID
+      this.subagentDoneTimers.set(
+        sessionID,
+        setTimeout(() => {
+          this.subagentDoneTimers.delete(sessionID)
+          this.pruneSubagentTab(sessionID)
+        }, delay),
+      )
+    }
+
+    for (const sessionID of [...this.subagentDoneTimers.keys()]) {
+      if (!seen.has(sessionID)) {
+        this.clearSubagentDoneTimer(sessionID)
+      }
+    }
+  }
+
+  private clearSubagentDoneTimer(sessionID: string): void {
+    const timeout = this.subagentDoneTimers.get(sessionID)
+    if (!timeout) {
+      return
+    }
+
+    clearTimeout(timeout)
+    this.subagentDoneTimers.delete(sessionID)
+  }
+
+  private pruneSubagentTab(sessionID: string): void {
+    if (this.isGone) {
+      return
+    }
+
+    this.subagentPruned.add(sessionID)
+    const current = this.subagent()
+    if (!current.tabs.some((tab) => tab.sessionID === sessionID)) {
+      return
+    }
+
+    this.setSubagent({ ...current, tabs: current.tabs.filter((tab) => tab.sessionID !== sessionID) })
+    this.applyHeight()
+  }
+
   private clearInterruptTimer(): void {
     if (!this.interruptTimeout) {
       return
@@ -1019,6 +1167,15 @@ export class RunFooter implements FooterApi {
 
     clearTimeout(this.interruptTimeout)
     this.interruptTimeout = undefined
+  }
+
+  private clearTodoHideTimer(): void {
+    if (!this.todoHideTimer) {
+      return
+    }
+
+    clearTimeout(this.todoHideTimer)
+    this.todoHideTimer = undefined
   }
 
   private clearNoticeTimer(reset = true): void {
@@ -1199,7 +1356,9 @@ export class RunFooter implements FooterApi {
     this.notifyClose()
     this.clearInterruptTimer()
     this.clearExitTimer()
+    this.clearTodoHideTimer()
     this.clearNoticeTimer()
+    for (const sessionID of [...this.subagentDoneTimers.keys()]) this.clearSubagentDoneTimer(sessionID)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.renderer.off(CliRenderEvents.PALETTE, this.handlePalette)
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeRefresh)

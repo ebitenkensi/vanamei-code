@@ -1,4 +1,4 @@
-⏺ Bash(git log --oneline -n 8)
+● Bash(git log --oneline -n 8)
   ⎿  3e8 commit 1
      3e9 commit 2
      3ea commit 3

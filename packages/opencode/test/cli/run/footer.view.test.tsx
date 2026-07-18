@@ -16,7 +16,7 @@ import {
   RunSubagentSelectBody,
   RunVariantSelectBody,
 } from "@/cli/cmd/run/footer.command"
-import { RunFooterView } from "@/cli/cmd/run/footer.view"
+import { MAX_THINKING_ROWS, RunFooterView, thinkingTailRows } from "@/cli/cmd/run/footer.view"
 import { RunEntryContent } from "@/cli/cmd/run/scrollback.writer"
 import { RUN_THEME_FALLBACK, type RunTheme } from "@/cli/cmd/run/theme"
 import type {
@@ -138,13 +138,19 @@ function subagent(input: {
   } satisfies FooterSubagentTab
 }
 
-function agent(input: { name: string; mode: RunAgent["mode"]; description?: string }): RunAgent {
+function agent(input: {
+  name: string
+  mode: RunAgent["mode"]
+  description?: string
+  budget?: { soft?: number; hard?: number }
+}): RunAgent {
   return {
     name: input.name,
     description: input.description,
     mode: input.mode,
     permission: [],
     options: {},
+    budget: input.budget,
   } satisfies RunAgent
 }
 
@@ -267,10 +273,8 @@ async function renderFooter(
 }
 
 function expectPaletteList(list: BoxRenderable, selectedIndex: number) {
-  expect(list.backgroundColor.toInts()).toEqual((RUN_THEME_FALLBACK.footer.shade as RGBA).toInts())
-  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual(
-    (RUN_THEME_FALLBACK.footer.selected as RGBA).toInts(),
-  )
+  expect(list.backgroundColor.toInts()).toEqual([0, 0, 0, 0])
+  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual([0, 0, 0, 0])
 }
 
 function child(root: BoxRenderable | RootRenderable, index: number) {
@@ -291,19 +295,13 @@ function footerComposerFrame(root: BoxRenderable | RootRenderable) {
 }
 
 function footerStatusline(root: BoxRenderable | RootRenderable) {
-  const status = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-  const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
-  const boxes = root.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
-  for (const box of boxes) {
-    const first = box.getChildren().find((item): item is BoxRenderable => item instanceof BoxRenderable)
-    if (
-      box.backgroundColor?.toInts().every((value, index) => value === status[index]) &&
-      first?.backgroundColor?.toInts().every((value, index) => value === accent[index])
-    )
-      return box
-    boxes.push(...box.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable))
-  }
-  throw new Error("Footer statusline not found")
+  const outer = child(root, 0)
+  const rfv = child(outer, 0)
+  const fallback = child(rfv, 1)
+  const children = fallback.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
+  const statusline = children.at(-1)
+  if (!statusline) throw new Error("Footer statusline not found")
+  return statusline
 }
 
 function panelMenu(root: BoxRenderable | RootRenderable) {
@@ -1133,31 +1131,27 @@ test("direct footer shows editable prompts and additional queued work while runn
     await app.renderOnce()
     const frame = app.captureCharFrame()
     const transparent = RGBA.fromValues(0, 0, 0, 0).toInts()
-    const tinted = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-    const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
     const statusline = footerStatusline(app.renderer.root)
     const statusItems = statusline.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
     const mode = statusItems[0]
     const main = statusItems[1]
     const spinner = main.getChildren()[0]
-    const model = statusItems[2]
     const queued = statusItems[3]
     const hint = statusItems.at(-1)!
 
     expect(spinner).toBeDefined()
-    expect(frame).toContain("a-model-name-long-enough-to-force-responsive-truncation")
+    // The model name is hidden while a turn is running.
+    expect(frame).not.toContain("a-model-name")
     expect(frame).toContain("3 queued")
     expect(frame).toContain("ctrl+b background")
     expect(frame).toContain("ctrl+x q 3 queued")
     expect(frame).toContain("ctrl+x down subagents")
     expect(frame).toContain("ctrl+p cmd")
-    expect(frame).toContain("a-model-name-long-enough-to-force-responsive-truncation")
     expect(frame).toContain("subagents · ctrl+p cmd")
     expect(frame).not.toContain("1 agent")
-    expect(statusline.backgroundColor.toInts()).toEqual(tinted)
-    expect(mode.backgroundColor.toInts()).toEqual(accent)
+    expect(statusline.backgroundColor.toInts()).toEqual(transparent)
+    expect(mode.backgroundColor.toInts()).toEqual(transparent)
     expect(main.backgroundColor.toInts()).toEqual(transparent)
-    expect(model.backgroundColor.toInts()).toEqual(transparent)
     expect(queued.backgroundColor.toInts()).toEqual(transparent)
     expect(hint.backgroundColor.toInts()).toEqual(transparent)
   } finally {
@@ -1264,7 +1258,7 @@ test("direct footer renders all four info pills separated by middots", async () 
   }
 })
 
-test("direct footer shows the full context form once spacious", async () => {
+test("direct footer keeps the ctx pill percentage-only even when spacious", async () => {
   const app = await renderFooter({
     width: 150,
     state: { contextTokens: 159_600, contextPercent: 16 },
@@ -1274,7 +1268,8 @@ test("direct footer shows the full context form once spacious", async () => {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("◆ 159.6K (16%)")
+    expect(frame).toContain("◆ 16%")
+    expect(frame).not.toContain("159.6K")
   } finally {
     app.cleanup()
   }
@@ -1328,6 +1323,88 @@ test("direct footer hides zero-value pills", async () => {
     expect(frame).not.toContain("$")
     expect(frame).not.toContain("☐")
     expect(frame).not.toContain("✎")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer shows a budget-fraction cost pill colored by threshold", async () => {
+  const budgetAgent = agent({ name: "budget-build", mode: "primary", budget: { soft: 1.5, hard: 2.5 } })
+
+  const ok = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 0.42 },
+  })
+  try {
+    await ok.renderOnce()
+    expect(ok.captureCharFrame()).toContain("$0.42/$1.50")
+    expect(findSpan(ok.captureSpans(), "$0.42/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
+    )
+  } finally {
+    ok.cleanup()
+  }
+
+  const soft = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 1.52 },
+  })
+  try {
+    await soft.renderOnce()
+    expect(soft.captureCharFrame()).toContain("$1.52/$1.50")
+    expect(findSpan(soft.captureSpans(), "$1.52/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
+    )
+  } finally {
+    soft.cleanup()
+  }
+
+  const hard = await renderFooter({
+    width: 130,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 2.5 },
+  })
+  try {
+    await hard.renderOnce()
+    expect(hard.captureCharFrame()).toContain("$2.50/$1.50")
+    expect(findSpan(hard.captureSpans(), "$2.50/$1.50")?.fg.toInts()).toEqual(
+      (RUN_THEME_FALLBACK.footer.error as RGBA).toInts(),
+    )
+  } finally {
+    hard.cleanup()
+  }
+})
+
+test("direct footer keeps the plain cost pill when the current agent has no budget", async () => {
+  const app = await renderFooter({
+    width: 130,
+    agents: [agent({ name: "build", mode: "primary" })],
+    state: { agent: "build", cost: 4.23 },
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).toContain("$4.23")
+    expect(frame).not.toContain("$4.23/")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer degrades the budget pill at the same width breakpoint as the plain cost pill", async () => {
+  const budgetAgent = agent({ name: "budget-build", mode: "primary", budget: { soft: 1.5, hard: 2.5 } })
+  const app = await renderFooter({
+    width: 85,
+    agents: [budgetAgent],
+    state: { agent: "budget-build", cost: 0.42 },
+  })
+
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).not.toContain("$0.42")
   } finally {
     app.cleanup()
   }
@@ -1411,7 +1488,7 @@ test("direct footer drops info pills by priority as width shrinks", async () => 
 })
 
 test("direct footer mode label keeps left padding without a status pill", async () => {
-  const app = await renderFooter()
+  const app = await renderFooter({ state: { agent: "build" } })
 
   try {
     await app.renderOnce()
@@ -1421,7 +1498,7 @@ test("direct footer mode label keeps left padding without a status pill", async 
       .find((line) => line.includes("BUILD") && line.includes("cmd"))
 
     expect(statusline).toBeDefined()
-    expect(statusline?.startsWith(" BUILD ")).toBe(true)
+    expect(statusline?.startsWith("BUILD ")).toBe(true)
   } finally {
     app.cleanup()
   }
@@ -1438,6 +1515,33 @@ test("direct footer mode label reflects a custom agent", async () => {
       .find((line) => line.includes("PLAN") && line.includes("cmd"))
 
     expect(statusline).toBeDefined()
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer shows AUTO pill when automode is enabled", async () => {
+  const app = await renderFooter({
+    width: 130,
+    state: { automode: true },
+  })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).toContain("AUTO")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer hides AUTO pill when automode is off", async () => {
+  const app = await renderFooter({ width: 130, state: { automode: false } })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+    expect(frame).not.toContain("AUTO")
   } finally {
     app.cleanup()
   }
@@ -1519,7 +1623,7 @@ test("direct question body separates single-select checkmark from label", async 
     await app.renderOnce()
 
     expect(replies).toHaveLength(1)
-    expect(app.captureCharFrame()).toContain("Product ✓")
+    expect(app.captureCharFrame()).toContain("Product  ✓")
   } finally {
     app.renderer.destroy()
   }
@@ -1765,7 +1869,7 @@ test("direct footer todo panel renders todos with status glyphs and colors", asy
     expect(findSpan(spans, "☐")).toBeDefined()
 
     expect(glyphColorForContent(spans, "Set up project")?.toInts()).toEqual(
-      (RUN_THEME_FALLBACK.footer.success as RGBA).toInts(),
+      (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
     )
     expect(glyphColorForContent(spans, "Implement feature")?.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
@@ -1820,4 +1924,16 @@ test("direct footer todo panel shows an overflow row past the max", async () => 
   } finally {
     app.cleanup()
   }
+})
+
+test("thinkingTailRows wraps to width, drops blank lines, and marks only the first row", () => {
+  expect(thinkingTailRows("aaaaaaaaaaaa\n\nbb", 15)).toEqual(["  ⎿  aaaaaaaaaa", "     aa", "     bb"])
+})
+
+test("thinkingTailRows keeps only the newest rows up to the max", () => {
+  const rows = thinkingTailRows(Array.from({ length: 15 }, (_, index) => `line-${index + 1}`).join("\n"), 80)
+
+  expect(rows).toHaveLength(MAX_THINKING_ROWS)
+  expect(rows[0]).toBe("  ⎿  line-6")
+  expect(rows.slice(1)).toEqual(Array.from({ length: 9 }, (_, index) => `     line-${index + 7}`))
 })
