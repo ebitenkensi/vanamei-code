@@ -29,7 +29,7 @@ export type QueueInput = {
   trace?: Trace
   onSend?: (prompt: RunPrompt) => void
   onNewSession?: () => void | Promise<void>
-  onDetach?: () => Promise<void>
+  onDetach?: (live?: boolean) => Promise<void>
   onShutdown?: () => Promise<void>
   run: (prompt: RunPrompt, signal: AbortSignal) => Promise<void>
 }
@@ -67,6 +67,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     closed: input.footer.isClosed,
   }
   let draining: Promise<void> | undefined
+  let detaching = false
 
   const emit = (next: FooterEvent, row: Record<string, unknown>) => {
     input.trace?.write("ui.patch", row)
@@ -112,6 +113,20 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     finish()
   }
 
+  // Resolves when any in-flight turn finishes and no new turn will start
+  // (because detaching stops promotion).
+  const whenIdle = (): Promise<void> =>
+    state.active === undefined
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          const iv = setInterval(() => {
+            if (state.active === undefined) {
+              clearInterval(iv)
+              resolve()
+            }
+          }, 200)
+        })
+
   const drain = () => {
     if (draining || state.closed || state.queue.length === 0) {
       return
@@ -120,6 +135,12 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     draining = (async () => {
       try {
         while (!state.closed && state.queue.length > 0) {
+          if (detaching) {
+            // set on /detach to stop promoting queued inputs; the in-flight turn
+            // finishes naturally, then the child's bootstrap wake picks up the durable queue.
+            break
+          }
+
           const prompt = state.queue.shift()
           if (!prompt) {
             continue
@@ -281,7 +302,10 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       if (input.onDetach) {
         const fn = input.onDetach
         input.onDetach = undefined // guard: only one detach per session
-        void fn().then(() => input.footer.close())
+        // Stop promoting queued inputs immediately (synchronous, no await).
+        // The in-flight turn finishes naturally, then the child spawns.
+        detaching = true
+        void whenIdle().then(() => fn(true).then(() => input.footer.close()))
       }
       return
     }

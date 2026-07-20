@@ -68,7 +68,7 @@ type RunRuntimeInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
-  onDetach?: () => Promise<void>
+  onDetach?: (live?: boolean) => Promise<void>
   onShutdown?: () => Promise<void>
 }
 
@@ -89,7 +89,7 @@ type RunLocalInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
-  onDetach?: () => Promise<void>
+  onDetach?: (live?: boolean) => Promise<void>
 }
 
 type StreamTransportModule = Pick<

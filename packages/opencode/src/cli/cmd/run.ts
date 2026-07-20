@@ -931,7 +931,21 @@ export const RunCommand = effectCmd({
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
 
-        const onDetach = async () => {
+        const onDetach = async (live?: boolean) => {
+          if (live) {
+            // Interactive /detach from a live TTY: spawn a detached child
+            // server and let the parent exit so bash gets its prompt back.
+            await executeDetach({
+              directory: directory ?? root,
+              projectID,
+              live: true,
+              onShutdown: async () => {},
+            })
+            return
+          }
+
+          // SIGHUP auto-detach: in-place daemonize (live is undefined here so
+          // executeDetach overload resolves to the Listener return).
           const listener = await executeDetach({
             directory: directory ?? root,
             projectID,
