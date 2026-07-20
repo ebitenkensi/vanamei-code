@@ -7,11 +7,12 @@ Start parameters:
 - description (required): short human-readable label shown in notifications and list.
 - persistent: if true, monitor lives for the session lifetime ignoring timeout. Default false.
 - timeout_ms: timeout in milliseconds. Default 300000, max 3600000, only for non-persistent monitors.
+- oneshot: boolean. Use oneshot=true for single-shot completion notifications (e.g. a build or test run that exits when done). The monitor accumulates stdout and injects it as one notification on process exit. Use oneshot=false (default) for continuous monitoring where each stdout line is an event.
 
 Each stdout line is injected as an event notification. A flood guard kills monitors that produce more than 20 batches or 1MB of output in 60 seconds.
 
 The monitor survives the tool call (ctx.abort is ignored).
 
-Use persistent:true for session-lifetime watchers (e.g. agmsg watch.sh).
+Use persistent:true for session-lifetime watchers (e.g. agmsg watch.sh). For one-shot completion: oneshot=true. For continuous watching (logs/tails/dev servers): oneshot=false (default).
 
 Stop requires the monitor_id from list output.

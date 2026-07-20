@@ -269,7 +269,9 @@ const layer = Layer.effect(
       // Top-level sessions bind autostart monitors — subagent sessions
       // (parentID set) are short-lived and would steal the binding.
       if (session.parentID === undefined) {
-        yield* monitorAPI.rebind(sessionID, promptOps).pipe(Effect.ignore)
+        yield* monitorAPI.rebind(sessionID, promptOps).pipe(
+          Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
+        )
       }
       const { task: taskTool } = yield* registry.named()
       const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
@@ -1245,7 +1247,9 @@ const layer = Layer.effect(
             const promptOps = yield* ops()
             // Top-level sessions bind autostart monitors
             if (session.parentID === undefined) {
-              yield* monitorAPI.rebind(sessionID, promptOps).pipe(Effect.ignore)
+              yield* monitorAPI.rebind(sessionID, promptOps).pipe(
+                Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
+              )
             }
 
             const tools = yield* SessionTools.resolve({

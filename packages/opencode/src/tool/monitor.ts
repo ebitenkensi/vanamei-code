@@ -31,6 +31,9 @@ const Parameters = Schema.Struct({
   timeout_ms: Schema.optional(Schema.Number).annotate({
     description: "Timeout in milliseconds. Default 300000, max 3600000. Only for non-persistent monitors",
   }),
+  oneshot: Schema.optional(Schema.Boolean).annotate({
+    description: "Use oneshot=true for single-shot completion notifications (e.g. a build or test run that exits when done). The monitor accumulates stdout and injects it as one notification on process exit.",
+  }),
   monitor_id: Schema.optional(Schema.String).annotate({
     description: "Monitor ID to stop (required for stop)",
   }),
@@ -49,6 +52,7 @@ type MonitorEntry = {
   currentSessionID: SessionID | null
   pendingLines: string[]
   overflowWarningLogged: boolean
+  oneshot: boolean
   semaphore: Semaphore.Semaphore // Serializes rebind/unbind/flusher mutations (Finding 2)
 }
 
@@ -68,10 +72,12 @@ export type MonitorEntryOutput = {
   command: string
   persistent: boolean
   startedAt: number
+  oneshot: boolean
 }
 
 const MAX_STDERR = 4096
 const DEFAULT_TIMEOUT_MS = 300_000
+const ONESHOT_DEFAULT_TIMEOUT_MS = 60_000
 const MAX_TIMEOUT_MS = 3_600_000
 const BATCH_WINDOW_MS = 500
 const FLOOD_LIMIT = 20
@@ -240,8 +246,12 @@ const layer = Layer.effect(
       promptOps?: TaskPromptOps,
     ): Effect.Effect<{ monitorID: string }> => {
       return Effect.gen(function* () {
-        const persistent = input.persistent === true
-        const timeoutMs = Math.min(input.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+        const oneshot = input.oneshot === true
+        const persistent = input.persistent === true && !oneshot
+        const timeoutMs = Math.min(
+          input.timeout_ms ?? (oneshot ? ONESHOT_DEFAULT_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
+          MAX_TIMEOUT_MS,
+        )
         const monitorID = genMonitorID()
         const env = makeShellEnv(input.sessionID ?? undefined)
 
@@ -268,6 +278,7 @@ const layer = Layer.effect(
           currentSessionID: promptOps ? (input.sessionID ?? null) : null,
           pendingLines: [],
           overflowWarningLogged: false,
+          oneshot,
           semaphore: Semaphore.makeUnsafe(1),
         }
         entries.set(monitorID, entry)
@@ -321,48 +332,50 @@ const layer = Layer.effect(
             ).pipe(Effect.ignore),
           )
 
-          // Flusher: batch and inject every 500ms
-          const flusher = yield* Effect.forkChild(
-            Effect.gen(function* () {
-              while (true) {
-                yield* Effect.sleep(BATCH_WINDOW_MS)
+          // Flusher: batch and inject every 500ms (skip for oneshot — no line-by-line inject)
+          const flusher = oneshot
+            ? undefined
+            : yield* Effect.forkChild(
+                Effect.gen(function* () {
+                  while (true) {
+                    yield* Effect.sleep(BATCH_WINDOW_MS)
 
-                const items: string[] = []
-                let next = yield* Queue.poll(queue)
-                while (Option.isSome(next) && items.length < 10) {
-                  items.push(next.value)
-                  next = yield* Queue.poll(queue)
-                }
-                if (items.length === 0) continue
+                    const items: string[] = []
+                    let next = yield* Queue.poll(queue)
+                    while (Option.isSome(next) && items.length < 10) {
+                      items.push(next.value)
+                      next = yield* Queue.poll(queue)
+                    }
+                    if (items.length === 0) continue
 
-                // Flood check
-                stamps.push(Date.now())
-                while (stamps.length > 0 && stamps[0]! < Date.now() - FLOOD_WINDOW_MS) {
-                  stamps.shift()
-                }
-                if (stamps.length > FLOOD_LIMIT) {
-                  yield* Deferred.succeed(flooded, undefined)
-                  return
-                }
+                    // Flood check
+                    stamps.push(Date.now())
+                    while (stamps.length > 0 && stamps[0]! < Date.now() - FLOOD_WINDOW_MS) {
+                      stamps.shift()
+                    }
+                    if (stamps.length > FLOOD_LIMIT) {
+                      yield* Deferred.succeed(flooded, undefined)
+                      return
+                    }
 
-                // Check if bound; inject or queue (serialized via entry semaphore)
-                const entry = entries.get(monitorID)
-                if (entry) {
-                  yield* entry.semaphore.withPermit(
-                    Effect.gen(function* () {
-                      const e = entries.get(monitorID)
-                      if (!e) return
-                      if (e.promptOps !== null) {
-                        yield* doInject(monitorID, items)
-                      } else {
-                        pushPendingLines(e, items)
-                      }
-                    }),
-                  )
-                }
-              }
-            }),
-          )
+                    // Check if bound; inject or queue (serialized via entry semaphore)
+                    const entry = entries.get(monitorID)
+                    if (entry) {
+                      yield* entry.semaphore.withPermit(
+                        Effect.gen(function* () {
+                          const e = entries.get(monitorID)
+                          if (!e) return
+                          if (e.promptOps !== null) {
+                            yield* doInject(monitorID, items)
+                          } else {
+                            pushPendingLines(e, items)
+                          }
+                        }),
+                      )
+                    }
+                  }
+                }),
+              )
 
           // Wait for exit, timeout, or flood
           let reason: "exit" | "timeout" | "flooded" | "stopped" = "exit"
@@ -387,32 +400,64 @@ const layer = Layer.effect(
             yield* killEntry(entry)
           }
 
-          yield* Fiber.interrupt(flusher).pipe(Effect.ignore)
+          if (!oneshot) {
+            yield* Fiber.interrupt(flusher!).pipe(Effect.ignore)
+          }
           yield* Fiber.await(stdoutReader).pipe(Effect.ignore)
 
           if (!entries.has(monitorID)) return
 
-          if (reason !== "flooded") {
-            const remaining: string[] = []
-            let rem = yield* Queue.poll(queue)
-            while (Option.isSome(rem)) {
-              remaining.push(rem.value)
-              rem = yield* Queue.poll(queue)
+          if (oneshot) {
+            // Oneshot: drain accumulated lines and inject as one batch on clean exit only
+            if (reason === "exit") {
+              const accumulated: string[] = []
+              let rem = yield* Queue.poll(queue)
+              while (Option.isSome(rem) && accumulated.length < MAX_PENDING_LINES) {
+                accumulated.push(rem.value)
+                rem = yield* Queue.poll(queue)
+              }
+              if (accumulated.length > 0) {
+                const entry = entries.get(monitorID)
+                if (entry) {
+                  yield* entry.semaphore.withPermit(
+                    Effect.gen(function* () {
+                      const e = entries.get(monitorID)
+                      if (!e) return
+                      if (e.promptOps !== null) {
+                        yield* doInject(monitorID, accumulated)
+                      } else {
+                        pushPendingLines(e, accumulated)
+                      }
+                    }),
+                  )
+                }
+              }
             }
-            if (remaining.length > 0) {
-              const entry = entries.get(monitorID)
-              if (entry) {
-                yield* entry.semaphore.withPermit(
-                  Effect.gen(function* () {
-                    const e = entries.get(monitorID)
-                    if (!e) return
-                    if (e.promptOps !== null) {
-                      yield* doInject(monitorID, remaining)
-                    } else {
-                      pushPendingLines(e, remaining)
-                    }
-                  }),
-                )
+            // timeout/flooded: no injection — monitor.stopped event covers it
+          } else {
+            // Normal (non-oneshot): drain remaining and inject if not flooded
+            if (reason !== "flooded") {
+              const remaining: string[] = []
+              let rem = yield* Queue.poll(queue)
+              while (Option.isSome(rem)) {
+                remaining.push(rem.value)
+                rem = yield* Queue.poll(queue)
+              }
+              if (remaining.length > 0) {
+                const entry = entries.get(monitorID)
+                if (entry) {
+                  yield* entry.semaphore.withPermit(
+                    Effect.gen(function* () {
+                      const e = entries.get(monitorID)
+                      if (!e) return
+                      if (e.promptOps !== null) {
+                        yield* doInject(monitorID, remaining)
+                      } else {
+                        pushPendingLines(e, remaining)
+                      }
+                    }),
+                  )
+                }
               }
             }
           }
@@ -450,6 +495,7 @@ const layer = Layer.effect(
             command: e.command,
             persistent: e.persistent,
             startedAt: e.startedAt,
+            oneshot: e.oneshot,
           }))
       })
     }
@@ -558,7 +604,7 @@ export const MonitorTool = Tool.define(
           const output = entries
             .map(
               (e) =>
-                `- ${e.monitorID}: running | ${e.description} | ${e.persistent ? "persistent" : "non-persistent"} | ${new Date(e.startedAt).toISOString()} | ${e.command}`,
+                `- ${e.monitorID}: running | ${e.description} | ${e.persistent ? "persistent" : "non-persistent"}${e.oneshot ? " | oneshot" : ""} | ${new Date(e.startedAt).toISOString()} | ${e.command}`,
             )
             .join("\n")
           return {
@@ -617,8 +663,12 @@ export const MonitorTool = Tool.define(
           }
         }
 
-        const persistent = params.persistent === true
-        const timeoutMs = Math.min(params.timeout_ms ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+        const oneshot = params.oneshot === true
+        const persistent = params.persistent === true && !oneshot
+        const timeoutMs = Math.min(
+          params.timeout_ms ?? (oneshot ? ONESHOT_DEFAULT_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
+          MAX_TIMEOUT_MS,
+        )
 
         const { monitorID } = yield* api.startMonitor(
           {
@@ -626,6 +676,7 @@ export const MonitorTool = Tool.define(
             description: params.description,
             persistent,
             timeout_ms: timeoutMs,
+            oneshot,
             sessionID: ctx.sessionID,
             agent: ctx.agent,
           },
