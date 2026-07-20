@@ -39,6 +39,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
 import { Effect, Layer, Option, Context, Schema, Types } from "effect"
+import { MonitorAPI } from "@/tool/monitor"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -623,6 +624,13 @@ const layer: Layer.Layer<
         const kids = yield* children(sessionID)
         for (const child of kids) {
           yield* remove(child.id)
+        }
+
+        // Unbind autostart monitors from this session so events queue
+        // until the next top-level session binds.
+        const monitorOpt = yield* Effect.serviceOption(MonitorAPI)
+        if (Option.isSome(monitorOpt)) {
+          yield* monitorOpt.value.unbindForSession(sessionID).pipe(Effect.ignore)
         }
 
         yield* events.publish(SessionV1.Event.Deleted, { sessionID, info: session })

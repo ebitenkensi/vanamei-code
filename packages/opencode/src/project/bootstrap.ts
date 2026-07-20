@@ -10,6 +10,7 @@ import { ShareNext } from "@/share/share-next"
 import { Effect, Layer } from "effect"
 import { Config } from "@/config/config"
 import { Service } from "./bootstrap-service"
+import { MonitorAPI, node as MonitorAPINode } from "@/tool/monitor"
 
 export { Service } from "./bootstrap-service"
 export type { Interface } from "./bootstrap-service"
@@ -28,6 +29,7 @@ const layer = Layer.effect(
     const shareNext = yield* ShareNext.Service
     const snapshot = yield* Snapshot.Service
     const vcs = yield* Vcs.Service
+    const monitorAPI = yield* MonitorAPI
 
     const run = Effect.gen(function* () {
       const ctx = yield* InstanceState.context
@@ -43,6 +45,27 @@ const layer = Layer.effect(
         (s) => s.init().pipe(Effect.catchCause((cause) => Effect.logWarning("init failed", { cause }))),
         { concurrency: "unbounded", discard: true },
       ).pipe(Effect.withSpan("InstanceBootstrap.init"))
+
+      // Deterministic monitor autostart (no LLM in the loop)
+      const cfg = yield* config.get()
+      const autostart = cfg.monitor?.autostart ?? []
+      if (autostart.length > 0) {
+        yield* Effect.forEach(
+          autostart,
+          (entry) =>
+            monitorAPI.startMonitor({
+              command: entry.command,
+              description: entry.description,
+              persistent: entry.persistent,
+              timeout_ms: entry.timeout_ms,
+              sessionID: null,
+              agent: cfg.default_agent ?? "build",
+            }).pipe(
+              Effect.catchCause((cause) => Effect.logWarning("monitor autostart failed", { cause })),
+            ),
+          { discard: true },
+        )
+      }
     }).pipe(Effect.withSpan("InstanceBootstrap"))
 
     return Service.of({ run })
@@ -52,7 +75,7 @@ const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer: layer,
-  deps: [Config.node, Format.node, LSP.node, Plugin.node, Project.node, ShareNext.node, Snapshot.node, Vcs.node],
+  deps: [MonitorAPINode, Config.node, Format.node, LSP.node, Plugin.node, Project.node, ShareNext.node, Snapshot.node, Vcs.node],
 })
 
 export * as InstanceBootstrap from "./bootstrap"

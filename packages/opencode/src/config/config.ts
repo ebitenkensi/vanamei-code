@@ -299,7 +299,7 @@ const layer = Layer.effect(
         yield* fs
           .writeFileString(
             gitignore,
-            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore"].join("\n"),
+            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore", "opencode.local.json"].join("\n"),
           )
           .pipe(
             Effect.catchIf(
@@ -430,6 +430,10 @@ const layer = Layer.effect(
               result.mode ??= {}
               result.plugin ??= []
             }
+            // Machine-owned local config (pure JSON), loaded last for highest precedence
+            const localSource = path.join(dir, "opencode.local.json")
+            yield* Effect.logDebug(`loading config from ${localSource}`)
+            yield* merge(localSource, yield* loadFile(localSource, authEnv))
           }
 
           yield* ensureGitignore(dir).pipe(Effect.orDie)

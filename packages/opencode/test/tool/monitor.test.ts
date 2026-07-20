@@ -15,7 +15,7 @@ import type { SessionPrompt } from "../../src/session/prompt"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { testEffect } from "../lib/effect"
 import * as Tool from "@/tool/tool"
-import { MonitorTool } from "../../src/tool/monitor"
+import { MonitorTool, MonitorAPI, node as MonitorAPINode } from "../../src/tool/monitor"
 import type { TaskPromptOps } from "../../src/tool/task"
 import { testInstanceStoreLayer, provideInstance, tmpdirScoped } from "../fixture/fixture"
 
@@ -36,7 +36,7 @@ const eventV2BridgeMock = Layer.succeed(
 )
 
 const monitorLayer = Layer.mergeAll(
-  LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
+  LayerNode.compile(LayerNode.group([MonitorAPINode, CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
   eventV2BridgeMock,
   testInstanceStoreLayer,
 )
