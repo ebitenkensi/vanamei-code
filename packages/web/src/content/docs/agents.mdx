@@ -314,6 +314,27 @@ The legacy `maxSteps` field is deprecated. Use `steps` instead.
 
 ---
 
+### Budget
+
+Cap an agent's session cost in USD with `budget.soft` and/or `budget.hard`. Reaching `soft` injects a wind-down notice into the conversation, but tools stay usable. Reaching `hard` forces a final, text-only response — no more tool calls.
+
+```json title="opencode.json"
+{
+  "agent": {
+    "quick-thinker": {
+      "budget": {
+        "soft": 1.0,
+        "hard": 1.5
+      }
+    }
+  }
+}
+```
+
+Both fields are optional. Once `soft` is set, the [statusline](/docs/tui#statusline) cost indicator switches to `$current/$limit` (using `soft` if set, otherwise `hard`).
+
+---
+
 ### Disable
 
 Set to `true` to disable the agent.
@@ -628,6 +649,14 @@ Rules are evaluated in order, and the **last matching rule wins**. In the exampl
 :::tip
 Users can always invoke any subagent directly via the `@` autocomplete menu, even if the agent's task permissions would deny it.
 :::
+
+---
+
+### Task file scoping
+
+When an agent delegates work via the Task tool, it can pass a `files` param — a list of paths (relative to the project root, globs allowed) the delegate is allowed to edit. Any `edit`, `write`, or `apply_patch` call outside those paths is structurally denied, regardless of the delegate's own `permission.edit` config. Passing an empty array makes the delegate read-only (its edit tools are hidden entirely). Omitting `files` keeps the previous unscoped behavior.
+
+This is set per-invocation by the calling agent, not in `opencode.json` — there's no config for it, since it depends on what the calling agent decides a given delegate should touch.
 
 ---
 

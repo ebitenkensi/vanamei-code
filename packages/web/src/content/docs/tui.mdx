@@ -85,6 +85,30 @@ Add a provider to OpenCode. Allows you to select from available providers and ad
 
 ---
 
+### agents
+
+Switch the active agent for the current session, without ending it.
+
+```bash frame="none"
+/agents
+```
+
+Opens a picker the same way `/models` does. The statusline's mode label updates to reflect whichever agent you pick.
+
+---
+
+### auto
+
+Toggle automode for the current session. [Learn more](/docs/permissions#automode).
+
+```bash frame="none"
+/auto
+```
+
+While automode is on, permission requests that are eligible for LLM judging (see [Permissions](/docs/permissions#automode)) are decided by a `permission-judge` agent instead of prompting you. An `AUTO` indicator appears in the statusline while it's active.
+
+---
+
 ### compact
 
 Compact the current session. _Alias_: `/summarize`
@@ -94,6 +118,26 @@ Compact the current session. _Alias_: `/summarize`
 ```
 
 **Keybind:** `ctrl+x c`
+
+---
+
+### detach
+
+Promote the running server into a background process so a long turn survives ending the terminal session, then reattach later. Only available in local mode, not while already attached to a remote server. [Learn more](/docs/cli#attach).
+
+```bash frame="none"
+/detach
+```
+
+OpenCode spawns a detached `opencode serve` process bound to `127.0.0.1` on a random port, writes a per-project discovery record, and exits the current process so your shell prompt returns. The in-flight turn and any queued messages keep running in the background. Reattach with:
+
+```bash frame="none"
+opencode attach --continue
+```
+
+:::note
+If the terminal disconnects unexpectedly (for example an SSH drop or `SIGHUP`), OpenCode detaches automatically so the turn isn't lost. There's currently no config option to disable this.
+:::
 
 ---
 
@@ -214,6 +258,8 @@ List and switch between sessions. _Aliases_: `/resume`, `/continue`
 /sessions
 ```
 
+Also available as "Resume session" in the command palette (`ctrl+p`). Only opens when the session is idle — it's refused with a footer notice while a turn is running or prompts are queued.
+
 **Keybind:** `ctrl+x l`
 
 ---
@@ -225,6 +271,18 @@ Share current session. [Learn more](/docs/share).
 ```bash frame="none"
 /share
 ```
+
+---
+
+### shutdown
+
+Stop the remote server you're attached to. Only available when attached via `opencode attach`, not in local mode. [Learn more](/docs/cli#attach).
+
+```bash frame="none"
+/shutdown
+```
+
+The server disposes all instances, removes its discovery record, and exits — any in-flight turn is stopped rather than allowed to finish. To stop a detached server from another terminal instead, use [`opencode stop`](/docs/cli#stop).
 
 ---
 
@@ -251,6 +309,8 @@ This command only controls whether thinking blocks are **displayed** - it does n
 ```bash frame="none"
 /thinking
 ```
+
+While a response is streaming, thinking renders as a live "● Thinking…" block with a rolling tail of the last several lines; once the model finishes, it collapses to a static "● Thinking…" / "⎿ N lines" summary you can expand.
 
 ---
 
@@ -280,6 +340,43 @@ Unshare current session. [Learn more](/docs/share#un-sharing).
 ```bash frame="none"
 /unshare
 ```
+
+---
+
+### variant
+
+Open the model variant picker directly, instead of cycling through variants one at a time with `ctrl+t`.
+
+```bash frame="none"
+/variant
+```
+
+---
+
+## Statusline
+
+The bottom statusline shows automatic, non-configurable indicators for the current session:
+
+- Context usage, as a percentage that turns warning-colored at 80% and error-colored at 95%. Given more width, it expands to show the full token count.
+- Cost. Once an agent has a [budget configured](/docs/agents#budget), this becomes `$current/$limit` (limit is the `soft` budget if set, otherwise `hard`), colored by how close you are to it.
+- Open todo count.
+- Modified file count.
+
+On narrow terminals these drop out in the order modified files, then todos, then cost, keeping the ones that fit.
+
+When [accept-edits mode](/docs/permissions#accept-edits-mode) or [automode](/docs/permissions#automode) is active, a mode indicator (`⏵⏵ accept edits on` or `AUTO`) also appears in the statusline.
+
+---
+
+## Todo list
+
+When the agent tracks todos for the current task, they're pinned above the composer — up to 6 rows with `✓`/`●`/`○` status glyphs, plus a "… +N more" row if there are more. Once every todo is complete the panel collapses to a one-line summary and then auto-hides. This is automatic; there's no setting to control it.
+
+---
+
+## Subagents
+
+Subagents launched with the `task` tool each get a two-line entry in the footer while they run: a header line with a spinner that resolves to `✓` (done), `○` (cancelled), or `✗` (error), and an activity line showing what the subagent is currently doing. Finished entries are pruned automatically about 10 seconds after they settle.
 
 ---
 

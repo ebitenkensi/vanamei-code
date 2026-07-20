@@ -172,6 +172,8 @@ Plugins can subscribe to events as seen below in the Examples section. Here is a
 
 - `permission.asked`
 - `permission.replied`
+- `permission.denied`
+- `permission.judged`
 
 #### Server Events
 
@@ -387,3 +389,25 @@ Format as a structured prompt that a new agent can use to resume work.
 ```
 
 When `output.prompt` is set, it completely replaces the default compaction prompt. The `output.context` array is ignored in this case.
+
+---
+
+### Permission hook
+
+Override how a permission request is resolved before opencode's own [permission](/docs/permissions) rules and [automode](/docs/permissions#automode) judge run:
+
+```ts title=".opencode/plugins/permission-hook.ts"
+import type { Plugin } from "@opencode-ai/plugin"
+
+export const PermissionHookPlugin: Plugin = async (ctx) => {
+  return {
+    "permission.ask": async (input, output) => {
+      if (input.permission === "bash" && input.patterns.includes("rm *")) {
+        output.status = "deny"
+      }
+    },
+  }
+}
+```
+
+`output.status` accepts `"ask"`, `"deny"`, or `"allow"`. If the hook throws or doesn't set `output.status`, the request falls through to normal resolution (fails open).

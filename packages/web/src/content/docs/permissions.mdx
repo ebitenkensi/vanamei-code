@@ -16,6 +16,7 @@ Each permission rule resolves to one of:
 - `"allow"` — run without approval
 - `"ask"` — prompt for approval
 - `"deny"` — block the action
+- `"auto"` — let an LLM judge decide instead of asking you. See [Automode](#automode).
 
 ---
 
@@ -33,9 +34,43 @@ You can also use auto mode with [`opencode run`](/docs/cli#run).
 opencode run --auto "Refactor this module"
 ```
 
-Explicit `"deny"` rules are still enforced. Auto mode only changes requests that would otherwise ask for approval.
+Explicit `"deny"` rules are still enforced. Auto mode only changes requests that would otherwise ask for approval. This is a blanket, client-side flag with no LLM involved — for per-request judging, see [Automode](#automode) below.
 
-In the TUI, open the command palette and select **Enable auto-approve permissions** or **Disable auto-approve permissions** to change modes. When auto mode is active, the prompt displays a muted `auto` indicator next to the current agent.
+---
+
+## Automode
+
+Automode routes eligible permission requests to an LLM judge instead of asking you. A request is eligible when its rule resolves to `"auto"` (see [Actions](#actions)), or when automode is toggled on for the session — whichever way it becomes eligible, both go through the same judge.
+
+Toggle it for the current session with the [`/auto`](/docs/tui#auto) TUI command, or via the API:
+
+```bash
+curl -X PATCH http://localhost:4096/session/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"automode": true}'
+```
+
+The judge itself is an agent you define named `permission-judge`:
+
+```markdown title="~/.config/opencode/agents/permission-judge.md"
+---
+description: Judges auto-eligible permission requests
+mode: subagent
+---
+
+Approve requests that stay within the session's stated scope and pose no
+destructive, irreversible, or out-of-project risk. Ask for anything else.
+```
+
+If no `permission-judge` agent is defined, automode has no effect — eligible requests just fall back to asking, as if automode were off. The judge uses that agent's configured model, falling back to the session's provider's small model, then the session's own model. It has a 20 second timeout, after which it also falls back to asking.
+
+Every judged request publishes a `permission.judged` event (`{ sessionID, requestID, permission, patterns, outcome: "allowed" | "ask", reason, tool? }`), and auto-allowed requests show as a muted scrollback line: `⏺ Auto-allowed <permission>(<pattern>) — <reason>`. While automode is on for a session, an `AUTO` indicator shows in the [statusline](/docs/tui#statusline).
+
+---
+
+## Accept-edits mode
+
+Cycle the current session between `normal` and `accept-edits` permission mode with `shift+tab` (keybind `permission_mode_cycle`). In `accept-edits` mode, `edit` permission requests are auto-allowed; every other permission still asks as normal. A `⏵⏵ accept edits on` indicator shows in the [statusline](/docs/tui#statusline) while it's active. This is unrelated to [automode](#automode) — there's no LLM judgment involved, it's a blanket allow for edits only.
 
 ---
 
@@ -154,7 +189,7 @@ OpenCode permissions are keyed by tool name, plus a couple of safety guards:
 - `glob` — file globbing (matches the glob pattern)
 - `grep` — content search (matches the regex pattern)
 - `bash` — running shell commands (matches parsed commands like `git status --porcelain`)
-- `task` — launching subagents (matches the subagent type)
+- `task` — launching subagents (matches the subagent type). The calling agent can also pass a `files` param to scope a delegate to specific paths — see [Budget](/docs/agents#budget) and subagent delegation in [Agents](/docs/agents).
 - `skill` — loading a skill (matches the skill name)
 - `lsp` — running LSP queries (currently non-granular)
 - `question` — asking the user questions during execution

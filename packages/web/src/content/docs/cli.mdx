@@ -29,20 +29,22 @@ opencode [project]
 
 #### Flags
 
-| Flag                                        | Short | Description                                                             |
-| ------------------------------------------- | ----- | ----------------------------------------------------------------------- |
-| <nobr><code>{"--continue"}</code></nobr>    | `-c`  | Continue the last session                                               |
-| <nobr><code>{"--session"}</code></nobr>     | `-s`  | Session ID to continue                                                  |
-| <nobr><code>{"--fork"}</code></nobr>        |       | Fork the session when continuing (use with `--continue` or `--session`) |
-| <nobr><code>{"--prompt"}</code></nobr>      |       | Prompt to use                                                           |
-| <nobr><code>{"--model"}</code></nobr>       | `-m`  | Model to use in the form of provider/model                              |
-| <nobr><code>{"--agent"}</code></nobr>       |       | Agent to use                                                            |
-| <nobr><code>{"--auto"}</code></nobr>        |       | Auto-approve permissions that are not explicitly denied                 |
-| <nobr><code>{"--port"}</code></nobr>        |       | Port to listen on                                                       |
-| <nobr><code>{"--hostname"}</code></nobr>    |       | Hostname to listen on                                                   |
-| <nobr><code>{"--mdns"}</code></nobr>        |       | Enable mDNS discovery                                                   |
-| <nobr><code>{"--mdns-domain"}</code></nobr> |       | Custom mDNS domain name                                                 |
-| <nobr><code>{"--cors"}</code></nobr>        |       | Additional browser origin(s) to allow CORS                              |
+| Flag                                         | Short | Description                                                                                                              |
+| -------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------ |
+| <nobr><code>{"--continue"}</code></nobr>     | `-c`  | Continue the last session                                                                                                |
+| <nobr><code>{"--session"}</code></nobr>      | `-s`  | Session ID to continue                                                                                                   |
+| <nobr><code>{"--fork"}</code></nobr>         |       | Fork the session when continuing (use with `--continue` or `--session`)                                                  |
+| <nobr><code>{"--prompt"}</code></nobr>       |       | Prompt to use                                                                                                            |
+| <nobr><code>{"--model"}</code></nobr>        | `-m`  | Model to use in the form of provider/model                                                                               |
+| <nobr><code>{"--agent"}</code></nobr>        |       | Agent to use                                                                                                             |
+| <nobr><code>{"--attach"}</code></nobr>       |       | Attach to a running opencode server instead of starting a local one (omit the URL to use the project's discovery record) |
+| <nobr><code>{"--password"}</code></nobr>     | `-p`  | Basic auth password when attaching (defaults to `OPENCODE_SERVER_PASSWORD`)                                              |
+| <nobr><code>{"--username"}</code></nobr>     | `-u`  | Basic auth username when attaching (defaults to `OPENCODE_SERVER_USERNAME` or `opencode`)                                |
+| <nobr><code>{"--port"}</code></nobr>         |       | Port for the local server (defaults to a random port)                                                                    |
+| <nobr><code>{"--no-replay"}</code></nobr>    |       | Disable session history replay on resume and after resize                                                                |
+| <nobr><code>{"--replay-limit"}</code></nobr> |       | Cap visible replay to the newest N messages                                                                              |
+
+This is the same interactive UI documented in full on the [TUI page](/docs/tui). Passing `--attach` here is equivalent to running [`opencode attach`](#attach).
 
 ---
 
@@ -98,7 +100,7 @@ opencode agent list
 
 ### attach
 
-Attach a terminal to an already running OpenCode backend server started via `serve` or `web` commands.
+Attach a terminal to an already running OpenCode backend server started via `serve` or `web` commands, or to a server backgrounded with [`/detach`](/docs/tui#detach).
 
 ```bash
 opencode attach [url]
@@ -113,6 +115,14 @@ opencode web --port 4096 --hostname 0.0.0.0
 # In another terminal, attach the TUI to the running backend
 opencode attach http://10.20.30.40:4096
 ```
+
+If you omit `url`, OpenCode looks up the current project's discovery record (written by `/detach` or a `SIGHUP` auto-detach) and connects to it automatically, inheriting its credentials:
+
+```bash
+opencode attach --continue
+```
+
+Once attached, the [`/shutdown`](/docs/tui#shutdown) TUI command stops the server you're connected to.
 
 #### Flags
 
@@ -441,6 +451,24 @@ Delete an OpenCode session.
 ```bash
 opencode session delete <sessionID>
 ```
+
+---
+
+### stop
+
+Stop a server that was backgrounded with [`/detach`](/docs/tui#detach) or a `SIGHUP` auto-detach, for the current project.
+
+```bash
+opencode stop
+```
+
+This reads the project's discovery record, sends `SIGTERM` to the server process, and removes the record.
+
+#### Flags
+
+| Flag                                  | Short | Description                                            |
+| ------------------------------------- | ----- | ------------------------------------------------------ |
+| <nobr><code>{"--force"}</code></nobr> | `-f`  | Force kill the server (`SIGKILL` instead of `SIGTERM`) |
 
 ---
 

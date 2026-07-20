@@ -116,9 +116,10 @@ The opencode server exposes the following APIs.
 
 ### Instance
 
-| Method | Path                | Description                  | Response  |
-| ------ | ------------------- | ---------------------------- | --------- |
-| `POST` | `/instance/dispose` | Dispose the current instance | `boolean` |
+| Method | Path                | Description                                                                                           | Response         |
+| ------ | ------------------- | ----------------------------------------------------------------------------------------------------- | ---------------- |
+| `POST` | `/instance/dispose` | Dispose the current instance                                                                          | `boolean`        |
+| `POST` | `/server/shutdown`  | Gracefully shut down a detached server: disposes all instances and stops the listener (auth required) | `204 No Content` |
 
 ---
 
@@ -152,7 +153,7 @@ The opencode server exposes the following APIs.
 | `GET`    | `/session/status`                        | Get session status for all sessions   | Returns `{ [sessionID: string]: `<a href={typesUrl}>SessionStatus</a>` }`          |
 | `GET`    | `/session/:id`                           | Get session details                   | Returns <a href={typesUrl}><code>Session</code></a>                                |
 | `DELETE` | `/session/:id`                           | Delete a session and all its data     | Returns `boolean`                                                                  |
-| `PATCH`  | `/session/:id`                           | Update session properties             | body: `{ title? }`, returns <a href={typesUrl}><code>Session</code></a>            |
+| `PATCH`  | `/session/:id`                           | Update session properties             | body: `{ title?, automode? }`, returns <a href={typesUrl}><code>Session</code></a> |
 | `GET`    | `/session/:id/children`                  | Get a session's child sessions        | Returns <a href={typesUrl}><code>Session[]</code></a>                              |
 | `GET`    | `/session/:id/todo`                      | Get the todo list for a session       | Returns <a href={typesUrl}><code>Todo[]</code></a>                                 |
 | `POST`   | `/session/:id/init`                      | Analyze app and create `AGENTS.md`    | body: `{ messageID, providerID, modelID }`, returns `boolean`                      |
