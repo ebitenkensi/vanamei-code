@@ -492,6 +492,8 @@ export function RunCommandMenuBody(props: {
       ...prompt,
       ...agent,
       ...commands,
+      { action: "slash", name: "detach", category: "System", display: "Detach", footer: "/detach", keywords: "/detach detach background" },
+      { action: "slash", name: "shutdown", category: "System", display: "Shutdown", footer: "/shutdown", keywords: "/shutdown shutdown stop" },
       { action: "exit", category: "System", display: "Exit", footer: "/exit", keywords: "/exit exit" },
     ]
   })

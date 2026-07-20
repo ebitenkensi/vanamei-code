@@ -430,6 +430,8 @@ export function createPromptState(input: PromptInput): PromptState {
       { kind: "slash", name: "new", display: "/new", description: "start a new session" } satisfies SlashOption,
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
       { kind: "slash", name: "auto", display: "/auto", description: "toggle LLM permission judge" } satisfies SlashOption,
+      { kind: "slash", name: "detach", display: "/detach", description: "detach session" } satisfies SlashOption,
+      { kind: "slash", name: "shutdown", display: "/shutdown", description: "shutdown session" } satisfies SlashOption,
     ]
     const hidden = new Set(builtins.map((item) => item.name))
     const showSkillMenu = !shell() && skillCommands().length > 0 && !hasSkillsCommand()
@@ -953,11 +955,6 @@ export function createPromptState(input: PromptInput): PromptState {
       area.cursorOffset = Bun.stringWidth(text)
       hide()
       syncDraft()
-      if (!shell()) {
-        submitPrompt(clonePrompt(draft))
-        return
-      }
-
       scheduleRows()
       area.focus()
       return

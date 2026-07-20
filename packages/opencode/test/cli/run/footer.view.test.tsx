@@ -878,7 +878,7 @@ test("direct footer keeps leader variant binding inactive when leader is disable
   }
 })
 
-test("direct footer submits slash autocomplete selections without dispatching shell completions", async () => {
+test("direct footer slash autocomplete fills without submitting, then enter submits", async () => {
   const submits: RunPrompt[] = []
   const app = await renderFooter({
     commands: [command({ name: "review", description: "Review code" })],
@@ -890,51 +890,22 @@ test("direct footer submits slash autocomplete selections without dispatching sh
 
   try {
     await app.renderOnce()
+
+    // Type /rev, press Enter → autocomplete fills /review , does NOT submit
     "/rev".split("").forEach((key) => app.mockInput.pressKey(key))
     await app.renderOnce()
     app.mockInput.pressEnter()
     await app.renderOnce()
 
-    "/rev".split("").forEach((key) => app.mockInput.pressKey(key))
-    await app.renderOnce()
-    app.mockInput.pressKey("TAB")
-    await app.renderOnce()
-
-    "/re branch".split("").forEach((key) => app.mockInput.pressKey(key))
-    Array.from({ length: 7 }).forEach(() => app.mockInput.pressKey("ARROW_LEFT"))
-    app.mockInput.pressKey("v")
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    "/nx".split("").forEach((key) => app.mockInput.pressKey(key))
-    app.mockInput.pressKey("ARROW_LEFT")
-    app.mockInput.pressKey("e")
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    "/n scratch".split("").forEach((key) => app.mockInput.pressKey(key))
-    Array.from({ length: 8 }).forEach(() => app.mockInput.pressKey("ARROW_LEFT"))
-    app.mockInput.pressKey("e")
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    app.mockInput.pressKey("!")
-    "/rev".split("").forEach((key) => app.mockInput.pressKey(key))
-    await app.renderOnce()
-    app.mockInput.pressEnter()
-    await app.renderOnce()
-
-    expect(submits).toEqual([
-      { text: "/review ", parts: [], command: { name: "review", arguments: "" } },
-      { text: "/review ", parts: [], command: { name: "review", arguments: "" } },
-      { text: "/review branch", parts: [], command: { name: "review", arguments: "branch" } },
-      { text: "/new ", parts: [] },
-      { text: "/new ", parts: [] },
-    ])
+    // Nothing submitted yet — autocomplete just filled the prompt
+    expect(submits).toEqual([])
     expect(app.captureCharFrame()).toContain("/review")
+
+    // Now press Enter to actually submit
+    app.mockInput.pressEnter()
+    await app.renderOnce()
+
+    expect(submits).toEqual([{ text: "/review ", parts: [], command: { name: "review", arguments: "" } }])
   } finally {
     app.cleanup()
   }
@@ -956,6 +927,8 @@ test("direct footer slash autocomplete keeps a real skills command", async () =>
   try {
     await app.renderOnce()
     "/skills".split("").forEach((key) => app.mockInput.pressKey(key))
+    await app.renderOnce()
+    app.mockInput.pressEnter()
     await app.renderOnce()
     app.mockInput.pressEnter()
     await app.renderOnce()
