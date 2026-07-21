@@ -46,6 +46,8 @@ import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
+import { MonitorAPI } from "@/tool/monitor-api"
+import { MonitorAPINode } from "@/tool/monitor"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -128,6 +130,7 @@ const layer = Layer.effect(
     const mcp = yield* MCP.Service
     const lsp = yield* LSP.Service
     const registry = yield* ToolRegistry.Service
+    const monitorAPI = yield* MonitorAPI
     const truncate = yield* Truncate.Service
     const image = yield* Image.Service
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
@@ -264,6 +267,13 @@ const layer = Layer.effect(
       const { task, model, lastUser, sessionID, session, msgs } = input
       const ctx = yield* InstanceState.context
       const promptOps = yield* ops()
+      // Top-level sessions bind autostart monitors — subagent sessions
+      // (parentID set) are short-lived and would steal the binding.
+      if (session.parentID === undefined) {
+        yield* monitorAPI.rebind(sessionID, promptOps).pipe(
+          Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
+        )
+      }
       const { task: taskTool } = yield* registry.named()
       const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
       const assistantMessage: SessionV1.Assistant = yield* sessions.updateMessage({
@@ -1236,6 +1246,12 @@ const layer = Layer.effect(
             const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
+            // Top-level sessions bind autostart monitors
+            if (session.parentID === undefined) {
+              yield* monitorAPI.rebind(sessionID, promptOps).pipe(
+                Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
+              )
+            }
 
             const tools = yield* SessionTools.resolve({
               agent,
@@ -1621,6 +1637,7 @@ export const node = LayerNode.make({
   service: Service,
   layer: layer,
   deps: [
+    MonitorAPINode,
     SessionStatus.node,
     Session.node,
     Agent.node,

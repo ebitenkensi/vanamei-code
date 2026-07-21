@@ -5,11 +5,54 @@
 # modes in addition to turn/off. The rule file carries a machine-readable first
 # line (<!-- agmsg mode: <mode> -->) so subsequent status queries can
 # distinguish all four modes. For turn/both the PostToolUse check-inbox section
-# is included; for monitor the file is just the marker line. The on_enable hook
-# emits an AGMSG-DIRECTIVE that tells the running opencode session to invoke its
+# is included. For monitor/both an autostart entry is written to
+# .opencode/opencode.local.json so the watcher starts deterministically at
+# session bootstrap (no LLM in the loop). The on_enable hook emits an
+# AGMSG-DIRECTIVE that tells the currently running opencode session to invoke its
 # Monitor tool with the watch.sh command. Sourced into delivery.sh's context, so
 # resolve_hooks_file, SKILL_DIR, RUN_DIR, compat_uuidgen,
 # agmsg_normalize_instance_id are in scope.
+
+update_autostart_entry() {
+  local project="$1" watch_command="$2"
+  local local_config="$project/.opencode/opencode.local.json"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Warning: jq not installed; cannot write opencode.local.json autostart entry." >&2
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$local_config")"
+  [ -f "$local_config" ] || printf '{}' > "$local_config"
+
+  local tmp_file
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}"/agmsg-autostart.XXXXXX)"
+
+  jq --arg command "$watch_command" \
+    '.monitor.autostart = ((.monitor.autostart // []) | map(select(.description != "agmsg inbox stream")) + [{"command": $command, "description": "agmsg inbox stream", "persistent": true}])' \
+    "$local_config" > "$tmp_file" && mv "$tmp_file" "$local_config"
+}
+
+remove_autostart_entry() {
+  local project="$1"
+  local local_config="$project/.opencode/opencode.local.json"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Warning: jq not installed; cannot remove opencode.local.json autostart entry." >&2
+    return 1
+  fi
+
+  [ -f "$local_config" ] || return 0
+
+  local tmp_file
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}"/agmsg-autostart.XXXXXX)"
+
+  jq '
+    .monitor.autostart = ((.monitor.autostart // []) | map(select(.description != "agmsg inbox stream")))
+    | if .monitor.autostart | length == 0 then del(.monitor.autostart) else . end
+    | if .monitor | length == 0 then del(.monitor) else . end
+  ' "$local_config" > "$tmp_file" && mv "$tmp_file" "$local_config"
+}
 
 agmsg_delivery_apply() {
   local type="$1"
@@ -32,18 +75,42 @@ After each tool call, automatically check the agmsg inbox for unread messages.
 - Command: '$SKILL_DIR/scripts/check-inbox.sh' '$type' '$project'
 EOF
         ;;
-      monitor)
-        : # just the marker line
-        ;;
     esac
   fi
+
+  # Manage opencode.local.json autostart entry for monitor/both/off
+  case "$mode" in
+    monitor|both)
+      local watch="$SKILL_DIR/scripts/watch.sh"
+      # Use the composite id "agmsg-boot.$PPID" for the autostart config's
+      # instance-id. A composite id of the form <prefix>.<pid> engages
+      # watch.sh's parent-liveness guard (#67, see agmsg_instance_is_composite
+      # in the agmsg skill's lib/instance-id.sh). Monitor spawns the command
+      # via sh -c (shell: true), whose parent is the opencode process itself,
+      # so $PPID expands at runtime to the opencode pid: unique per instance
+      # AND liveness-linked — the watcher self-exits within one poll interval
+      # after opencode dies. Use printf %q for watch/project/type to handle
+      # special characters, but NOT for the id — we need literal $PPID
+      # (unexpanded) in the stored command so sh -c expands it at runtime. The
+      # initial watermark starts at the current value so no redelivery of old
+      # messages. The live re-arm directive (emit_opencode_monitor_directive)
+      # uses a concrete session id since it targets the currently-running
+      # session directly.
+      local watch_command
+      watch_command="$(printf '%q' "$watch") \"agmsg-boot.\$PPID\" $(printf '%q' "$project") $(printf '%q' "$type")"
+      update_autostart_entry "$project" "$watch_command"
+      ;;
+    off)
+      remove_autostart_entry "$project"
+      ;;
+  esac
 }
 
 agmsg_delivery_on_enable() {
   local mode="$1"
   local type="$2"
   local project="$3"
-  echo "Future sessions: SessionStart hook will auto-launch the watcher."
+  echo "Future sessions auto-start via opencode.local.json monitor.autostart (deterministic, no LLM in the loop)."
   emit_opencode_monitor_directive "$type" "$project"
 }
 

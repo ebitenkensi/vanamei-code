@@ -12,9 +12,11 @@ PLUGIN_DIR="$SKILL_DIR/plugins/types/opencode"
 
 pass=0
 fail=0
+skip=0
 
 pass() { pass=$((pass+1)); echo "PASS: $1"; }
 fail_msg() { fail=$((fail+1)); echo "FAIL: $1"; }
+skip_msg() { skip=$((skip+1)); echo "SKIP: $1"; }
 
 # Helper: run a test that expects a substring in output.
 expect_in() {
@@ -28,6 +30,11 @@ expect_in() {
     echo "  got: $output"
     fail_msg "$label"
   fi
+}
+
+# Get opencode.local.json path for a test project
+local_config_path() {
+  echo "$1/.opencode/opencode.local.json"
 }
 
 # --- Setup: create temp project dir ---
@@ -84,14 +91,19 @@ else
   fail_msg "turn mode: rule file not created"
 fi
 
-# 3b. monitor mode
+# 3b. monitor mode — rule file must have NO self-arm block and NO PostToolUse
 "$SCRIPTS_DIR/delivery.sh" set monitor opencode "$TEST_PROJECT" >/dev/null 2>&1 || true
 if [ -f "$TEST_PROJECT/.opencode/rules/agmsg.md" ]; then
   first_line=$(head -1 "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null || true)
   if [ "$first_line" = "<!-- agmsg mode: monitor -->" ]; then
     # PostToolUse should be absent for monitor mode (just the marker)
     if ! grep -q "PostToolUse" "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null; then
-      pass "monitor mode: rule file has correct marker and no PostToolUse section"
+      # Self-arm block (session start section) must also be absent
+      if ! grep -q "agmsg monitor (session start)" "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null; then
+        pass "monitor mode: rule file has correct marker, no PostToolUse, no self-arm block"
+      else
+        fail_msg "monitor mode: rule file should not have self-arm block"
+      fi
     else
       fail_msg "monitor mode: rule file should not have PostToolUse section"
     fi
@@ -108,7 +120,12 @@ if [ -f "$TEST_PROJECT/.opencode/rules/agmsg.md" ]; then
   first_line=$(head -1 "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null || true)
   if [ "$first_line" = "<!-- agmsg mode: both -->" ]; then
     if grep -q "PostToolUse" "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null; then
-      pass "both mode: rule file has correct marker and PostToolUse section"
+      # Self-arm block must be absent (both uses autostart entry now)
+      if ! grep -q "agmsg monitor (session start)" "$TEST_PROJECT/.opencode/rules/agmsg.md" 2>/dev/null; then
+        pass "both mode: rule file has correct marker, PostToolUse, no self-arm block"
+      else
+        fail_msg "both mode: rule file should not have self-arm block"
+      fi
     else
       fail_msg "both mode: rule file missing PostToolUse section"
     fi
@@ -162,7 +179,71 @@ else
   fail_msg "off mode did not remove rule file"
 fi
 
+# --- 6. monitor mode writes autostart entry to opencode.local.json ---
+echo "--- Item 6: monitor mode writes opencode.local.json autostart entry ---"
+if command -v jq >/dev/null 2>&1; then
+  "$SCRIPTS_DIR/delivery.sh" set monitor opencode "$TEST_PROJECT" >/dev/null 2>&1 || true
+  local_config="$(local_config_path "$TEST_PROJECT")"
+  if [ -f "$local_config" ]; then
+    desc=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .description' "$local_config" 2>/dev/null || true)
+    pers=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .persistent' "$local_config" 2>/dev/null || true)
+    cmd=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .command' "$local_config" 2>/dev/null || true)
+    if [ "$desc" = "agmsg inbox stream" ] && [ "$pers" = "true" ] && echo "$cmd" | grep -qF 'agmsg-boot.$PPID'; then
+      pass "monitor mode: opencode.local.json has agmsg autostart entry with persistent=true and composite agmsg-boot.\$PPID id (liveness-linked, not a concrete uuid)"
+    else
+      echo "  desc=$desc pers=$pers cmd=$cmd"
+      fail_msg "monitor mode: autostart entry missing or incomplete"
+    fi
+  else
+    fail_msg "monitor mode: opencode.local.json not created"
+  fi
+else
+  skip_msg "Item 6: jq not installed — cannot verify opencode.local.json"
+fi
+
+# --- 7. off mode removes autostart entry from opencode.local.json ---
+echo "--- Item 7: off mode removes autostart entry ---"
+if command -v jq >/dev/null 2>&1; then
+  "$SCRIPTS_DIR/delivery.sh" set off opencode "$TEST_PROJECT" >/dev/null 2>&1 || true
+  local_config="$(local_config_path "$TEST_PROJECT")"
+  has_entry=0
+  if [ -f "$local_config" ]; then
+    has_entry=$(jq '[.monitor.autostart[]? | select(.description == "agmsg inbox stream")] | length' "$local_config" 2>/dev/null || echo 0)
+  fi
+  if [ "$has_entry" -eq 0 ]; then
+    pass "off mode: agmsg autostart entry removed from opencode.local.json"
+  else
+    echo "  opencode.local.json content:"
+    cat "$local_config"
+    fail_msg "off mode: agmsg autostart entry still present"
+  fi
+else
+  skip_msg "Item 7: jq not installed — cannot verify opencode.local.json"
+fi
+
+# --- 8. turn mode does NOT write autostart entry ---
+echo "--- Item 8: turn mode does not modify opencode.local.json autostart ---"
+if command -v jq >/dev/null 2>&1; then
+  # Ensure clean state first
+  "$SCRIPTS_DIR/delivery.sh" set off opencode "$TEST_PROJECT" >/dev/null 2>&1 || true
+  "$SCRIPTS_DIR/delivery.sh" set turn opencode "$TEST_PROJECT" >/dev/null 2>&1 || true
+  local_config="$(local_config_path "$TEST_PROJECT")"
+  has_entry=0
+  if [ -f "$local_config" ]; then
+    has_entry=$(jq '[.monitor.autostart[]? | select(.description == "agmsg inbox stream")] | length' "$local_config" 2>/dev/null || echo 0)
+  fi
+  if [ "$has_entry" -eq 0 ]; then
+    pass "turn mode: no agmsg autostart entry in opencode.local.json"
+  else
+    echo "  opencode.local.json content:"
+    cat "$local_config"
+    fail_msg "turn mode: unexpected agmsg autostart entry"
+  fi
+else
+  skip_msg "Item 8: jq not installed — cannot verify opencode.local.json"
+fi
+
 # --- Summary ---
 echo ""
-echo "=== Results: $pass passed, $fail failed ==="
+echo "=== Results: $pass passed, $fail failed, $skip skipped ==="
 if [ "$fail" -gt 0 ]; then exit 1; fi

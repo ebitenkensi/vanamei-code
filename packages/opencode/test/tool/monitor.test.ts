@@ -15,7 +15,8 @@ import type { SessionPrompt } from "../../src/session/prompt"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { testEffect } from "../lib/effect"
 import * as Tool from "@/tool/tool"
-import { MonitorTool } from "../../src/tool/monitor"
+import { MonitorTool, MonitorAPINode } from "../../src/tool/monitor"
+import { MonitorAPI } from "../../src/tool/monitor-api"
 import type { TaskPromptOps } from "../../src/tool/task"
 import { testInstanceStoreLayer, provideInstance, tmpdirScoped } from "../fixture/fixture"
 
@@ -36,7 +37,7 @@ const eventV2BridgeMock = Layer.succeed(
 )
 
 const monitorLayer = Layer.mergeAll(
-  LayerNode.compile(LayerNode.group([CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
+  LayerNode.compile(LayerNode.group([MonitorAPINode, CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
   eventV2BridgeMock,
   testInstanceStoreLayer,
 )
@@ -380,6 +381,155 @@ describe("tool.monitor", () => {
         const listResult = yield* runIn(tmp, def.execute({ action: "list" }, localCtx))
         expect(listResult.output).not.toContain(monitorID)
       }),
-    30_000,
+        30_000,
+    )
+
+  it.live("oneshot injects accumulated output on exit", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const { ops, calls } = makeStubOps()
+      const tool = yield* MonitorTool
+      const def = yield* tool.init()
+      const localCtx = { ...baseCtx, extra: { promptOps: ops } }
+
+      yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "echo line1; sleep 2; echo line2; sleep 0.5",
+            description: "oneshot-test",
+            oneshot: true,
+          },
+          localCtx,
+        ),
+      )
+
+      // No mid-run inject while process is still running (line1 is output but process is sleeping)
+      yield* Effect.sleep(500)
+      const midCalls = calls.filter(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor event"),
+      )
+      expect(midCalls.length).toBe(0)
+
+      // Wait for exit + accumulation flush
+      yield* Effect.sleep(3000)
+
+      // One inject with both lines
+      const injects = calls.filter(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor event"),
+      )
+      expect(injects.length).toBe(1)
+      if (injects[0]?.parts[0]?.type !== "text") return
+      expect(injects[0].parts[0].text).toContain("line1")
+      expect(injects[0].parts[0].text).toContain("line2")
+
+      // Exit notification should also fire
+      const exited = calls.find(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor exited"),
+      )
+      expect(exited).toBeDefined()
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
+  )
+
+  it.live("oneshot timeout does not inject accumulated output", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const { ops, calls } = makeStubOps()
+      const tool = yield* MonitorTool
+      const def = yield* tool.init()
+      const localCtx = { ...baseCtx, extra: { promptOps: ops } }
+
+      yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "sleep 30",
+            description: "oneshot-timeout-test",
+            oneshot: true,
+            timeout_ms: 100,
+          },
+          localCtx,
+        ),
+      )
+
+      yield* Effect.sleep(1500)
+
+      // No monitor-event inject (timeout is not a clean completion)
+      const injects = calls.filter(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor event"),
+      )
+      expect(injects.length).toBe(0)
+
+      // Exit notification should fire with reason=timeout
+      const exited = calls.find(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("monitor exited"),
+      )
+      expect(exited).toBeDefined()
+      if (!exited || exited.parts[0]?.type !== "text") return
+      expect(exited.parts[0].text).toContain("reason=timeout")
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
+  )
+
+  it.live("failed inject does not crash the monitor fiber", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const tool = yield* MonitorTool
+      const def = yield* tool.init()
+      const localCtx = {
+        ...baseCtx,
+        extra: {
+          promptOps: {
+            cancel: () => Effect.void,
+            resolvePromptParts: (template: string) => Effect.succeed([{ type: "text" as const, text: template }]),
+            prompt: () => Effect.die("simulated inject failure"),
+          } satisfies TaskPromptOps,
+        },
+      }
+
+      const result = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "echo fail-inject-test",
+            description: "fail-inject-test",
+          },
+          localCtx,
+        ),
+      )
+
+      expect(result.metadata).toHaveProperty("monitorID")
+
+      // Wait for the process to exit — the dying prompt should be caught and
+      // logged by the catchCause handler, not crash the monitor fiber.
+      yield* Effect.sleep(2000)
+
+      // If we got here without the monitor layer crashing, the fix works.
+      // List monitors to prove the layer is still alive.
+      const entries = yield* runIn(tmp, def.execute({ action: "list" }, baseCtx))
+      expect(entries.output).not.toContain("fail-inject-test")
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
   )
 })

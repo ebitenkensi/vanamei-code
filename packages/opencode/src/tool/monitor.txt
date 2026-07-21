@@ -1,5 +1,12 @@
 A tool that launches a background command and streams its stdout lines as asynchronous notifications into the current session.
 
+Use the Monitor tool proactively for long-running background work:
+
+- **Build processes:** `monitor start command="npm run build" description="build" oneshot=true` — get notified when the build finishes.
+- **Test suites:** same pattern with oneshot=true — the monitor exits when the suite is done and injects the accumulated output as one notification.
+- **Dev servers / file watchers / log tails:** continuous monitoring with oneshot=false (default), e.g. `monitor start command="tail -f log/dev.log" description="dev log" persistent=true`.
+- **Distinguish:** oneshot=true for single-shot completion (build/test/run) where you only care about the final result; oneshot=false (default) for continuous streams where every line matters (logs/tails/dev servers). persistent=true ignores the timeout; use it for long-lived watchers that should stay alive for the session lifetime.
+
 Actions: start (default), list, stop.
 
 Start parameters:
@@ -7,11 +14,12 @@ Start parameters:
 - description (required): short human-readable label shown in notifications and list.
 - persistent: if true, monitor lives for the session lifetime ignoring timeout. Default false.
 - timeout_ms: timeout in milliseconds. Default 300000, max 3600000, only for non-persistent monitors.
+- oneshot: boolean. Use oneshot=true for single-shot completion notifications (e.g. a build or test run that exits when done). The monitor accumulates stdout and injects it as one notification on process exit. Use oneshot=false (default) for continuous monitoring where each stdout line is an event.
 
 Each stdout line is injected as an event notification. A flood guard kills monitors that produce more than 20 batches or 1MB of output in 60 seconds.
 
 The monitor survives the tool call (ctx.abort is ignored).
 
-Use persistent:true for session-lifetime watchers (e.g. agmsg watch.sh).
+Use persistent:true for session-lifetime watchers (e.g. agmsg watch.sh). For one-shot completion: oneshot=true. For continuous watching (logs/tails/dev servers): oneshot=false (default).
 
 Stop requires the monitor_id from list output.

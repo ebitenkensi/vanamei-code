@@ -16,7 +16,7 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
-import { MonitorTool } from "./monitor"
+import { MonitorTool, MonitorAPINode } from "./monitor"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -427,6 +427,7 @@ export const node = LayerNode.make({
   service: Service,
   layer,
   deps: [
+    MonitorAPINode,
     Config.node,
     Plugin.node,
     Question.node,
