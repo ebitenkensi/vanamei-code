@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Layer } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { MonitorAPINode } from "../../src/tool/monitor"
@@ -271,5 +271,71 @@ describe("tool.monitor-autostart", () => {
       duration: "10 seconds",
       orElse: () => Effect.fail(new Error("test timed out")),
     })),
+  )
+
+  it.live("reentrant rebind from flusher inject does not deadlock", () =>
+    Effect.gen(function* () {
+      const api = yield* MonitorAPI
+      const reentryDone = yield* Deferred.make<void>()
+
+      const reentrantOps: TaskPromptOps = {
+        cancel: () => Effect.void,
+        resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+        prompt: (input) => {
+          // Simulate reentry: the new turn's promptOps construction calls rebind
+          return Effect.gen(function* () {
+            yield* api.rebind(testSessionID, reentrantOps)
+            yield* Deferred.succeed(reentryDone, undefined)
+            return {
+              info: {
+                id: MessageID.ascending(),
+                role: "assistant",
+                parentID: input.messageID ?? MessageID.ascending(),
+                sessionID: input.sessionID,
+                mode: input.agent ?? "general",
+                agent: input.agent ?? "general",
+                cost: 0,
+                path: { cwd: "/tmp", root: "/tmp" },
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: "test-model" as any,
+                providerID: "test-provider" as any,
+                time: { created: Date.now() },
+                finish: "stop",
+              },
+              parts: [],
+            } as SessionV1.WithParts
+          })
+        },
+      }
+
+      // Start an instance-owned monitor that produces a line
+      yield* api.startMonitor({
+        command: "echo reentry-test && sleep 1",
+        description: "reentry-test",
+        sessionID: null,
+        agent: defaultAgent,
+      })
+
+      // Wait for process to produce output (line goes to queue)
+      yield* Effect.sleep(300)
+
+      // Bind — the flusher's next tick will consume the queue line and
+      // call ops.prompt() which re-enters rebind. With the fix, the permit
+      // is released before doInject, so reentrant rebind does not deadlock.
+      yield* api.rebind(testSessionID, reentrantOps)
+
+      // Wait for the reentrant rebind to complete (must not hang)
+      yield* Deferred.await(reentryDone).pipe(
+        Effect.timeoutOrElse({
+          duration: "5 seconds",
+          orElse: () => Effect.fail(new Error("reentrant rebind deadlocked or timed out")),
+        }),
+      )
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
   )
 })

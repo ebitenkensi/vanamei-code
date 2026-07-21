@@ -8,7 +8,7 @@ import { MonitorAPI, type StartInput, type MonitorEntryOutput } from "./monitor-
 import { MonitorV1 } from "@opencode-ai/schema/monitor-v1"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Deferred, Effect, Option, Schema, Scope, Semaphore, Stream, Queue, Fiber, Context, Layer } from "effect"
+import { Cause, Deferred, Effect, Option, Schema, Scope, Semaphore, Stream, Queue, Fiber, Context, Layer } from "effect"
 import { ChildProcess, type ChildProcessSpawner as CPS } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 
@@ -331,19 +331,22 @@ const layer = Layer.effect(
                     }
 
                     // Check if bound; inject or queue (serialized via entry semaphore)
+                    // IMPORTANT: permit is released BEFORE doInject to prevent
+                    // reentry deadlock when ops.prompt → rebind acquires the same permit.
                     const entry = entries.get(monitorID)
                     if (entry) {
-                      yield* entry.semaphore.withPermit(
-                        Effect.gen(function* () {
+                      const shouldInject = yield* entry.semaphore.withPermit(
+                        Effect.sync(() => {
                           const e = entries.get(monitorID)
-                          if (!e) return
-                          if (e.promptOps !== null) {
-                            yield* doInject(monitorID, items)
-                          } else {
-                            pushPendingLines(e, items)
-                          }
+                          if (!e) return false
+                          if (e.promptOps !== null) return true
+                          pushPendingLines(e, items)
+                          return false
                         }),
                       )
+                      if (shouldInject) {
+                        yield* doInject(monitorID, items)
+                      }
                     }
                   }
                 }),
@@ -391,17 +394,18 @@ const layer = Layer.effect(
               if (accumulated.length > 0) {
                 const entry = entries.get(monitorID)
                 if (entry) {
-                  yield* entry.semaphore.withPermit(
-                    Effect.gen(function* () {
+                  const shouldInject = yield* entry.semaphore.withPermit(
+                    Effect.sync(() => {
                       const e = entries.get(monitorID)
-                      if (!e) return
-                      if (e.promptOps !== null) {
-                        yield* doInject(monitorID, accumulated)
-                      } else {
-                        pushPendingLines(e, accumulated)
-                      }
+                      if (!e) return false
+                      if (e.promptOps !== null) return true
+                      pushPendingLines(e, accumulated)
+                      return false
                     }),
                   )
+                  if (shouldInject) {
+                    yield* doInject(monitorID, accumulated)
+                  }
                 }
               }
             }
@@ -418,17 +422,18 @@ const layer = Layer.effect(
               if (remaining.length > 0) {
                 const entry = entries.get(monitorID)
                 if (entry) {
-                  yield* entry.semaphore.withPermit(
-                    Effect.gen(function* () {
+                  const shouldInject = yield* entry.semaphore.withPermit(
+                    Effect.sync(() => {
                       const e = entries.get(monitorID)
-                      if (!e) return
-                      if (e.promptOps !== null) {
-                        yield* doInject(monitorID, remaining)
-                      } else {
-                        pushPendingLines(e, remaining)
-                      }
+                      if (!e) return false
+                      if (e.promptOps !== null) return true
+                      pushPendingLines(e, remaining)
+                      return false
                     }),
                   )
+                  if (shouldInject) {
+                    yield* doInject(monitorID, remaining)
+                  }
                 }
               }
             }
@@ -516,6 +521,11 @@ const layer = Layer.effect(
                 )
               }
             }),
+          ).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.catchTag("TimeoutError", () =>
+              Effect.logWarning("monitor rebind timed out after 5s", { monitorID, sessionID }),
+            ),
           ),
         { discard: true },
       )
@@ -524,7 +534,7 @@ const layer = Layer.effect(
     const unbindForSession = (sessionID: SessionID): Effect.Effect<void> => {
       return Effect.forEach(
         Array.from(entries.entries()),
-        ([_monitorID, entry]) =>
+        ([monitorID, entry]) =>
           entry.semaphore.withPermit(
             Effect.sync(() => {
               if (entry.currentSessionID === sessionID) {
@@ -532,6 +542,11 @@ const layer = Layer.effect(
                 entry.currentSessionID = null
               }
             }),
+          ).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.catchTag("TimeoutError", () =>
+              Effect.logWarning("monitor unbindForSession timed out after 5s", { monitorID, sessionID }),
+            ),
           ),
         { discard: true },
       )
