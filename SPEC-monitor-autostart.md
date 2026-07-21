@@ -235,6 +235,14 @@ agmsg の `delivery.sh set` はプロジェクト単位で呼ばれるため、p
 agmsg プラグインが autostart へ書き込む際、複数プロジェクトで同じ `delivery.sh set monitor` を実行するとエントリが重複蓄積されるか。
 → `description: "agmsg inbox stream"` で既存エントリを置換するロジックで対処(1 プロジェクト 1 エントリ。command に project path が埋め込まれているため別プロジェクトは別エントリになるが、グローバル config に書く場合は累積に注意)。
 
+### C'. ベイク済み instance-id の共有(ライブ E2E で検出 → 修正済み)
+
+当初の実装では `opencode.local.json` の watch コマンドに `delivery.sh set` 実行時点の固定 instance-id を焼き込んでいた。これにより:
+- 同一プロジェクトの複数インスタンス(TUI と vanamei run 同時起動、SIGHUP 自動デタッチで生き残った旧インスタンス含む)が同一 id の watcher を複数持ち、共有 watermark を先取りした側だけが配信を受ける = 他方は恒久的にメッセージ消失
+- `set` 時に agent pid 未解決のため watcher の死活リンクが張られず、インスタンス終了後も watcher が無期限残留
+
+**修正(コミット 6a6e20d02)**: 焼き込む command をシェル展開に変更 — `watch.sh "agmsg-boot-$$" '<project>' opencode`。`$$` は Monitor ツールが `sh -c` で起動するごとに展開される PID で、インスタンスごとに一意の watcher id になる。watermark/pidfile の共有が消え、新 id の初期 watermark は現在値から始まるため過去メッセージの再配信もない。ライブ再武装用 AGMSG-DIRECTIVE は現行セッションを対象とするため具象 session id のまま維持。
+
 ## フェーズ分割
 
 - **P1 autostart 機構 + promptOps 2段階バインド** | deps:- | done: config に `monitor.autostart` を宣言すると bootstrap で monitor が決定論起動し、初回プロンプト時にイベントが注入される。既存 LLM 経由 start は従来どおり動作 | verify: `packages/opencode` で `bun test test/tool/monitor.test.ts` と `bun typecheck`。autostart エントリ 1 件の E2E テスト(bootstrap → bind → イベント注入)を test/tool/monitor-autostart.test.ts に追加
