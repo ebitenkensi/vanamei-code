@@ -25,6 +25,16 @@ sed 's/__SKILL_NAME__/agmsg/g' <repo>/agmsg-plugin/types/opencode/template.md \
 Re-run the `sed` after editing `template.md` — nothing refreshes the installed
 copy automatically.
 
+## Requirements
+
+- **jq** (`/usr/bin/jq` 1.7+): required for monitor and both modes, which write
+  an autostart entry to `.opencode/opencode.local.json`. This is outside agmsg's
+  "bash+sqlite3 only" policy.
+- `.opencode/opencode.local.json` is **machine-owned**: the plugin writes to it;
+  humans should not hand-edit it. opencode's config loader reads it after
+  `opencode.jsonc` with local precedence. It is git-ignored by opencode's
+  `ensureGitignore`.
+
 ## Notes
 
 - Trust records "axis/name + absolute path" exact match (`driver-registry.sh:63-68`),
