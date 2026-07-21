@@ -27,6 +27,7 @@ import { Discovery } from "@/server/discovery"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
 import { executeDetach } from "./run/detach"
+import type { FooterQueuedPrompt } from "./run/types"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -105,6 +106,50 @@ async function tool(part: ToolPart) {
       title: part.tool,
     })
   }
+}
+
+// Writes the TUI's locally queued prompts to a handoff file (D案) before a
+// live /detach hands off the session to a spawned child. The child reads and
+// deletes this file on boot, then executes each prompt sequentially through
+// its own legacy prompt endpoint -- history, context, and attach replay all
+// stay consistent because the child runs the same legacy path the TUI would
+// have used itself. Commands and shell prompts are TUI-local semantics the
+// child cannot resolve, so any of those queued still abort the whole
+// handoff (and, by extension, the detach).
+async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
+  // /new arrives as plain text and is only recognized at dequeue time, so it
+  // carries no .command marker -- test the text form too or it would be
+  // handed off to the child as a literal "/new" prompt.
+  const { isNewCommand } = await import("./run/prompt.shared")
+  const blocked = queued.find(
+    (item) => item.prompt.mode === "shell" || item.prompt.command || isNewCommand(item.prompt.text),
+  )
+  if (blocked) {
+    throw new Error(
+      "Cannot detach: queued shell/command prompts cannot be handed off to the server. Run or clear them first.",
+    )
+  }
+
+  const { Global } = await import("@opencode-ai/core/global")
+  const fs = await import("fs")
+  // No messageID: the queue's pre-allocated IDs were minted before the
+  // in-flight turn's later messages, so reusing them makes the handoff user
+  // message sort BEFORE the turn's final assistant message in the legacy
+  // ID-ordered history -- the child's loop then sees a completed assistant
+  // as the newest entry and exits without replying. Let the server mint a
+  // fresh ID at send time instead (the parent TUI is exiting, so nothing
+  // references the old IDs).
+  const prompts = queued.map((item) => ({
+    // Mirrors the legacy PromptPayload parts shape stream.transport.ts builds
+    // for a live RunPrompt: a leading text part followed by any attachments.
+    parts: [{ type: "text" as const, text: item.prompt.text }, ...item.prompt.parts],
+  }))
+
+  const dir = path.join(Global.Path.data, "server", projectID)
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, "handoff.json")
+  fs.writeFileSync(file, JSON.stringify({ sessionID, prompts }), { mode: 0o600 })
+  return file
 }
 
 async function toolError(part: ToolPart) {
@@ -986,8 +1031,13 @@ export const RunCommand = effectCmd({
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
 
-        const onDetach = async (live?: boolean, activeSessionID?: string) => {
+        const onDetach = async (live?: boolean, activeSessionID?: string, queuedPrompts?: FooterQueuedPrompt[]) => {
           if (live) {
+            const handoffPath =
+              activeSessionID && queuedPrompts && queuedPrompts.length > 0
+                ? await writeHandoffFile(projectID, activeSessionID, queuedPrompts)
+                : undefined
+
             // Interactive /detach from a live TTY: spawn a detached child
             // server and let the parent exit so bash gets its prompt back.
             await executeDetach({
@@ -995,6 +1045,7 @@ export const RunCommand = effectCmd({
               projectID,
               sessionID: activeSessionID,
               live: true,
+              handoffPath,
               onShutdown: async () => {},
             })
             return

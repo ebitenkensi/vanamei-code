@@ -38,11 +38,17 @@ message/part は projector 経由で逐次永続化済み。
 
 - `opencode`（非 attach 起動）の既定動作変更。従来どおり常に新規セッション。
 - クラスタ・リモート配置、post-crash 継続リカバリ。
-- Protocol / Server `HttpApi` の公開スキーマ変更。調査（2026-07-21）で「legacy
-  promptAsync は durable admit 不可」と確定したが、対応は下記のとおり**既存の
-  V2 `session.prompt` エンドポイント**（公開済み・生成済み）を使うため、
-  Protocol 変更も `PromptPayload` への delivery/resume 追加（A 案）も SDK
-  再生成も不要。
+- Protocol / Server `HttpApi` の公開スキーマ変更。キュー引き渡しは下記のとおり
+  handoff ファイル＋子の legacy 経路実行（D 案）で行うため、Protocol 変更も
+  `PromptPayload` への delivery/resume 追加（A 案）も SDK 再生成も不要。
+- V2 durable inbox（`session_input`）経由の引き渡し（旧 B/C 案）。**実測で棄却**
+  （2026-07-21）: projector は V1 イベント→legacy `message`/`part`、V2 イベント→
+  `session_message` を**別系統で射影**し相互橋渡しがなく、V2 runner の履歴読み
+  （`packages/core/src/session/history.ts`）は `session_message` のみを見る。
+  そのため V2 admit した引き渡しプロンプトは (a) 子の V2 drain が legacy 履歴を
+  一切見えないまま実行し（文脈喪失）、(b) 応答は `session_message` 側にのみ
+  書かれ attach リプレイ（legacy `sdk.session.messages`）に表示されない。
+  この統合（射影の一本化）は本 SPEC のスコープ外の V2 移行課題とする。
 
 ## 設計判断（claude 決定済み）
 
@@ -76,46 +82,50 @@ message/part は projector 経由で逐次永続化済み。
 - **キュー引き渡し**: `/detach` のシーケンスを以下に変更。
   1. `detaching = true`（従来どおり、以後のローカル promote 停止）。
   2. `whenIdle()` — 実行中ターンの完走を待つ（従来どおり）。
-  3. **flush**: `state.queue` の各プロンプトを順序保存で durable admit する。
-     実現方式（2026-07-21 確定、旧 B 案を置換）: legacy promptAsync は
-     `SessionPrompt.prompt` へルーティングされ durable 行を作らないため
-     使えないが、同じ HttpApi に **V2 の `session.prompt`** が既に存在する
-     （`packages/protocol/src/groups/session.ts:204` 付近、
-     `packages/server/src/handlers/session.ts` の "session.prompt" ハンドラが
-     delivery/resume をそのまま `SessionV2.prompt` へ渡す）。run.ts が既に持つ
-     `createOpencodeClient`（`@opencode-ai/sdk/v2`）の同一 sdk から
-     `sdk.session.prompt({ sessionID, id, prompt, delivery: "queue",
-resume: false })` を呼ぶだけで admit-only flush が成立する。in-process
-     fetch 経由なので Protocol / HttpApi / SDK は一切変更しない。
-     `SessionV2.Service` の直接 yield\* は不要（Effect ランタイム配管が増える
-     だけで利点がない）。接続点は `onDetach` コールバックのシグネチャ拡張とし、
-     runtime.queue 側は whenIdle 後に `fn(true, queuedPrompts)` のように
-     キュー内容（割当済み messageID 込み）を渡すだけにして、flush は sdk と
-     sessionID を既に持つ `run.ts` の onDetach 実装内で行う（runtime.queue へ
-     sdk や core service を注入しない）。- messageID は `state.queued` の割当済み ID を payload の `id` として
-     再利用して UI 整合を保つ。V2 の ID 再利用セマンティクス（同一
-     Session+prompt+delivery の完全一致リトライのみ許容）とも整合する。- V2 `PromptInput.Prompt` は `{ text, files? }` 形で、per-message の
-     agent/model/variant は載らない（V2 では switchAgent/switchModel による
-     セッション状態）。flush はテキスト＋ファイル添付の写像で足り、子の
-     wake がセッション現在の agent/model で実行するのは V2 の設計どおり。- `state.queue` に `/command` 系プロンプトが残っている場合、コマンドは
-     TUI ローカルな意味論であり durable admit できない。その場合は detach
-     を**中止**して TUI に警告を出す（無言破棄の禁止に準拠）。
-  4. 子プロセス spawn（子の `wakeSessions()` が pending queue を検出して wake —
-     既存実装のままで拾える）。
+  3. **flush（D 案・handoff ファイル方式、2026-07-21 実測により確定）**:
+     親は `state.queue` の各プロンプトを検証したうえで、順序保存の handoff
+     ファイル `<Global.Path.data>/server/<projectID>/handoff.json`（0600）に
+     書き出す。内容は `{ sessionID, prompts: [{ parts }] }`（parts は先頭
+     テキスト part＋添付 part の legacy PromptInput parts 写像）。
+     **messageID は含めない**（実測 2026-07-21）: 親で先行採番した ID は実行中
+     ターンの後続メッセージより小さく、ID 順で読む legacy 履歴では handoff の
+     user メッセージが完了済みアシスタントの**前**に並ぶため、子の loop が
+     「未応答入力なし」と誤認して 1ms で即終了する。送信時にサーバーへ採番
+     させれば正しく末尾に並ぶ（`PromptPayload.messageID` は optional）。
+     親 TUI は終了するので採番済み ID の UI 整合は不要。
+     接続点は従来決定どおり `onDetach` コールバックのシグネチャ拡張:
+     runtime.queue 側は whenIdle 後に `fn(true, queuedPrompts)` を渡すだけ、
+     ファイル書き出しと検証は `run.ts` の onDetach 実装内で行う
+     （runtime.queue へ sdk や core service を注入しない）。
+     - `state.queue` に `/command` 系（`/new` のテキスト形式含む）・shell
+       プロンプトが残っている場合、それらは TUI ローカルな意味論であり
+       引き渡せない。その場合は detach を**中止**して TUI に警告を出す
+       （無言破棄の禁止に準拠）。
+  4. 子プロセス spawn。親は `OPENCODE_DETACH_HANDOFF=<path>` env を子へ渡す
+     （handoff ファイルを書いた場合のみ）。子（serve.ts detach bootstrap）は
+     サーバー起動・server.json 書き出し後に handoff ファイルを読み、即座に
+     削除してから、各プロンプトを**逐次**（前のターンの完走を待って次を送る）
+     自分自身の legacy 同期 prompt エンドポイントへ self-POST（basic auth＋
+     `x-opencode-directory` ヘッダ、in-process instance ロード機構を再利用）
+     して実行する。legacy 経路で実行するため、履歴は legacy テーブルに書かれ、
+     attach リプレイ・文脈継続・ライブストリームのすべてが従来セッションと
+     一貫する。失敗したプロンプトは detach ログへ記録し後続は継続する
+     （読み取り直後にファイルを消すのは、実行途中クラッシュ時の重複再生を
+     避けるため。クラッシュ耐性は legacy 経路の従来水準と同等の best-effort）。
   5. `footer.close()`。
   - flush が失敗した場合は **detach を中止**して TUI にエラーを表示する。無言で
     破棄してはならない。中止時は `detaching` を false へ戻し、`onDetach` の
     one-shot ガード（`input.onDetach = undefined`）も復元して、キューを保持した
     まま再試行可能な状態に戻すこと。
-  - リスク注記: 子の `wakeSessions()` が durable queue を実際に実行する経路は、
-    これまで durable 行が一度も admit されていなかった以上**実運用で未検証**
-    である（現行 e2e item (d) は緩い grep のため偽陽性で PASS していた可能性が
-    高い）。legacy path で作られた履歴を持つセッションを V2 drain が正しく
-    継続できるかを含め、P4 の nonce 判定 e2e を合格ゲートとすること。
-  - ハザード注記: flush をターン完了**後**（step 2 の後）に行うのは、親プロセス内
-    の serialized runner がドレイン継続評価で queued input を promote し、親内で
-    次ターンを開始したまま親が exit する競合を避けるため。admit-only なので親内で
-    wake も発生しない。この順序を変えないこと。
+  - リスク注記（履歴）: 旧 B/C 案の V2 `session_input` 経由は 2026-07-21 の
+    実機スモークで「admit・子の promote・応答生成までは成功するが、V2 drain が
+    legacy 履歴を見えず、応答も attach リプレイに表示されない」ことを実測し
+    棄却した（スコープ外セクション参照）。D 案の nonce 判定 e2e（P4）を
+    引き続き合格ゲートとすること。
+  - ハザード注記: flush をターン完了**後**（step 2 の後）に行うのは、実行中
+    ターンと handoff プロンプトの順序を保存するため。子は handoff を自分の
+    legacy 経路で逐次実行するので、親内で次ターンが始まる競合はない。
+    この順序を変えないこと。
   - `runtime.queue.ts:139` の誤ったコメントを実挙動に合わせて修正すること。
 - **案内メッセージ**: `/detach` 成功時に detach 先 URL・セッション ID・
   `Reattach: opencode attach` を表示。detach 経由の終了では splash の
@@ -127,13 +137,16 @@ resume: false })` を呼ぶだけで admit-only flush が成立する。in-proce
 - `packages/opencode/src/cli/cmd/run/detach.ts` — `DetachInput.sessionID`、
   `OPENCODE_DETACH_SESSION_ID` env、SIGHUP パスの `Discovery.write` 拡張。
 - `packages/opencode/src/cli/cmd/serve.ts` — detach-child bootstrap で env の
-  sessionID を server.json へ。
+  sessionID を server.json へ（P1 実装済み）。handoff ファイルの読み取り・
+  削除・逐次 self-POST 実行（P2）。
 - `packages/opencode/src/cli/cmd/attach.ts` — `--new` フラグ、レコードから
   sessionID を取り出し `runMini` へ伝搬。
 - `packages/opencode/src/cli/cmd/run.ts` — attach 時の `session()` を解決規則＋
   ピッカー起動に変更（P1 実装済み）、`onDetach` へのアクティブセッション ID
-  受け渡し（P1 実装済み）、onDetach 実装内での v2 `sdk.session.prompt`
-  admit-only flush（P2）。
+  受け渡し（P1 実装済み）、onDetach 実装内での検証＋handoff ファイル書き出し
+  （P2）。
+- `packages/opencode/src/cli/cmd/run/detach.ts` — `DetachInput` に handoff
+  パスを追加し spawn 時に `OPENCODE_DETACH_HANDOFF` env を子へ（P2）。
 - `packages/opencode/src/cli/cmd/run/session-picker.ts`（新規、P1 実装済み）—
   起動時ピッカー。footer UI 起動前のため `footer.sessions.tsx` は流用せず、
   既存依存 `@clack/prompts` の `select` を使用（`opencode account` と同じ部品）。
@@ -169,7 +182,9 @@ resume: false })` を呼ぶだけで admit-only flush が成立する。in-proce
 - [ ] ピッカーのキャンセル（Esc）で新規セッションが作られずに終了する。
 - [ ] e2e: ターン実行中に 2 個目のプロンプト投入 → `/detach` → attach 後に
       2 個目への**アシスタント応答**が存在する。応答にしか現れない nonce 変換
-      （例: 指定文字列の逆順出力）で判定し、プロンプト自身の echo への誤マッチ
+      （推奨: 小文字 nonce の**全大文字化** — 応答にしか現れず、かつ逆順出力と
+      違い小型モデルでも綴りを誤らない。実測 2026-07-21: deepseek-v4-flash-free
+      が逆順で x を脱字し偽 FAIL）で判定し、プロンプト自身の echo への誤マッチ
       を排除する（現行 item (d) の `grep "done"` はプロンプト echo に誤マッチ
       しうる欠陥がある）。
 - [ ] flush 失敗時（サーバー停止を注入等）に detach が中止されキュー内容が TUI

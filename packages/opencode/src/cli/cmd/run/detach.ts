@@ -13,6 +13,9 @@ export type DetachInput = {
   // record so `opencode attach` can resume it.
   sessionID?: string
   live?: boolean
+  // Path to a handoff file (D案) written by a live /detach flush when the
+  // TUI had queued prompts to hand off; only set for the live spawn path.
+  handoffPath?: string
   onShutdown: () => Promise<void>
 }
 
@@ -38,6 +41,7 @@ async function spawnDetachChild(input: DetachInput) {
     OPENCODE_DIRECTORY: input.directory,
     OPENCODE_PROJECT_ID: input.projectID,
     ...(input.sessionID ? { OPENCODE_DETACH_SESSION_ID: input.sessionID } : {}),
+    ...(input.handoffPath ? { OPENCODE_DETACH_HANDOFF: input.handoffPath } : {}),
   }
 
   const child = spawn(binary, [...scriptArg, "serve", "--port", "0", "--hostname", "127.0.0.1"], {

@@ -24,6 +24,7 @@ import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import type {
+  FooterQueuedPrompt,
   FooterView,
   LocalReplayAnchor,
   LocalReplayRow,
@@ -70,7 +71,7 @@ type RunRuntimeInput = {
   demo?: RunInput["demo"]
   // `sessionID` is the current session at call time, threaded through so
   // /detach carries the right session across /new and /sessions switches.
-  onDetach?: (live?: boolean, sessionID?: string) => Promise<void>
+  onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
   onShutdown?: () => Promise<void>
 }
 
@@ -93,7 +94,7 @@ type RunLocalInput = {
   demo?: RunInput["demo"]
   // `sessionID` is the current session at call time, threaded through so
   // /detach carries the right session across /new and /sessions switches.
-  onDetach?: (live?: boolean, sessionID?: string) => Promise<void>
+  onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
 }
 
 type StreamTransportModule = Pick<
@@ -848,10 +849,13 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       footer,
       initialInput: input.initialInput,
       trace: log,
-      // runtime.queue.ts's onDetach only forwards `live`; wrap it here so the
-      // session id it reads is state.sessionID at call time (reflects /new
-      // and /sessions switches), without changing runtime.queue.ts's type.
-      onDetach: input.onDetach ? (live?: boolean) => input.onDetach!(live, state.sessionID) : undefined,
+      // runtime.queue.ts's onDetach only forwards `live` and the queued
+      // snapshot; wrap it here so the session id it reads is state.sessionID
+      // at call time (reflects /new and /sessions switches), without
+      // changing runtime.queue.ts's type.
+      onDetach: input.onDetach
+        ? (live?: boolean, queued?: FooterQueuedPrompt[]) => input.onDetach!(live, state.sessionID, queued)
+        : undefined,
       onShutdown: input.onShutdown,
       onSend: (prompt) => {
         state.shown = true

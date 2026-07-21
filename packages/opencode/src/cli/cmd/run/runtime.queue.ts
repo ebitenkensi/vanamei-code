@@ -29,7 +29,7 @@ export type QueueInput = {
   trace?: Trace
   onSend?: (prompt: RunPrompt) => void
   onNewSession?: () => void | Promise<void>
-  onDetach?: (live?: boolean) => Promise<void>
+  onDetach?: (live?: boolean, queued?: FooterQueuedPrompt[]) => Promise<void>
   onShutdown?: () => Promise<void>
   run: (prompt: RunPrompt, signal: AbortSignal) => Promise<void>
 }
@@ -137,7 +137,9 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         while (!state.closed && state.queue.length > 0) {
           if (detaching) {
             // set on /detach to stop promoting queued inputs; the in-flight turn
-            // finishes naturally, then the child's bootstrap wake picks up the durable queue.
+            // finishes naturally, then submit()'s /detach branch snapshots the
+            // remaining queue into a handoff file the spawned child reads on
+            // boot and executes itself through its own legacy prompt path.
             break
           }
 
@@ -303,9 +305,38 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         const fn = input.onDetach
         input.onDetach = undefined // guard: only one detach per session
         // Stop promoting queued inputs immediately (synchronous, no await).
-        // The in-flight turn finishes naturally, then the child spawns.
+        // The in-flight turn finishes naturally, then the remaining queue is
+        // snapshotted (order preserved) and handed to fn(), which writes the
+        // handoff file the spawned child executes before spawning it.
         detaching = true
-        void whenIdle().then(() => fn(true).then(() => input.footer.close()))
+        void whenIdle().then(async () => {
+          const snapshot: FooterQueuedPrompt[] = state.queue.map(
+            (item) =>
+              state.queued.find((queued) => queued.prompt === item) ?? {
+                messageID: MessageID.ascending(),
+                partID: PartID.ascending(),
+                prompt: item,
+              },
+          )
+
+          try {
+            await fn(true, snapshot)
+          } catch (error) {
+            // Abort the detach: restore the pre-detach state so the local
+            // queue keeps draining instead of silently losing prompts.
+            detaching = false
+            input.onDetach = fn
+            const status = `detach failed: ${error instanceof Error ? error.message : String(error)}`
+            // The status line is overwritten as soon as the drain resumes, so
+            // also commit a permanent scrollback row the user can still read.
+            input.footer.append({ kind: "error", text: status, phase: "start", source: "system" })
+            emit({ type: "stream.patch", patch: { status } }, { status })
+            drain()
+            return
+          }
+
+          input.footer.close()
+        })
       }
       return
     }
