@@ -10,6 +10,10 @@ export type Record = {
   directory: string
   projectID: string
   startedAt: string
+  // Detach-time active session, used by `opencode attach` to resume the
+  // same session instead of always creating a new one. Optional so older
+  // records (written before this field existed) still parse.
+  sessionID?: string
 }
 
 function recordPath(projectID: string) {

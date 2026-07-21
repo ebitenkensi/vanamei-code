@@ -32,6 +32,10 @@ export const AttachCommand = cmd({
         type: "boolean",
         describe: "fork the session when continuing (use with --continue or --session)",
       })
+      .option("new", {
+        type: "boolean",
+        describe: "always create a new session (skip the resume picker)",
+      })
       .option("password", {
         alias: ["p"],
         type: "string",
@@ -72,6 +76,7 @@ export const AttachCommand = cmd({
     }
 
     let attachUrl = args.url
+    let sessionHint: string | undefined
 
     // When URL is omitted, discover from the project's discovery record
     if (!attachUrl) {
@@ -92,6 +97,7 @@ export const AttachCommand = cmd({
 
       const rec = await Discovery.resolve(projectID)
       attachUrl = rec.url
+      sessionHint = rec.sessionID
 
       // Inherit password from the discovery record if not explicitly provided
       if (!args.password) {
@@ -121,6 +127,8 @@ export const AttachCommand = cmd({
       continue: args.continue,
       session: args.session,
       fork: args.fork,
+      new: args.new,
+      sessionHint,
       replay: noReplay ? false : undefined,
       replayLimit: args.replayLimit,
     })

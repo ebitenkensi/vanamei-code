@@ -9,6 +9,9 @@ import { DetachState } from "@/cli/detach-state"
 export type DetachInput = {
   directory: string
   projectID: string
+  // Currently-active session at detach time, carried into the discovery
+  // record so `opencode attach` can resume it.
+  sessionID?: string
   live?: boolean
   onShutdown: () => Promise<void>
 }
@@ -19,9 +22,7 @@ async function spawnDetachChild(input: DetachInput) {
   // In the compiled binary (ELF), process.execPath IS the binary itself,
   // so we always use process.execPath + optional script arg.
   const argv1 = process.argv[1]
-  const needsScript = Boolean(
-    argv1 && process.versions.bun && (argv1.endsWith(".ts") || argv1.endsWith(".mts")),
-  )
+  const needsScript = Boolean(argv1 && process.versions.bun && (argv1.endsWith(".ts") || argv1.endsWith(".mts")))
   const binary = process.execPath
   const scriptArg = needsScript ? [argv1] : []
 
@@ -36,6 +37,7 @@ async function spawnDetachChild(input: DetachInput) {
     OPENCODE_SERVER_PASSWORD: password,
     OPENCODE_DIRECTORY: input.directory,
     OPENCODE_PROJECT_ID: input.projectID,
+    ...(input.sessionID ? { OPENCODE_DETACH_SESSION_ID: input.sessionID } : {}),
   }
 
   const child = spawn(binary, [...scriptArg, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
@@ -97,12 +99,11 @@ export async function executeDetach(input: DetachInput): Promise<import("@/serve
     directory: input.directory,
     projectID: input.projectID,
     startedAt: new Date().toISOString(),
+    sessionID: input.sessionID,
   })
 
   // Register listener stop for the server-side shutdown handler
-  const { registerListener } = await import(
-    "@/server/routes/instance/httpapi/handlers/server"
-  )
+  const { registerListener } = await import("@/server/routes/instance/httpapi/handlers/server")
   registerListener(listener.stop, input.projectID)
 
   // Ignore SIGHUP after detach

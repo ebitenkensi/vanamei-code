@@ -256,6 +256,17 @@ export const RunCommand = effectCmd({
         hidden: true,
         default: false,
       })
+      .option("new", {
+        type: "boolean",
+        hidden: true,
+        default: false,
+        describe: "attach: always create a new session (skip the resume picker)",
+      })
+      .option("session-hint", {
+        type: "string",
+        hidden: true,
+        describe: "attach: discovery record session id considered by the resume picker/auto-resolve",
+      })
       .option("demo", {
         type: "boolean",
         default: false,
@@ -455,6 +466,30 @@ export const RunCommand = effectCmd({
         return message.slice(0, 50) + (message.length > 50 ? "..." : "")
       }
 
+      // Bare `opencode attach` resolution (no --session/--new/--continue):
+      // TTY shows a picker so Enter resumes the detach-time session; non-TTY
+      // auto-resolves the same precedence (hint -> latest root -> undefined,
+      // which falls through to session-create below).
+      async function resolveAttachSession(sdk: OpencodeClient): Promise<SessionInfo | "cancelled" | undefined> {
+        const hint = args["session-hint"]
+
+        if (!process.stdin.isTTY || !process.stdout.isTTY) {
+          if (hint) {
+            const current = await sdk.session.get({ sessionID: hint }).catch(() => undefined)
+            if (current?.data) {
+              return { id: current.data.id, title: current.data.title, directory: current.data.directory }
+            }
+          }
+
+          const latest = (await sdk.session.list()).data?.find((item) => !item.parentID)
+          if (!latest) return undefined
+          return { id: latest.id, title: latest.title, directory: latest.directory }
+        }
+
+        const { pickAttachSession } = await import("./run/session-picker")
+        return pickAttachSession(sdk, hint)
+      }
+
       async function session(sdk: OpencodeClient): Promise<SessionInfo | undefined> {
         if (args.session) {
           const current = await sdk.session
@@ -491,7 +526,27 @@ export const RunCommand = effectCmd({
           }
         }
 
-        const base = args.continue ? (await sdk.session.list()).data?.find((item) => !item.parentID) : undefined
+        // Attach-only resolution: precedence is --session (above) > --new >
+        // --continue > picker/auto-resolve. --new falls straight through to
+        // session-create below, so it is excluded from both branches here.
+        if (args.attach && !args.new && !args.continue) {
+          const resolved = await resolveAttachSession(sdk)
+          if (resolved === "cancelled") {
+            UI.println(UI.Style.TEXT_DIM + "Attach cancelled -- no session created." + UI.Style.TEXT_NORMAL)
+            process.exit(0)
+          }
+
+          if (resolved) {
+            return resolved
+          }
+          // Picker's "Create new session" or an empty auto-resolve: fall
+          // through to session-create below.
+        }
+
+        const base =
+          args.continue && !(args.attach && args.new)
+            ? (await sdk.session.list()).data?.find((item) => !item.parentID)
+            : undefined
 
         if (base && args.fork) {
           const forked = await sdk.session.fork({
@@ -931,13 +986,14 @@ export const RunCommand = effectCmd({
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
 
-        const onDetach = async (live?: boolean) => {
+        const onDetach = async (live?: boolean, activeSessionID?: string) => {
           if (live) {
             // Interactive /detach from a live TTY: spawn a detached child
             // server and let the parent exit so bash gets its prompt back.
             await executeDetach({
               directory: directory ?? root,
               projectID,
+              sessionID: activeSessionID,
               live: true,
               onShutdown: async () => {},
             })
@@ -949,6 +1005,7 @@ export const RunCommand = effectCmd({
           const listener = await executeDetach({
             directory: directory ?? root,
             projectID,
+            sessionID: activeSessionID,
             onShutdown: async () => {
               // no-op for local mode; shutdown is handled server-side
             },
@@ -1028,6 +1085,8 @@ type MiniCommandInput = {
   replay?: boolean
   replayLimit?: number
   demo?: boolean
+  new?: boolean
+  sessionHint?: string
 }
 
 export async function runMini(input: MiniCommandInput) {
@@ -1063,5 +1122,8 @@ export async function runMini(input: MiniCommandInput) {
     "dangerously-skip-permissions": false,
     dangerouslySkipPermissions: false,
     demo: input.demo ?? false,
+    new: input.new ?? false,
+    "session-hint": input.sessionHint,
+    sessionHint: input.sessionHint,
   })
 }

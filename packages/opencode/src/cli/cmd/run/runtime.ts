@@ -68,7 +68,9 @@ type RunRuntimeInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
-  onDetach?: (live?: boolean) => Promise<void>
+  // `sessionID` is the current session at call time, threaded through so
+  // /detach carries the right session across /new and /sessions switches.
+  onDetach?: (live?: boolean, sessionID?: string) => Promise<void>
   onShutdown?: () => Promise<void>
 }
 
@@ -89,7 +91,9 @@ type RunLocalInput = {
   replay?: boolean
   replayLimit?: number
   demo?: RunInput["demo"]
-  onDetach?: (live?: boolean) => Promise<void>
+  // `sessionID` is the current session at call time, threaded through so
+  // /detach carries the right session across /new and /sessions switches.
+  onDetach?: (live?: boolean, sessionID?: string) => Promise<void>
 }
 
 type StreamTransportModule = Pick<
@@ -453,7 +457,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
   // SIGHUP auto-detach (P4). In local mode with onDetach available, detach on
   // SIGHUP and close the TUI. In attach mode, exit gracefully.
   const onSighup = input.onDetach
-    ? () => void input.onDetach!().then(() => footer.close())
+    ? () => void input.onDetach!(undefined, state.sessionID).then(() => footer.close())
     : () => process.exit(0)
   process.on("SIGHUP", onSighup)
 
@@ -844,7 +848,10 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       footer,
       initialInput: input.initialInput,
       trace: log,
-      onDetach: input.onDetach,
+      // runtime.queue.ts's onDetach only forwards `live`; wrap it here so the
+      // session id it reads is state.sessionID at call time (reflects /new
+      // and /sessions switches), without changing runtime.queue.ts's type.
+      onDetach: input.onDetach ? (live?: boolean) => input.onDetach!(live, state.sessionID) : undefined,
       onShutdown: input.onShutdown,
       onSend: (prompt) => {
         state.shown = true

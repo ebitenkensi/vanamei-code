@@ -31,6 +31,7 @@ export const ServeCommand = effectCmd({
       const password = process.env.OPENCODE_SERVER_PASSWORD ?? ""
       const directory = process.env.OPENCODE_DIRECTORY ?? ""
       const projectID = process.env.OPENCODE_PROJECT_ID ?? ""
+      const sessionID = process.env.OPENCODE_DETACH_SESSION_ID
       Discovery.write({
         url: server.url.href,
         username: "opencode",
@@ -39,6 +40,7 @@ export const ServeCommand = effectCmd({
         directory,
         projectID,
         startedAt: new Date().toISOString(),
+        sessionID,
       })
       registerListener(server.stop, projectID)
 
