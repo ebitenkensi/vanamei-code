@@ -82,17 +82,22 @@ EOF
   case "$mode" in
     monitor|both)
       local watch="$SKILL_DIR/scripts/watch.sh"
-      # Use shell expansion "agmsg-boot-$$" for the autostart config's
-      # instance-id so each Monitor spawn gets a unique watcher id ($$ expands
-      # to the sh PID at runtime, inside the double quotes). Use printf %q for
-      # watch/project/type to handle special characters, but NOT for the id —
-      # we need literal $$ (unexpanded) in the stored command so sh -c expands
-      # it at runtime. The initial watermark starts at the current value so no
-      # redelivery of old messages. The live re-arm directive
-      # (emit_opencode_monitor_directive) uses a concrete session id since it
-      # targets the currently-running session directly.
+      # Use the composite id "agmsg-boot.$PPID" for the autostart config's
+      # instance-id. A composite id of the form <prefix>.<pid> engages
+      # watch.sh's parent-liveness guard (#67, see agmsg_instance_is_composite
+      # in the agmsg skill's lib/instance-id.sh). Monitor spawns the command
+      # via sh -c (shell: true), whose parent is the opencode process itself,
+      # so $PPID expands at runtime to the opencode pid: unique per instance
+      # AND liveness-linked — the watcher self-exits within one poll interval
+      # after opencode dies. Use printf %q for watch/project/type to handle
+      # special characters, but NOT for the id — we need literal $PPID
+      # (unexpanded) in the stored command so sh -c expands it at runtime. The
+      # initial watermark starts at the current value so no redelivery of old
+      # messages. The live re-arm directive (emit_opencode_monitor_directive)
+      # uses a concrete session id since it targets the currently-running
+      # session directly.
       local watch_command
-      watch_command="$(printf '%q' "$watch") \"agmsg-boot-\$\$\" $(printf '%q' "$project") $(printf '%q' "$type")"
+      watch_command="$(printf '%q' "$watch") \"agmsg-boot.\$PPID\" $(printf '%q' "$project") $(printf '%q' "$type")"
       update_autostart_entry "$project" "$watch_command"
       ;;
     off)
