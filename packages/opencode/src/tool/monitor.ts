@@ -4,6 +4,7 @@ import { ToolJsonSchema } from "./json-schema"
 import type { TaskPromptOps } from "./task"
 import { SessionID } from "../session/schema"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { MonitorAPI, type StartInput, type MonitorEntryOutput } from "./monitor-api"
 import { MonitorV1 } from "@opencode-ai/schema/monitor-v1"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -56,25 +57,6 @@ type MonitorEntry = {
   semaphore: Semaphore.Semaphore // Serializes rebind/unbind/flusher mutations (Finding 2)
 }
 
-export type StartInput = {
-  command: string
-  description: string
-  persistent?: boolean
-  timeout_ms?: number
-  oneshot?: boolean
-  sessionID: SessionID | null
-  agent: string
-}
-
-export type MonitorEntryOutput = {
-  monitorID: string
-  description: string
-  command: string
-  persistent: boolean
-  startedAt: number
-  oneshot: boolean
-}
-
 const MAX_STDERR = 4096
 const DEFAULT_TIMEOUT_MS = 300_000
 const ONESHOT_DEFAULT_TIMEOUT_MS = 60_000
@@ -122,24 +104,6 @@ function killAll(entries: Map<string, MonitorEntry>): Effect.Effect<void> {
 function killEntry(entry: MonitorEntry): Effect.Effect<void> {
   return entry.proc.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.catch(() => Effect.void))
 }
-
-// --- MonitorAPI Service ---
-
-export interface MonitorAPIInterface {
-  readonly startMonitor: (
-    input: StartInput,
-    promptOps?: TaskPromptOps,
-  ) => Effect.Effect<{ monitorID: string }>
-  readonly listMonitors: (sessionID: SessionID) => Effect.Effect<MonitorEntryOutput[]>
-  readonly stopMonitor: (
-    monitorID: string,
-    sessionID: SessionID,
-  ) => Effect.Effect<{ description: string } | null>
-  readonly rebind: (sessionID: SessionID, promptOps: TaskPromptOps) => Effect.Effect<void>
-  readonly unbindForSession: (sessionID: SessionID) => Effect.Effect<void>
-}
-
-export class MonitorAPI extends Context.Service<MonitorAPI, MonitorAPIInterface>()("@opencode/MonitorAPI") {}
 
 // --- Layer ---
 
@@ -571,7 +535,7 @@ const layer = Layer.effect(
   }),
 )
 
-export const node = LayerNode.make({
+export const MonitorAPINode = LayerNode.make({
   service: MonitorAPI,
   layer,
   deps: [CrossSpawnSpawner.node, EventV2Bridge.node],
