@@ -159,7 +159,11 @@ const layer = Layer.effect(
               },
             ],
           })
-          .pipe(Effect.ignore)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("monitor inject failed", { cause, monitorID, description: label }),
+              ),
+            )
         yield* events
           .publish(MonitorV1.Event.Event, {
             sessionID,
@@ -201,7 +205,11 @@ const layer = Layer.effect(
               },
             ],
           })
-          .pipe(Effect.ignore)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("monitor exit inject failed", { cause, monitorID, description: `${description} (${monitorID})` }),
+              ),
+            )
       })
     }
 
@@ -497,11 +505,15 @@ const layer = Layer.effect(
               entry.promptOps = promptOps
               entry.currentSessionID = sessionID
 
-              // Flush pending lines
+              // Flush pending lines — fork so caller (e.g. prompt runLoop)
+              // doesn't deadlock when doInject → ops.prompt → ensureRunning
+              // awaits the currently-running loop.
               if (entry.pendingLines.length > 0) {
                 const lines = [...entry.pendingLines]
                 entry.pendingLines.length = 0
-                yield* doInject(monitorID, lines)
+                yield* doInject(monitorID, lines).pipe(
+                  Effect.forkIn(scope, { startImmediately: true }),
+                )
               }
             }),
           ),

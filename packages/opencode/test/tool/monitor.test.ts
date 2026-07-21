@@ -486,4 +486,50 @@ describe("tool.monitor", () => {
       }),
     ),
   )
+
+  it.live("failed inject does not crash the monitor fiber", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const tool = yield* MonitorTool
+      const def = yield* tool.init()
+      const localCtx = {
+        ...baseCtx,
+        extra: {
+          promptOps: {
+            cancel: () => Effect.void,
+            resolvePromptParts: (template: string) => Effect.succeed([{ type: "text" as const, text: template }]),
+            prompt: () => Effect.die("simulated inject failure"),
+          } satisfies TaskPromptOps,
+        },
+      }
+
+      const result = yield* runIn(
+        tmp,
+        def.execute(
+          {
+            action: "start",
+            command: "echo fail-inject-test",
+            description: "fail-inject-test",
+          },
+          localCtx,
+        ),
+      )
+
+      expect(result.metadata).toHaveProperty("monitorID")
+
+      // Wait for the process to exit — the dying prompt should be caught and
+      // logged by the catchCause handler, not crash the monitor fiber.
+      yield* Effect.sleep(2000)
+
+      // If we got here without the monitor layer crashing, the fix works.
+      // List monitors to prove the layer is still alive.
+      const entries = yield* runIn(tmp, def.execute({ action: "list" }, baseCtx))
+      expect(entries.output).not.toContain("fail-inject-test")
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
+  )
 })

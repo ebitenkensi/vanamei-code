@@ -82,13 +82,17 @@ EOF
   case "$mode" in
     monitor|both)
       local watch="$SKILL_DIR/scripts/watch.sh"
-      local session_id="${OPENCODE_SESSION_ID:-}"
-      if [ -z "$session_id" ]; then
-        session_id="agmsg-$(compat_uuidgen | tr 'A-Z' 'a-z')"
-      fi
-      session_id="$(agmsg_normalize_instance_id "$session_id" "opencode")"
+      # Use shell expansion "agmsg-boot-$$" for the autostart config's
+      # instance-id so each Monitor spawn gets a unique watcher id ($$ expands
+      # to the sh PID at runtime, inside the double quotes). Use printf %q for
+      # watch/project/type to handle special characters, but NOT for the id —
+      # we need literal $$ (unexpanded) in the stored command so sh -c expands
+      # it at runtime. The initial watermark starts at the current value so no
+      # redelivery of old messages. The live re-arm directive
+      # (emit_opencode_monitor_directive) uses a concrete session id since it
+      # targets the currently-running session directly.
       local watch_command
-      watch_command="$(printf '%q %q %q %q' "$watch" "$session_id" "$project" "$type")"
+      watch_command="$(printf '%q' "$watch") \"agmsg-boot-\$\$\" $(printf '%q' "$project") $(printf '%q' "$type")"
       update_autostart_entry "$project" "$watch_command"
       ;;
     off)

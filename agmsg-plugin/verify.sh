@@ -188,8 +188,8 @@ if command -v jq >/dev/null 2>&1; then
     desc=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .description' "$local_config" 2>/dev/null || true)
     pers=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .persistent' "$local_config" 2>/dev/null || true)
     cmd=$(jq -r '.monitor.autostart[] | select(.description == "agmsg inbox stream") | .command' "$local_config" 2>/dev/null || true)
-    if [ "$desc" = "agmsg inbox stream" ] && [ "$pers" = "true" ] && [ -n "$cmd" ]; then
-      pass "monitor mode: opencode.local.json has agmsg autostart entry with persistent=true"
+    if [ "$desc" = "agmsg inbox stream" ] && [ "$pers" = "true" ] && echo "$cmd" | grep -qF 'agmsg-boot-'; then
+      pass "monitor mode: opencode.local.json has agmsg autostart entry with persistent=true and agmsg-boot-* id (not a concrete uuid)"
     else
       echo "  desc=$desc pers=$pers cmd=$cmd"
       fail_msg "monitor mode: autostart entry missing or incomplete"

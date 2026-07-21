@@ -201,6 +201,48 @@ describe("tool.monitor-autostart", () => {
     })),
   )
 
+  it.live("rebind with pendingLines returns immediately (non-blocking fork)", () =>
+    Effect.gen(function* () {
+      const api = yield* MonitorAPI
+      const { ops, calls } = makeStubOps()
+
+      // Start monitor with a command that takes long enough to produce lines
+      // before it exits, giving the rebind flush a chance to fire.
+      yield* api.startMonitor({
+        command: "echo non-blocking-rebind && sleep 1",
+        description: "rebind-nonblock",
+        sessionID: null,
+        agent: defaultAgent,
+      })
+
+      yield* Effect.sleep(500) // let process produce output and queue lines
+
+      // Measure rebind duration — it should return quickly because the
+      // pending-line inject is forked, not synchronous.
+      const t0 = Date.now()
+      yield* api.rebind(testSessionID, ops)
+      const elapsed = Date.now() - t0
+
+      // Rebind must return in well under 1s (the doInject is forked).
+      // A synchronous inject that sleeps for the prompt reply would exceed
+      // this; a forked one won't.
+      expect(elapsed).toBeLessThan(500)
+
+      // The forked inject should have called prompt() eventually
+      yield* Effect.sleep(1000)
+      const injected = calls.find(
+        (call) =>
+          call.parts[0]?.type === "text" && (call.parts[0] as any).text.includes("non-blocking-rebind"),
+      )
+      expect(injected).toBeDefined()
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.fail(new Error("test timed out")),
+      }),
+    ),
+  )
+
   it.live("autostart monitor exiting unbound skips monitor.stopped publish", () =>
     Effect.gen(function* () {
       const api = yield* MonitorAPI

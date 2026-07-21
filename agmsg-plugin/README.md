@@ -41,3 +41,9 @@ copy automatically.
   so re-pointing the symlink requires re-trust.
 - The plugin directory (`plugins/`) and its trust database (`db/trusted-plugins`) are
   preserved across `--update` re-installs of agmsg.
+- The autostart command in `opencode.local.json` uses `"agmsg-boot-$$"` as the
+  watcher instance-id. The `$$` is expanded by the shell at runtime to the
+  `sh -c` PID, giving each Monitor spawn a unique id (avoids shared watermarks
+  and orphan watchers across parallel instances). The live re-arm directive
+  (`emit_opencode_monitor_directive`) uses the concrete resolved session id
+  because it targets the currently-running session directly.
