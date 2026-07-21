@@ -116,11 +116,19 @@ opencode web --port 4096 --hostname 0.0.0.0
 opencode attach http://10.20.30.40:4096
 ```
 
-If you omit `url`, OpenCode looks up the current project's discovery record (written by `/detach` or a `SIGHUP` auto-detach) and connects to it automatically, inheriting its credentials:
+If you omit `url`, OpenCode looks up the current project's discovery record (written by `/detach` or a `SIGHUP` auto-detach) and connects to it automatically, inheriting its credentials.
 
-```bash
-opencode attach --continue
-```
+#### Session resume
+
+Which session `attach` connects you to depends on the flags you pass:
+
+- `--session <id>` -- attach to that exact session.
+- `--new` -- always start a new session, skipping resume entirely.
+- `--continue` -- resume the project's most recently updated top-level session, same meaning as elsewhere in the CLI.
+- No flag, run from a TTY -- OpenCode shows a picker of the project's top-level sessions, newest first. The session that was active when the server was backgrounded (from the discovery record) is preselected, so pressing Enter resumes exactly where [`/detach`](/docs/tui#detach) left off. "Create new session" is the last entry. Pressing `Esc` or `Ctrl-C` cancels -- no session is created and `attach` exits.
+- No flag, run without a TTY (piped input, scripts) -- the picker can't be shown, so OpenCode auto-resolves in the same priority order the picker would preselect: the discovery record's session if it still exists, else the most recent top-level session, else a new session.
+
+The same resolution applies whether `url` is given explicitly or discovered automatically.
 
 Once attached, the [`/shutdown`](/docs/tui#shutdown) TUI command stops the server you're connected to.
 
@@ -131,6 +139,7 @@ Once attached, the [`/shutdown`](/docs/tui#shutdown) TUI command stops the serve
 | <nobr><code>{"--dir"}</code></nobr>      |       | Working directory to start TUI in                                          |
 | <nobr><code>{"--continue"}</code></nobr> | `-c`  | Continue the last session                                                  |
 | <nobr><code>{"--session"}</code></nobr>  | `-s`  | Session ID to continue                                                     |
+| <nobr><code>{"--new"}</code></nobr>      |       | Always create a new session, skipping the resume picker                    |
 | <nobr><code>{"--fork"}</code></nobr>     |       | Fork the session when continuing (use with `--continue` or `--session`)    |
 | <nobr><code>{"--password"}</code></nobr> | `-p`  | Basic auth password (defaults to `OPENCODE_SERVER_PASSWORD`)               |
 | <nobr><code>{"--username"}</code></nobr> | `-u`  | Basic auth username (defaults to `OPENCODE_SERVER_USERNAME` or `opencode`) |

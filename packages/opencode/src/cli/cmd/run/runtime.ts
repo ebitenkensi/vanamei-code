@@ -164,6 +164,17 @@ type RuntimeState = {
   includeFiles: boolean
   permissionMode: import("./mode.shared").PermissionMode
   pendingPermission?: PermissionRequest
+  // Set once onDetach (live /detach or SIGHUP auto-detach) succeeds, so the
+  // exit splash's `opencode --mini -s <id>` hint -- wrong once the session
+  // moved to a background server -- is suppressed at shell.close() below.
+  detached?: boolean
+  // Set while a live /detach flush+spawn is running. SIGHUP must not trigger
+  // the in-place auto-detach in either window: during the spawn it would
+  // daemonize the parent alongside the child, and after it the parent's
+  // Discovery.write would clobber the child's record with a pid that is
+  // about to die (observed as "stale record" attach failures when the
+  // terminal closes right after the record appears).
+  detachPending?: boolean
 }
 
 function hasSession(input: RunRuntimeInput, state: RuntimeState) {
@@ -458,7 +469,18 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
   // SIGHUP auto-detach (P4). In local mode with onDetach available, detach on
   // SIGHUP and close the TUI. In attach mode, exit gracefully.
   const onSighup = input.onDetach
-    ? () => void input.onDetach!(undefined, state.sessionID).then(() => footer.close())
+    ? () => {
+        // A finished live /detach already moved the session to the child
+        // server; the parent was about to exit anyway, so just do it now.
+        if (state.detached) return void process.exit(0)
+        // A live /detach in flight owns the discovery record; ignore the
+        // hangup and let it finish (see detachPending on RuntimeState).
+        if (state.detachPending) return
+        void input.onDetach!(undefined, state.sessionID).then(() => {
+          state.detached = true
+          footer.close()
+        })
+      }
     : () => process.exit(0)
   process.on("SIGHUP", onSighup)
 
@@ -852,9 +874,20 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       // runtime.queue.ts's onDetach only forwards `live` and the queued
       // snapshot; wrap it here so the session id it reads is state.sessionID
       // at call time (reflects /new and /sessions switches), without
-      // changing runtime.queue.ts's type.
+      // changing runtime.queue.ts's type. Marks state.detached on success so
+      // the exit splash below knows to suppress its stale resume hint.
       onDetach: input.onDetach
-        ? (live?: boolean, queued?: FooterQueuedPrompt[]) => input.onDetach!(live, state.sessionID, queued)
+        ? async (live?: boolean, queued?: FooterQueuedPrompt[]) => {
+            state.detachPending = true
+            try {
+              await input.onDetach!(live, state.sessionID, queued)
+            } catch (error) {
+              // Aborted flush: re-arm SIGHUP auto-detach along with the queue.
+              state.detachPending = false
+              throw error
+            }
+            state.detached = true
+          }
         : undefined,
       onShutdown: input.onShutdown,
       onSend: (prompt) => {
@@ -1045,7 +1078,11 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     const title = await resolveExitTitle(ctx, input, state)
 
     await shell.close({
-      showExit: state.shown && hasSession(input, state),
+      // Detach exits print their own reattach guidance (see run.ts) after
+      // this shell fully tears down, so the generic exit splash -- whose
+      // `opencode --mini -s <id>` hint is wrong once the session moved to a
+      // background server -- is skipped entirely rather than reworded here.
+      showExit: state.shown && hasSession(input, state) && !state.detached,
       sessionTitle: title,
       sessionID: state.sessionID,
       history: state.history,

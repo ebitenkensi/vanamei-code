@@ -130,6 +130,17 @@ message/part は projector 経由で逐次永続化済み。
 - **案内メッセージ**: `/detach` 成功時に detach 先 URL・セッション ID・
   `Reattach: opencode attach` を表示。detach 経由の終了では splash の
   `opencode --mini -s` 案内を出さない（または attach 系に差し替える）。
+- **SIGHUP と live detach の競合ガード**（実測 2026-07-21、e2e item h の
+  フレークとして顕在化）: live `/detach` が子を spawn しレコードを書いた後、
+  親の終了前に SIGHUP（端末クローズ）が届くと、SIGHUP 自動デタッチが
+  その場 daemonize を発動し**死にゆく親の pid でレコードを上書き**する。
+  次の attach はこれを stale と誤検知してレコード削除→接続失敗となる。
+  対策: live detach 完了後の SIGHUP は即クリーン終了、live detach 進行中
+  （flush〜spawn、`detachPending`）の SIGHUP は無視して完走させる。flush
+  中止時はフラグを戻し SIGHUP 自動デタッチを再武装する。残エッジ:
+  `/detach` 投入後〜whenIdle 完了前の SIGHUP は従来どおり in-place
+  daemonize が走り得る（その場合 live spawn と競合しうるが、ターン実行中
+  の端末断という二重障害であり許容。将来課題）。
 
 ## 対象ファイル
 

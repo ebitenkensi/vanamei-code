@@ -129,11 +129,13 @@ Promote the running server into a background process so a long turn survives end
 /detach
 ```
 
-OpenCode spawns a detached `opencode serve` process bound to `127.0.0.1` on a random port, writes a per-project discovery record, and exits the current process so your shell prompt returns. The in-flight turn and any queued messages keep running in the background. Reattach with:
+OpenCode spawns a detached `opencode serve` process bound to `127.0.0.1` on a random port, writes a per-project discovery record (including the active session), and exits the current process so your shell prompt returns. The in-flight turn finishes in the background, and any plain-text messages you'd queued behind it are handed off and run there too, in order. Commands and shell (`!`) entries left in the queue are TUI-local and can't be handed off, so `/detach` refuses to run (with a warning) while any are queued -- run or clear them first. Reattach with:
 
 ```bash frame="none"
-opencode attach --continue
+opencode attach
 ```
+
+This opens the session picker with the detached session preselected, so pressing Enter resumes right where you left off. See [`opencode attach`](/docs/cli#attach) for the full picker and flag behavior.
 
 :::note
 If the terminal disconnects unexpectedly (for example an SSH drop or `SIGHUP`), OpenCode detaches automatically so the turn isn't lost. There's currently no config option to disable this.

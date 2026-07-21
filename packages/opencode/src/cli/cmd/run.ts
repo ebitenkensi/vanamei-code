@@ -86,6 +86,28 @@ function block(info: Inline, output?: string) {
   UI.empty()
 }
 
+type DetachSummary = {
+  sessionID: string
+  url?: string
+}
+
+// Printed once the split-footer renderer has fully torn down (see the
+// `detachSummary` handoff below), so these stderr rows land on a terminal
+// that's back in normal passthrough mode instead of being captured or
+// overwritten by the still-live renderer.
+function printDetachSummary(info: DetachSummary) {
+  UI.empty()
+  UI.println(
+    UI.Style.TEXT_SUCCESS_BOLD + "Detached" + UI.Style.TEXT_NORMAL + " -- the session keeps running in the background.",
+  )
+  UI.println(UI.Style.TEXT_DIM + "  Session:  " + UI.Style.TEXT_NORMAL + info.sessionID)
+  if (info.url) {
+    UI.println(UI.Style.TEXT_DIM + "  Server:   " + UI.Style.TEXT_NORMAL + info.url)
+  }
+  UI.println(UI.Style.TEXT_DIM + "  Reattach: " + UI.Style.TEXT_NORMAL + "opencode attach")
+  UI.empty()
+}
+
 function formatRunError(error: unknown) {
   return FormatError(error) ?? FormatUnknownError(error)
 }
@@ -1031,6 +1053,11 @@ export const RunCommand = effectCmd({
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
 
+        // Set by a successful live /detach so the block printed after the
+        // shell fully tears down (below) knows what to report; stays
+        // undefined for the SIGHUP path, which has no terminal left to print to.
+        let detachSummary: DetachSummary | undefined
+
         const onDetach = async (live?: boolean, activeSessionID?: string, queuedPrompts?: FooterQueuedPrompt[]) => {
           if (live) {
             const handoffPath =
@@ -1040,6 +1067,9 @@ export const RunCommand = effectCmd({
 
             // Interactive /detach from a live TTY: spawn a detached child
             // server and let the parent exit so bash gets its prompt back.
+            // executeDetach polls for the child's discovery record before
+            // resolving, so it's usually present by now; if not, the summary
+            // below just omits the server URL rather than guessing.
             await executeDetach({
               directory: directory ?? root,
               projectID,
@@ -1048,6 +1078,10 @@ export const RunCommand = effectCmd({
               handoffPath,
               onShutdown: async () => {},
             })
+
+            if (activeSessionID) {
+              detachSummary = { sessionID: activeSessionID, url: Discovery.read(projectID)?.url }
+            }
             return
           }
 
@@ -1074,7 +1108,7 @@ export const RunCommand = effectCmd({
         }
 
         try {
-          return await runInteractiveLocalMode({
+          await runInteractiveLocalMode({
             directory: directory ?? root,
             fetch: fetchFn,
             resolveAgent: localAgent,
@@ -1096,6 +1130,16 @@ export const RunCommand = effectCmd({
         } catch (error) {
           dieInteractive(error)
         }
+
+        // Printed only now, after runInteractiveLocalMode's shell.close() has
+        // torn down the split-footer renderer (screenMode back to
+        // main-screen, stdout passthrough restored) -- printing any earlier,
+        // while the renderer still owns the terminal, would get captured or
+        // overwritten instead of landing as normal scrollback.
+        if (detachSummary) {
+          printDetachSummary(detachSummary)
+        }
+        return
       }
 
       if (args.attach) {
