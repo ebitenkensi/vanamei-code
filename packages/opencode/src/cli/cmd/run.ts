@@ -18,6 +18,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import { open } from "node:fs/promises"
 import { Effect } from "effect"
+import { Config } from "@/config/config"
 import { UI } from "../ui"
 import { effectCmd } from "../effect-cmd"
 import { EOL } from "os"
@@ -26,7 +27,7 @@ import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@openc
 import { Discovery } from "@/server/discovery"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
-import { executeDetach } from "./run/detach"
+import { executeDetach, spawnDetachServer } from "./run/detach"
 import type { FooterQueuedPrompt } from "./run/types"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
@@ -339,6 +340,11 @@ export const RunCommand = effectCmd({
         default: false,
         hidden: true,
         describe: "enable direct interactive demo slash commands; pass one as the message to run it immediately",
+      })
+      .option("detach", {
+        type: "boolean",
+        default: undefined,
+        describe: "spawn a detached server and connect the TUI over HTTP",
       }),
   handler: Effect.fn("Cli.run")(function* (args) {
     const { Agent } = yield* Effect.promise(() => import("@/agent/agent"))
@@ -1039,10 +1045,109 @@ export const RunCommand = effectCmd({
         return
       }
 
-      if (interactive && !args.attach && !args.session && !args.continue) {
-        const model = pick(args.model)
+      if (interactive && !args.attach) {
         if (!localInstance) throw new Error("InstanceRef is undefined in local mode")
         const projectID = localInstance.project.id
+        const { Global } = await import("@opencode-ai/core/global")
+        const { Project } = await import("@/project/project")
+        const { AppRuntime } = await import("@/effect/app-runtime")
+        const detachEnabled =
+          args.detach ??
+          (await AppRuntime.runPromise(
+            Config.Service.use((cfg) => cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true))),
+          )) ??
+          true
+
+        if (detachEnabled) {
+          const existing = Discovery.read(projectID)
+          if (existing && Discovery.pidAlive(existing.pid)) {
+            UI.println(
+              UI.Style.TEXT_WARNING_BOLD +
+                "!" +
+                UI.Style.TEXT_NORMAL +
+                ` A detached server is already running for this project (${existing.url}, pid ${existing.pid}).`,
+            )
+            UI.println(UI.Style.TEXT_DIM + "  Reattach with: opencode attach " + existing.url)
+            UI.println(UI.Style.TEXT_DIM + "  Or stop it with: kill " + existing.pid)
+            UI.println(
+              UI.Style.TEXT_DIM +
+                "  A new server will be spawned anyway and the old record will be overwritten." +
+                UI.Style.TEXT_NORMAL,
+            )
+          }
+
+          const started = await spawnDetachServer(
+            { directory: directory ?? root, projectID },
+            50,
+          )
+
+          if (started) {
+            const headers = ServerAuth.headers({ password: started.password })
+            const client = createOpencodeClient({
+              baseUrl: started.url,
+              directory: directory ?? root,
+              headers,
+            })
+            const model = pick(args.model)
+            const { runInteractiveMode } = await import("./run/runtime")
+            const onShutdown = async () => {
+              try {
+                const res = await fetch(`${started.url}/server/shutdown`, {
+                  method: "POST",
+                  headers: { ...headers, "Content-Type": "application/json" },
+                  signal: AbortSignal.timeout(10000),
+                })
+                if (!res.ok) {
+                  console.error("shutdown request failed:", res.status)
+                }
+              } catch (err) {
+                console.error("shutdown request error:", err)
+              }
+            }
+
+            try {
+              const sess = await session(client)
+              if (!sess?.id) {
+                UI.error("Session not found")
+                process.exit(1)
+              }
+
+              await runInteractiveMode({
+                sdk: client,
+                directory: directory ?? root,
+                sessionID: sess.id,
+                sessionTitle: sess.title,
+                resume: Boolean(args.session || args.continue) && !args.fork,
+                replay,
+                replayLimit: args["replay-limit"],
+                agent: args.agent,
+                model,
+                variant: args.variant,
+                files,
+                initialInput,
+                createSession: createFreshSession,
+                thinking,
+                backgroundSubagents: flags.experimentalBackgroundSubagents,
+                demo: args.demo,
+                onShutdown,
+              })
+            } catch (error) {
+              dieInteractive(error)
+            }
+            return
+          }
+
+          const logPath = path.join(Global.Path.log, `detach-${projectID}.log`)
+          UI.println(
+            UI.Style.TEXT_WARNING_BOLD +
+              "!" +
+              UI.Style.TEXT_NORMAL +
+              " Failed to spawn detached server; falling back to local mode. Log: " +
+              logPath,
+          )
+        }
+
+        const model = pick(args.model)
         const { runInteractiveLocalMode } = await import("./run/runtime")
         const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const { Server } = await import("@/server/server")
@@ -1085,8 +1190,7 @@ export const RunCommand = effectCmd({
             return
           }
 
-          // SIGHUP auto-detach: in-place daemonize (live is undefined here so
-          // executeDetach overload resolves to the Listener return).
+          // SIGHUP auto-detach: in-place daemonize (existing behavior).
           const listener = await executeDetach({
             directory: directory ?? root,
             projectID,
@@ -1182,6 +1286,7 @@ type MiniCommandInput = {
   demo?: boolean
   new?: boolean
   sessionHint?: string
+  detach?: boolean
 }
 
 export async function runMini(input: MiniCommandInput) {
@@ -1220,5 +1325,6 @@ export async function runMini(input: MiniCommandInput) {
     new: input.new ?? false,
     "session-hint": input.sessionHint,
     sessionHint: input.sessionHint,
+    detach: input.detach,
   })
 }

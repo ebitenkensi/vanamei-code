@@ -1146,7 +1146,11 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 
 // Attach mode. Uses the caller-provided SDK client directly.
 export async function runInteractiveMode(
-  input: RunInput & { createSession?: CreateSession; onShutdown?: () => Promise<void> },
+  input: RunInput & {
+    createSession?: CreateSession
+    onDetach?: () => Promise<void>
+    onShutdown?: () => Promise<void>
+  },
   deps?: RunRuntimeDeps,
 ): Promise<void> {
   return runInteractiveRuntime(
@@ -1158,6 +1162,7 @@ export async function runInteractiveMode(
       replay: input.replay,
       replayLimit: input.replayLimit,
       demo: input.demo,
+      onDetach: input.onDetach,
       onShutdown: input.onShutdown,
       boot: async () => ({
         sdk: input.sdk,
