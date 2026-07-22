@@ -38,6 +38,13 @@ if [ ! -f "$CONFIG_DIR/opencode.json" ]; then
     jq '.detach.enabled = false' "$CONFIG_DIR/opencode.json" > "$CONFIG_DIR/opencode.json.tmp" && mv "$CONFIG_DIR/opencode.json.tmp" "$CONFIG_DIR/opencode.json"
   fi
 fi
+# The global config dir is $XDG_CONFIG_HOME/opencode/, not $XDG_CONFIG_HOME
+# itself, so the override above was never read. Write the detach opt-out where
+# opencode actually looks (opencode.jsonc wins the global merge). Unconditional:
+# opencode auto-creates an empty opencode.jsonc here on first run, so a stale
+# one from a previous run must be overwritten.
+mkdir -p "$CONFIG_DIR/opencode"
+printf '{\n  "detach": { "enabled": false }\n}\n' > "$CONFIG_DIR/opencode/opencode.jsonc"
 
 # ---- cleanup ----
 cleanup() {
@@ -151,7 +158,10 @@ tmux send-keys -t "$TMUX_B" Enter # clear any pending input
 tmux send-keys -t "$TMUX_B" "/detach" Enter
 sleep 5
 
-REC_FILE_B=$(wait_for_record 20) || true
+# Legacy /detach defers until the in-flight turn finishes (sleep 45 started
+# ~15s before /detach), so the record appears ~30-40s after /detach. Give it
+# a window that covers the whole remaining turn plus model latency.
+REC_FILE_B=$(wait_for_record 60) || true
 if [ -n "$REC_FILE_B" ] && [ -f "$REC_FILE_B" ]; then
   DETACHED_PID=$(rec_field "$REC_FILE_B" "pid")
   DETACHED_URL=$(rec_field "$REC_FILE_B" "url")
@@ -385,8 +395,11 @@ else
     TMUX_F2="e2e-detach-f2"
     tmux new-session -d -s "$TMUX_F2" -x 120 -y 40
     sleep 1
+    # --continue: bare attach opens the session picker (attach-resume P1),
+    # which would swallow the /shutdown keystrokes. Resume the last session
+    # directly so the input lands in the TUI prompt.
     tmux send-keys -t "$TMUX_F2" \
-      "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --no-replay --dir /tmp/opencode-e2e/project 2>&1" Enter
+      "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --continue --no-replay --dir /tmp/opencode-e2e/project 2>&1" Enter
     sleep 12
 
     echo "Sending /shutdown..."
