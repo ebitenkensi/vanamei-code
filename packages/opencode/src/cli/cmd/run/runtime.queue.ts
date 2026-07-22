@@ -13,6 +13,24 @@ import { MessageID, PartID } from "@/session/schema"
 import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand } from "./prompt.shared"
 import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./types"
 
+// P3 hook: the queue module owns the only mutable queue state, so expose a
+// snapshot accessor here for detach handlers that need to refuse/serialize
+// queued prompts. Keeps the state private and the API minimal.
+let activeQueue: State | undefined
+
+export function snapshotQueue(): { queue: FooterQueuedPrompt[]; count: number } | undefined {
+  if (!activeQueue) return undefined
+  const snapshot: FooterQueuedPrompt[] = activeQueue.queue.map(
+    (item) =>
+      activeQueue!.queued.find((queued) => queued.prompt === item) ?? {
+        messageID: MessageID.ascending(),
+        partID: PartID.ascending(),
+        prompt: item,
+      },
+  )
+  return { queue: snapshot, count: snapshot.length }
+}
+
 type Trace = {
   write(type: string, data?: unknown): void
 }
@@ -31,6 +49,10 @@ export type QueueInput = {
   onNewSession?: () => void | Promise<void>
   onDetach?: (live?: boolean, queued?: FooterQueuedPrompt[]) => Promise<void>
   onShutdown?: () => Promise<void>
+  // If provided, normal exits (/exit, Ctrl+C double-press) run this before
+  // closing. Only the detachable startup path sets this; plain --attach
+  // leaves it undefined so exit only leaves the client.
+  onExit?: () => void | Promise<void>
   run: (prompt: RunPrompt, signal: AbortSignal) => Promise<void>
 }
 
@@ -296,6 +318,12 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     }
 
     if (prompt.mode !== "shell" && isExitCommand(prompt.text)) {
+      if (input.onExit) {
+        const fn = input.onExit
+        input.onExit = undefined // guard: only one exit shutdown per session
+        void Promise.resolve(fn()).finally(() => input.footer.close())
+        return
+      }
       input.footer.close()
       return
     }
@@ -404,6 +432,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   })
 
   try {
+    activeQueue = state
     if (state.closed) {
       return
     }
@@ -415,6 +444,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     finish()
     await done.promise
   } finally {
+    activeQueue = undefined
     offPrompt()
     offClose()
     offRemoveQueued()

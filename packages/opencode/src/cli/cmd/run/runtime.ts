@@ -73,6 +73,11 @@ type RunRuntimeInput = {
   // /detach carries the right session across /new and /sessions switches.
   onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
   onShutdown?: () => Promise<void>
+  // If provided, normal exits (/exit, Ctrl+C double-press, palette exit)
+  // run this before closing the client. Used by the detachable startup path
+  // to shut down the server; plain --attach leaves this undefined so exit
+  // only leaves the client.
+  onExit?: () => void | Promise<void>
 }
 
 type RunLocalInput = {
@@ -890,6 +895,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
           }
         : undefined,
       onShutdown: input.onShutdown,
+      onExit: input.onExit,
       onSend: (prompt) => {
         state.shown = true
         state.history.push(prompt)
@@ -1150,6 +1156,7 @@ export async function runInteractiveMode(
     createSession?: CreateSession
     onDetach?: () => Promise<void>
     onShutdown?: () => Promise<void>
+    onExit?: () => void | Promise<void>
   },
   deps?: RunRuntimeDeps,
 ): Promise<void> {
@@ -1164,6 +1171,7 @@ export async function runInteractiveMode(
       demo: input.demo,
       onDetach: input.onDetach,
       onShutdown: input.onShutdown,
+      onExit: input.onExit,
       boot: async () => ({
         sdk: input.sdk,
         directory: input.directory,

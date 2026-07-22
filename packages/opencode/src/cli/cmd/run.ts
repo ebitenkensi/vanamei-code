@@ -1101,7 +1101,14 @@ export const RunCommand = effectCmd({
                   console.error("shutdown request failed:", res.status)
                 }
               } catch (err) {
+                // Server may already be dead; best-effort clean up the stale
+                // discovery record so `opencode attach` does not point at it.
                 console.error("shutdown request error:", err)
+                try {
+                  Discovery.remove(projectID)
+                } catch {
+                  // ignore — record may already be gone
+                }
               }
             }
 
@@ -1112,25 +1119,86 @@ export const RunCommand = effectCmd({
                 process.exit(1)
               }
 
-              await runInteractiveMode({
-                sdk: client,
-                directory: directory ?? root,
-                sessionID: sess.id,
-                sessionTitle: sess.title,
-                resume: Boolean(args.session || args.continue) && !args.fork,
-                replay,
-                replayLimit: args["replay-limit"],
-                agent: args.agent,
-                model,
-                variant: args.variant,
-                files,
-                initialInput,
-                createSession: createFreshSession,
-                thinking,
-                backgroundSubagents: flags.experimentalBackgroundSubagents,
-                demo: args.demo,
-                onShutdown,
-              })
+              // P2: immediate detach in the new server-first mode. The turn
+              // already lives in the server process, so /detach just leaves
+              // the client; the server keeps running the turn.
+              let detaching = false
+              const onDetach = async () => {
+                if (detaching) return
+                detaching = true
+
+                // P3: queue handoff. The local queue is currently discarded
+                // when the client exits; until POST /server/handoff exists,
+                // refuse detach if there are queued prompts.
+                const snapshot = await import("./run/runtime.queue")
+                  .then((mod) => mod.snapshotQueue?.())
+                  .catch(() => undefined)
+                const queuedCount = snapshot?.count ?? 0
+                if (queuedCount > 0) {
+                  UI.println(
+                    UI.Style.TEXT_WARNING_BOLD +
+                      "!" +
+                      UI.Style.TEXT_NORMAL +
+                      " Cannot detach with queued prompts: queue handoff is coming in P3." +
+                      UI.Style.TEXT_DIM +
+                      " Finish or cancel them first." +
+                      UI.Style.TEXT_NORMAL,
+                  )
+                  detaching = false
+                  return
+                }
+
+                const record = Discovery.read(projectID)
+                if (record) {
+                  Discovery.write({ ...record, sessionID: sess.id })
+                }
+
+                printDetachSummary({ sessionID: sess.id, url: started.url })
+                process.exit(0)
+              }
+
+              // P2: SIGHUP on terminal death. Best-effort record update,
+              // then client exits and server survives. Queue handoff is P3.
+              const onSighup = () => {
+                const record = Discovery.read(projectID)
+                if (record) {
+                  try {
+                    Discovery.write({ ...record, sessionID: sess.id })
+                  } catch {
+                    // best-effort: server is still alive and attachable
+                  }
+                }
+                process.exit(0)
+              }
+              process.on("SIGHUP", onSighup)
+
+              try {
+                await runInteractiveMode({
+                  sdk: client,
+                  directory: directory ?? root,
+                  sessionID: sess.id,
+                  sessionTitle: sess.title,
+                  resume: Boolean(args.session || args.continue) && !args.fork,
+                  replay,
+                  replayLimit: args["replay-limit"],
+                  agent: args.agent,
+                  model,
+                  variant: args.variant,
+                  files,
+                  initialInput,
+                  createSession: createFreshSession,
+                  thinking,
+                  backgroundSubagents: flags.experimentalBackgroundSubagents,
+                  demo: args.demo,
+                  onShutdown,
+                  // /exit, Ctrl+C double-press, and palette exit shut down the
+                  // server in this mode (server-first = client owns lifecycle).
+                  onExit: onShutdown,
+                  onDetach,
+                } as const)
+              } finally {
+                process.off("SIGHUP", onSighup)
+              }
             } catch (error) {
               dieInteractive(error)
             }

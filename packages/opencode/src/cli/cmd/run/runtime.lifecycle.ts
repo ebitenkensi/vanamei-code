@@ -89,6 +89,10 @@ export type LifecycleInput = {
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
   onAutoToggle?: () => void
+  // If provided, normal exits (/exit, Ctrl+C double-press, palette exit)
+  // run this before closing. Only the detachable startup path sets this;
+  // plain --attach leaves it undefined so exit only leaves the client.
+  onExit?: () => void | Promise<void>
 }
 
 export type Lifecycle = {
@@ -305,6 +309,15 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       onSubagentSelect: input.onSubagentSelect,
       onSessionSelect: input.onSessionSelect,
       onSessionsOpen: input.onSessionsOpen,
+      onExit: () => {
+        const fn = input.onExit
+        if (fn) {
+          input.onExit = undefined // guard: only one exit shutdown per session
+          void Promise.resolve(fn()).finally(() => footer.close())
+          return
+        }
+        footer.close()
+      },
     })
 
     const sigint = () => {
