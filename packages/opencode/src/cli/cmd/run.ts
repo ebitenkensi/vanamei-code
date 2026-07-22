@@ -354,9 +354,16 @@ export const RunCommand = effectCmd({
     const agentSvc = yield* Agent.Service
     const flags = yield* RuntimeFlags.Service
     const localInstance = yield* InstanceRef
-    const detachEnabledCfg = yield* Config.Service.use((cfg) =>
-      cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)),
-    )
+    // Only read the detach config when the instance context is available
+    // (local/non-attach path). `Config.get` routes through `InstanceState`,
+    // which dies with "InstanceRef not provided" when --attach skips the
+    // instance. The attach path never consults detachEnabled, so an Effect
+    // that succeeds iff localInstance is set keeps attach working.
+    const detachEnabledCfg = localInstance
+      ? yield* Config.Service.use((cfg) =>
+          cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)),
+        )
+      : true
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
       const interactive = args.mini || args.interactive
