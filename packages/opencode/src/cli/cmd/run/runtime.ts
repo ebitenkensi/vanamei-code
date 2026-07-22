@@ -472,6 +472,12 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     onSessionSelect: (sessionID, title) => {
       void switchSession(sessionID, title)
     },
+    // Typed /exit is intercepted by footer.prompt before it reaches the
+    // queue's exit branch, and Ctrl+C double-press exits through the footer
+    // too — both land on the lifecycle's onExit wrapper, so the shutdown
+    // hook must be wired here as well or server-first mode leaves the
+    // spawned server (and its discovery record) behind on exit.
+    onExit: input.onExit,
   })
   const footer = shell.footer
 
