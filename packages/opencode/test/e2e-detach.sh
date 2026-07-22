@@ -98,7 +98,7 @@ start_opencode_in_tmux() {
     tmux new-session -d -s "$session" -x 120 -y 40
   sleep 1
   tmux send-keys -t "$session" \
-    "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN $extra_args /tmp/opencode-e2e/project 2>&1" Enter
+    "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN --no-detach $extra_args /tmp/opencode-e2e/project 2>&1" Enter
 }
 
 # ====================================================================
