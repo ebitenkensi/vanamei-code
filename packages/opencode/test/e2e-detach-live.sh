@@ -27,9 +27,19 @@ PASS=0; FAIL=0; RESULTS=()
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 
 # ---- prepare temporary config ----
+# Force detach.enabled=false so the detachable-by-default startup
+# (introduced after this suite was written) does not route the bare TUI
+# launch through the new server-first path. This suite exists to guard
+# the legacy local-mode detach/re-attach behavior, so it must stay on
+# the legacy path regardless of the new default.
 if [ ! -f "$CONFIG_DIR/opencode.json" ]; then
   sed 's/"auto"/"allow"/g' ~/.config/opencode/opencode.json > "$CONFIG_DIR/opencode.json"
   cp ~/.config/opencode/tui.json "$CONFIG_DIR/" 2>/dev/null || true
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json; p='$CONFIG_DIR/opencode.json'; d=json.load(open(p)); d.setdefault('detach',{})['enabled']=False; json.dump(d, open(p,'w'), indent=2)"
+  elif command -v jq >/dev/null 2>&1; then
+    jq '.detach.enabled = false' "$CONFIG_DIR/opencode.json" > "$CONFIG_DIR/opencode.json.tmp" && mv "$CONFIG_DIR/opencode.json.tmp" "$CONFIG_DIR/opencode.json"
+  fi
 fi
 
 # ---- helpers ----
@@ -127,7 +137,7 @@ start_opencode_in_tmux() {
     tmux new-session -d -s "$session" -x 120 -y 40
   sleep 1
   tmux send-keys -t "$session" \
-    "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN --no-detach /tmp/opencode-e2e-live/project 2>&1" Enter
+    "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN /tmp/opencode-e2e-live/project 2>&1" Enter
 }
 
 # ====================================================================
