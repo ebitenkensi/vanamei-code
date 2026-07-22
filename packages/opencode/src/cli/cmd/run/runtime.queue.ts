@@ -13,24 +13,6 @@ import { MessageID, PartID } from "@/session/schema"
 import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand } from "./prompt.shared"
 import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./types"
 
-// P3 hook: the queue module owns the only mutable queue state, so expose a
-// snapshot accessor here for detach handlers that need to refuse/serialize
-// queued prompts. Keeps the state private and the API minimal.
-let activeQueue: State | undefined
-
-export function snapshotQueue(): { queue: FooterQueuedPrompt[]; count: number } | undefined {
-  if (!activeQueue) return undefined
-  const snapshot: FooterQueuedPrompt[] = activeQueue.queue.map(
-    (item) =>
-      activeQueue!.queued.find((queued) => queued.prompt === item) ?? {
-        messageID: MessageID.ascending(),
-        partID: PartID.ascending(),
-        prompt: item,
-      },
-  )
-  return { queue: snapshot, count: snapshot.length }
-}
-
 type Trace = {
   write(type: string, data?: unknown): void
 }
@@ -48,6 +30,12 @@ export type QueueInput = {
   onSend?: (prompt: RunPrompt) => void
   onNewSession?: () => void | Promise<void>
   onDetach?: (live?: boolean, queued?: FooterQueuedPrompt[]) => Promise<void>
+  // When true, /detach acts immediately: snapshots the current queue and calls
+  // onDetach synchronously without waiting for the active turn to finish.
+  // Used by the detachable server-first startup path where the turn lives in
+  // the server process; the legacy local mode leaves this undefined/false and
+  // keeps the whenIdle() deferred behavior.
+  detachImmediate?: boolean
   onShutdown?: () => Promise<void>
   // If provided, normal exits (/exit, Ctrl+C double-press) run this before
   // closing. Only the detachable startup path sets this; plain --attach
@@ -333,20 +321,18 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         const fn = input.onDetach
         input.onDetach = undefined // guard: only one detach per session
         // Stop promoting queued inputs immediately (synchronous, no await).
-        // The in-flight turn finishes naturally, then the remaining queue is
-        // snapshotted (order preserved) and handed to fn(), which writes the
-        // handoff file the spawned child executes before spawning it.
         detaching = true
-        void whenIdle().then(async () => {
-          const snapshot: FooterQueuedPrompt[] = state.queue.map(
-            (item) =>
-              state.queued.find((queued) => queued.prompt === item) ?? {
-                messageID: MessageID.ascending(),
-                partID: PartID.ascending(),
-                prompt: item,
-              },
-          )
 
+        const snapshot: FooterQueuedPrompt[] = state.queue.map(
+          (item) =>
+            state.queued.find((queued) => queued.prompt === item) ?? {
+              messageID: MessageID.ascending(),
+              partID: PartID.ascending(),
+              prompt: item,
+            },
+        )
+
+        const runDetach = async () => {
           try {
             await fn(true, snapshot)
           } catch (error) {
@@ -364,7 +350,16 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           }
 
           input.footer.close()
-        })
+        }
+
+        if (input.detachImmediate) {
+          void runDetach()
+        } else {
+          // Legacy local mode: the in-flight turn must finish first because the
+          // turn lives in this process and the spawned child takes over. Wait
+          // for idle, snapshot, and hand off.
+          void whenIdle().then(() => runDetach())
+        }
       }
       return
     }
@@ -432,7 +427,6 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   })
 
   try {
-    activeQueue = state
     if (state.closed) {
       return
     }
@@ -444,7 +438,6 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     finish()
     await done.promise
   } finally {
-    activeQueue = undefined
     offPrompt()
     offClose()
     offRemoveQueued()

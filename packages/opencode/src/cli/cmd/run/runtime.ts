@@ -72,6 +72,10 @@ type RunRuntimeInput = {
   // `sessionID` is the current session at call time, threaded through so
   // /detach carries the right session across /new and /sessions switches.
   onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
+  // When true, the prompt queue's /detach branch acts immediately instead of
+  // waiting for the active turn to finish. Used by the detachable server-first
+  // startup path where the turn already lives in the server process.
+  detachImmediate?: boolean
   onShutdown?: () => Promise<void>
   // If provided, normal exits (/exit, Ctrl+C double-press, palette exit)
   // run this before closing the client. Used by the detachable startup path
@@ -894,6 +898,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
             state.detached = true
           }
         : undefined,
+      detachImmediate: input.detachImmediate,
       onShutdown: input.onShutdown,
       onExit: input.onExit,
       onSend: (prompt) => {
@@ -1154,7 +1159,8 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 export async function runInteractiveMode(
   input: RunInput & {
     createSession?: CreateSession
-    onDetach?: () => Promise<void>
+    onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
+    detachImmediate?: boolean
     onShutdown?: () => Promise<void>
     onExit?: () => void | Promise<void>
   },
@@ -1170,6 +1176,7 @@ export async function runInteractiveMode(
       replayLimit: input.replayLimit,
       demo: input.demo,
       onDetach: input.onDetach,
+      detachImmediate: input.detachImmediate,
       onShutdown: input.onShutdown,
       onExit: input.onExit,
       boot: async () => ({

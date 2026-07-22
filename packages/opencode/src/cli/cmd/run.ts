@@ -354,6 +354,9 @@ export const RunCommand = effectCmd({
     const agentSvc = yield* Agent.Service
     const flags = yield* RuntimeFlags.Service
     const localInstance = yield* InstanceRef
+    const detachEnabledCfg = yield* Config.Service.use((cfg) =>
+      cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)),
+    )
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
       const interactive = args.mini || args.interactive
@@ -1050,13 +1053,7 @@ export const RunCommand = effectCmd({
         const projectID = localInstance.project.id
         const { Global } = await import("@opencode-ai/core/global")
         const { Project } = await import("@/project/project")
-        const { AppRuntime } = await import("@/effect/app-runtime")
-        const detachEnabled =
-          args.detach ??
-          (await AppRuntime.runPromise(
-            Config.Service.use((cfg) => cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true))),
-          )) ??
-          true
+        const detachEnabled = args.detach ?? detachEnabledCfg ?? true
 
         if (detachEnabled) {
           const existing = Discovery.read(projectID)
@@ -1122,19 +1119,20 @@ export const RunCommand = effectCmd({
               // P2: immediate detach in the new server-first mode. The turn
               // already lives in the server process, so /detach just leaves
               // the client; the server keeps running the turn.
+              let detachSummary: DetachSummary | undefined
               let detaching = false
-              const onDetach = async () => {
+              const onDetach = async (
+                live?: boolean,
+                activeSessionID?: string,
+                queuedPrompts?: FooterQueuedPrompt[],
+              ) => {
                 if (detaching) return
                 detaching = true
 
                 // P3: queue handoff. The local queue is currently discarded
                 // when the client exits; until POST /server/handoff exists,
                 // refuse detach if there are queued prompts.
-                const snapshot = await import("./run/runtime.queue")
-                  .then((mod) => mod.snapshotQueue?.())
-                  .catch(() => undefined)
-                const queuedCount = snapshot?.count ?? 0
-                if (queuedCount > 0) {
+                if (queuedPrompts && queuedPrompts.length > 0) {
                   UI.println(
                     UI.Style.TEXT_WARNING_BOLD +
                       "!" +
@@ -1148,56 +1146,45 @@ export const RunCommand = effectCmd({
                   return
                 }
 
+                const sessionID = activeSessionID ?? sess.id
                 const record = Discovery.read(projectID)
                 if (record) {
-                  Discovery.write({ ...record, sessionID: sess.id })
+                  Discovery.write({ ...record, sessionID })
                 }
 
-                printDetachSummary({ sessionID: sess.id, url: started.url })
-                process.exit(0)
+                detachSummary = { sessionID, url: started.url }
               }
 
-              // P2: SIGHUP on terminal death. Best-effort record update,
-              // then client exits and server survives. Queue handoff is P3.
-              const onSighup = () => {
-                const record = Discovery.read(projectID)
-                if (record) {
-                  try {
-                    Discovery.write({ ...record, sessionID: sess.id })
-                  } catch {
-                    // best-effort: server is still alive and attachable
-                  }
-                }
-                process.exit(0)
-              }
-              process.on("SIGHUP", onSighup)
+              await runInteractiveMode({
+                sdk: client,
+                directory: directory ?? root,
+                sessionID: sess.id,
+                sessionTitle: sess.title,
+                resume: Boolean(args.session || args.continue) && !args.fork,
+                replay,
+                replayLimit: args["replay-limit"],
+                agent: args.agent,
+                model,
+                variant: args.variant,
+                files,
+                initialInput,
+                createSession: createFreshSession,
+                thinking,
+                backgroundSubagents: flags.experimentalBackgroundSubagents,
+                demo: args.demo,
+                onShutdown,
+                // /exit, Ctrl+C double-press, and palette exit shut down the
+                // server in this mode (server-first = client owns lifecycle).
+                onExit: onShutdown,
+                detachImmediate: true,
+                onDetach,
+              } as const)
 
-              try {
-                await runInteractiveMode({
-                  sdk: client,
-                  directory: directory ?? root,
-                  sessionID: sess.id,
-                  sessionTitle: sess.title,
-                  resume: Boolean(args.session || args.continue) && !args.fork,
-                  replay,
-                  replayLimit: args["replay-limit"],
-                  agent: args.agent,
-                  model,
-                  variant: args.variant,
-                  files,
-                  initialInput,
-                  createSession: createFreshSession,
-                  thinking,
-                  backgroundSubagents: flags.experimentalBackgroundSubagents,
-                  demo: args.demo,
-                  onShutdown,
-                  // /exit, Ctrl+C double-press, and palette exit shut down the
-                  // server in this mode (server-first = client owns lifecycle).
-                  onExit: onShutdown,
-                  onDetach,
-                } as const)
-              } finally {
-                process.off("SIGHUP", onSighup)
+              // Printed only now, after the shell has fully torn down, so the
+              // summary lands on a normal terminal instead of the renderer.
+              if (detachSummary) {
+                printDetachSummary(detachSummary)
+                process.exit(0)
               }
             } catch (error) {
               dieInteractive(error)
