@@ -323,18 +323,23 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         // Stop promoting queued inputs immediately (synchronous, no await).
         detaching = true
 
-        const snapshot: FooterQueuedPrompt[] = state.queue.map(
-          (item) =>
-            state.queued.find((queued) => queued.prompt === item) ?? {
-              messageID: MessageID.ascending(),
-              partID: PartID.ascending(),
-              prompt: item,
-            },
-        )
+        // Snapshot the queue in order. For the immediate path this is taken
+        // synchronously; for the legacy deferred path the snapshot is taken
+        // inside runDetach (after whenIdle resolves) so it reflects the queue
+        // at hand-off time, matching the pre-detachImmediate behavior exactly.
+        const snapshot = (): FooterQueuedPrompt[] =>
+          state.queue.map(
+            (item) =>
+              state.queued.find((queued) => queued.prompt === item) ?? {
+                messageID: MessageID.ascending(),
+                partID: PartID.ascending(),
+                prompt: item,
+              },
+          )
 
-        const runDetach = async () => {
+        const runDetach = async (queued: FooterQueuedPrompt[]) => {
           try {
-            await fn(true, snapshot)
+            await fn(true, queued)
           } catch (error) {
             // Abort the detach: restore the pre-detach state so the local
             // queue keeps draining instead of silently losing prompts.
@@ -353,12 +358,12 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         }
 
         if (input.detachImmediate) {
-          void runDetach()
+          void runDetach(snapshot())
         } else {
           // Legacy local mode: the in-flight turn must finish first because the
           // turn lives in this process and the spawned child takes over. Wait
-          // for idle, snapshot, and hand off.
-          void whenIdle().then(() => runDetach())
+          // for idle, then snapshot and hand off.
+          void whenIdle().then(() => runDetach(snapshot()))
         }
       }
       return
