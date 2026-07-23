@@ -176,6 +176,43 @@ Ctrl+C **一度押し**は従来どおり `sdk.session.abort` によるターン
   （既存方針どおり、他言語は翻訳待ち）。
 - `packages/opencode/test/e2e-detachable.sh`（新規）— 検証ハーネス。
 
+## ハーネス env ノブとポーリング方式
+
+`e2e-detachable.sh`・`e2e-detach.sh`・`e2e-detach-live.sh` は固定 `sleep` の
+代わりに早期リターン付きポーリングを使う（実測で合計 ~14 分の固定 sleep を
+削減）。各スクリプトの先頭で以下の env 変数を `${VAR:-default}` で読む。
+デフォルト値は既存の固定 sleep より短い締切にならないよう選んである
+（早期リターンで速くなる分だけ得をする設計。ワースト側は退行しない）:
+
+- `E2E_STARTUP_TIMEOUT`（既定 30）— TUI 起動・attach 接続・発見レコード出現
+  など「準備完了」待ちのポーリング締切（秒）。
+- `E2E_TURN_TIMEOUT`（既定 90）— ターン／queue handoff の完了待ちポーリング
+  締切（秒）。
+- `E2E_POLL_INTERVAL`（既定 0.5、小数可）— ポーリング間隔（秒）。
+- `E2E_TOOL_SLEEP`（既定 12）— プロンプト内で使う `sleep N` ツール呼び出しの
+  秒数。ターン開始検出がポーリングに変わったことで、旧来の固定 15–20s 待ちより
+  短い秒数でも「/detach やキュー投入の時点でまだターンが実行中」という前提を
+  保てる。
+
+主なポーリングパターン:
+
+- **TUI/attach 起動待ち**: discovery record の出現（`wait_for_record_any`
+  系、既存）、または pane に `Ask anything` プレースホルダが現れるまで
+  ポーリング（`wait_for_tui_ready`）。
+- **ターン開始待ち**: `packages/opencode/src/cli/cmd/run/tool.ts` の
+  `headerBash` がツール実行中に `Bash(<command>)` ヘッダをレンダリングする
+  ことを利用し、pane に `Bash(sleep <N>)` が現れるまでポーリングする
+  （`wait_for_pane`）。プロンプトのエコーとは異なる文字列なので誤検知しない。
+- **ターン完了待ち**: attach 済み client がなくサーバー側で継続中のケースは
+  DB（SQLite の `part`/`message` テーブル）をポーリングする
+  (`wait_for_session_text` / `wait_for_project_text`)。マーカーが一意でない
+  プロンプトには nonce
+  （`$$` 由来のユニーク文字列）を追加してから DB を検索する。
+
+`bun typecheck` ゲート（`e2e-detach.sh` item a、`e2e-detach-live.sh` item a）
+は `E2E_SKIP_TYPECHECK=1` でスキップできる（スキップ時も明示的に
+"skipped" 行を出し、結果一覧の項目数は変えない）。
+
 ## フェーズ分割
 
 - P1 server-first 起動 | deps:- | done: bare `opencode` が子サーバーを spawn し

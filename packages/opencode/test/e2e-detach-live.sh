@@ -10,7 +10,15 @@
 #
 # Usage: bash packages/opencode/test/e2e-detach-live.sh
 # Must be run from the repo root.
-# Requires: tmux, jq, bun, pgrep
+# Requires: tmux, jq, bun, pgrep, sqlite3
+#
+# Env knobs (shared across the three e2e-detach* harnesses; see
+# SPEC-detachable-default.md "Harness env knobs and polling approach"):
+#   E2E_STARTUP_TIMEOUT  poll deadline (s) for TUI/attach readiness (default 30)
+#   E2E_TURN_TIMEOUT     poll deadline (s) for a turn to complete (default 90)
+#   E2E_POLL_INTERVAL    seconds between poll attempts, may be fractional (default 0.5)
+#   E2E_TOOL_SLEEP       in-prompt `sleep N` duration (s) kept in flight for /detach (default 12)
+#   E2E_SKIP_TYPECHECK   set to 1 to skip item (a)'s `bun typecheck` gate
 set -u -o pipefail
 shopt -s nullglob 2>/dev/null || true
 
@@ -23,6 +31,15 @@ TEMP_DIR="/tmp/opencode-e2e-live"
 PROJECT_DIR="$TEMP_DIR/project"
 CONFIG_DIR="$TEMP_DIR/config"
 PASS=0; FAIL=0; RESULTS=()
+
+# ---- env knobs ----
+# Defaults are chosen so no poll deadline below is stricter than the fixed
+# sleep it replaces -- the win comes from early exit, not a smaller ceiling.
+E2E_STARTUP_TIMEOUT="${E2E_STARTUP_TIMEOUT:-30}"
+E2E_TURN_TIMEOUT="${E2E_TURN_TIMEOUT:-90}"
+E2E_POLL_INTERVAL="${E2E_POLL_INTERVAL:-0.5}"
+E2E_TOOL_SLEEP="${E2E_TOOL_SLEEP:-12}"
+E2E_SKIP_TYPECHECK="${E2E_SKIP_TYPECHECK:-0}"
 
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 
@@ -75,10 +92,120 @@ session_root_count() { sql "SELECT count(*) FROM session WHERE project_id='$1' A
 # Case-sensitive substring search across a session's text parts (used for
 # nonce assertions -- the DB is the source of truth, pane greps are a
 # secondary/weak signal only).
+# NOTE (role + type filter): a bare `p.data LIKE` matches the user's own
+# prompt text too (e.g. item d's queued "now reply with 'done'" contains the
+# literal word "done"), so a completion-wait poll built on this could return
+# before the assistant ever replies. Role filtering alone is ALSO not
+# enough: a real run proved an assistant "reasoning" part can restate the
+# nonce while planning ("The user wants me to run sleep 12 and then reply
+# TUR...") well before the turn actually finishes, so the poll must also
+# require the part's own type to be "text" and search only its "text" field
+# -- confirmed against the live schema (part.data is a JSON blob with a
+# "type" field and, for type "text", a "text" field holding the exact
+# rendered string; message.data has the "role" field) via
+# `sqlite3 <db> "SELECT json_extract(data,'$.type'), data FROM part ..."`.
+# item h's own USER_TIME_H/NEWER_ASSISTANT_H checks below are a separate,
+# already-passing design (see their own comments) and are left as-is.
 session_has_text() {
   local n
-  n=$(sql "SELECT count(*) FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$1' AND p.data LIKE '%$2%';")
+  n=$(sql "SELECT count(*) FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$1' AND json_extract(m.data,'\$.role')='assistant' AND json_extract(p.data,'\$.type')='text' AND json_extract(p.data,'\$.text') LIKE '%$2%';")
   [ -n "$n" ] && [ "$n" != "0" ]
+}
+
+# Poll a tmux pane's captured text for a pattern up to a deadline. Early-exits
+# as soon as the pattern appears; does one final check on timeout so callers
+# get an accurate result instead of a stale early capture.
+wait_for_pane() {
+  local session="$1" pattern="$2" max_wait="${3:-$E2E_STARTUP_TIMEOUT}"
+  local deadline=$(( $(date +%s) + max_wait ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    tmux capture-pane -pt "$session" 2>/dev/null | grep -q -- "$pattern" && return 0
+    sleep "$E2E_POLL_INTERVAL"
+  done
+  tmux capture-pane -pt "$session" 2>/dev/null | grep -q -- "$pattern"
+}
+
+# TUI readiness marker (as items e/f/g/k below already poll for). Used
+# instead of a blind sleep whenever we just need the TUI to be up and
+# accepting input.
+wait_for_tui_ready() { wait_for_pane "$1" "Ask anything" "${2:-$E2E_STARTUP_TIMEOUT}"; }
+
+# Type a prompt and verify it actually took effect at each step instead of
+# trusting a blind send-keys -- a real run against e2e-detachable.sh proved
+# "Ask anything" visible does NOT guarantee keystrokes are consumed: the
+# Enter after a typed prompt was silently lost, the text sat in the composer,
+# and a second send-keys then appended to it and submitted one merged
+# message. Uses -l (literal) typing (Enter kept separate) and -J (join
+# wrapped lines) capture -- these prompts wrap in a 120-col pane, so a split
+# nonce never matches without -J.
+#
+# Args: session text nonce [queued]
+#   nonce:  a substring unique to THIS prompt (must not appear in anything
+#           already on screen, e.g. an earlier prompt's echo), used to verify
+#           the text landed and, for queued prompts, that it left the
+#           composer.
+#   queued: "1" if this is a second prompt queued behind an in-flight turn.
+#           Turn 1's activity markers are already on screen at that point and
+#           prove nothing about THIS prompt, so submission is instead
+#           verified by confirming the nonce is no longer sitting on the
+#           composer's "❯" line.
+tui_submit_prompt() {
+  local session="$1" text="$2" nonce="$3" queued="${4:-0}"
+  local attempt landed deadline
+
+  for attempt in 1 2 3; do
+    tmux send-keys -t "$session" -l -- "$text"
+    landed=1
+    deadline=$(( $(date +%s) + 5 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      tmux capture-pane -pt "$session" -J -S -50 2>/dev/null | grep -q -- "$nonce" && { landed=0; break; }
+      sleep "$E2E_POLL_INTERVAL"
+    done
+    [ "$landed" = 0 ] && break
+    echo "WARNING: prompt text not observed in pane (attempt $attempt/3), clearing composer and retyping"
+    tmux send-keys -t "$session" C-u
+  done
+
+  tmux send-keys -t "$session" Enter
+
+  if [ "$queued" = "1" ]; then
+    local round
+    for round in 1 2; do
+      deadline=$(( $(date +%s) + 3 ))
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        tmux capture-pane -pt "$session" -J -S -50 2>/dev/null | grep -q "❯.*$nonce" || return 0
+        sleep "$E2E_POLL_INTERVAL"
+      done
+      echo "WARNING: queued prompt still sitting in composer (round $round/2), retrying Enter"
+      tmux send-keys -t "$session" Enter
+    done
+    return 0
+  fi
+
+  # First/only prompt: verify the turn actually started (Thinking / Bash( /
+  # the busy-footer "interrupt" hint), not just that Enter was sent.
+  local round active=1
+  for round in 1 2 3; do
+    deadline=$(( $(date +%s) + 3 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      tmux capture-pane -pt "$session" -J -S -50 2>/dev/null | grep -qE "Thinking|Bash\(|interrupt" && { active=0; break; }
+      sleep "$E2E_POLL_INTERVAL"
+    done
+    [ "$active" = 0 ] && break
+    echo "WARNING: no turn activity observed after Enter (round $round/3), retrying Enter"
+    tmux send-keys -t "$session" Enter
+  done
+}
+
+# Poll session_has_text up to a deadline instead of a blind sleep.
+wait_for_session_text() {
+  local session_id="$1" pattern="$2" max_wait="${3:-$E2E_TURN_TIMEOUT}"
+  local deadline=$(( $(date +%s) + max_wait ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    session_has_text "$session_id" "$pattern" && return 0
+    sleep "$E2E_POLL_INTERVAL"
+  done
+  session_has_text "$session_id" "$pattern"
 }
 
 # Kill ALL opencode processes, remove ALL discovery records, and clear detach logs.
@@ -152,15 +279,20 @@ start_opencode_in_tmux() {
 # ====================================================================
 header "a" "bun typecheck"
 echo "EXPECTED: exit 0"
-TYPE_CHECK_OUTPUT=$(cd "$PKG_DIR" && bun typecheck 2>&1) && {
-  echo "ACTUAL: typecheck passed"
-  echo "$TYPE_CHECK_OUTPUT" | tail -5
+if [ "$E2E_SKIP_TYPECHECK" = "1" ]; then
+  echo "ACTUAL: skipped (E2E_SKIP_TYPECHECK=1)"
   pass "a"
-} || {
-  echo "ACTUAL: typecheck FAILED (exit $?)"
-  echo "$TYPE_CHECK_OUTPUT" | tail -20
-  fail "a"
-}
+else
+  TYPE_CHECK_OUTPUT=$(cd "$PKG_DIR" && bun typecheck 2>&1) && {
+    echo "ACTUAL: typecheck passed"
+    echo "$TYPE_CHECK_OUTPUT" | tail -5
+    pass "a"
+  } || {
+    echo "ACTUAL: typecheck FAILED (exit $?)"
+    echo "$TYPE_CHECK_OUTPUT" | tail -20
+    fail "a"
+  }
+fi
 
 setup_project
 
@@ -174,7 +306,8 @@ kill_all_opencode
 TMUX_B="e2e-live-detach-b"
 
 start_opencode_in_tmux "$TMUX_B"
-echo "Waiting for TUI to start (10s)..."; sleep 10
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_B" || true
 
 # Find the parent opencode PID
 PARENT_PID=""
@@ -191,16 +324,23 @@ echo "Parent PID: ${PARENT_PID:-unknown}"
 # Send /detach while idle (no in-flight prompt needed for the bash-return test)
 echo "Sending /detach..."
 tmux send-keys -t "$TMUX_B" "/detach" Enter
-sleep 8
 
-# Check bash prompt returned — the tmux pane should show a shell prompt
+# No turn is in flight here, so the handoff is fast, but poll instead of a
+# blind sleep anyway (deadline E2E_STARTUP_TIMEOUT -- no turn-completion wait
+# needed, this is a startup-class wait for the record to appear).
+REC_FILE_B="$DATA_DIR/server/$PROJECT_ID/server.json"
+echo "Waiting for discovery record after /detach (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+deadline_b2=$(( $(date +%s) + E2E_STARTUP_TIMEOUT ))
+while [ "$(date +%s)" -lt "$deadline_b2" ] && [ ! -f "$REC_FILE_B" ]; do sleep "$E2E_POLL_INTERVAL"; done
+
+# Check bash prompt returned (captured after the poll so the diagnostic still
+# shows the pane state at the moment we gave up waiting, on failure)
 CAP_B=$(tmux capture-pane -t "$TMUX_B" -p 2>/dev/null || echo "")
 echo "--- tmux pane after /detach ---"
 echo "$CAP_B" | tail -5
 echo "---"
 
 # Check discovery record
-REC_FILE_B="$DATA_DIR/server/$PROJECT_ID/server.json"
 if [ ! -f "$REC_FILE_B" ]; then
   echo "ACTUAL: No discovery record after /detach"
   fail "b"
@@ -229,7 +369,13 @@ else
     fi
   else
     echo "ACTUAL: Child PID differs from parent — detached spawn confirmed"
-    # Check parent died
+    # Poll for the parent to actually exit instead of a one-shot check --
+    # the record is written before the parent finishes tearing down, so
+    # asserting parent-liveness immediately after the record-poll races on
+    # that 1-2s gap the old fixed sleep used to absorb (a real run hit this:
+    # record appeared, then a one-shot check found the parent still alive).
+    deadline_b_parent=$(( $(date +%s) + E2E_STARTUP_TIMEOUT ))
+    while [ "$(date +%s)" -lt "$deadline_b_parent" ] && pid_alive "$PARENT_PID"; do sleep "$E2E_POLL_INTERVAL"; done
     if pid_alive "$PARENT_PID"; then
       echo "ACTUAL: Parent still alive (unexpected)"
       fail "b"
@@ -264,13 +410,31 @@ echo "EXPECTED: stop sends SIGTERM, process dies, record deleted"
 kill_all_opencode
 TMUX_C="e2e-live-detach-c"
 start_opencode_in_tmux "$TMUX_C"
-sleep 8
+# Gate on TUI readiness before typing -- a bare fixed sleep here risked the
+# same lost-keystroke class of bug found in e2e-detachable.sh item b (process
+# existing does not imply the TUI has taken over stdin yet).
+wait_for_tui_ready "$TMUX_C" || echo "WARNING: TUI readiness marker not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway"
 tmux send-keys -t "$TMUX_C" "/detach" Enter
-sleep 8
 
+# No turn is in flight here, so the handoff is fast, but poll instead of a
+# blind sleep anyway (same exposure class as item b's idle /detach; deadline
+# E2E_STARTUP_TIMEOUT, no turn-completion wait needed).
 REC_FILE_C="$DATA_DIR/server/$PROJECT_ID/server.json"
+echo "Waiting for discovery record after /detach (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+deadline_c2=$(( $(date +%s) + E2E_STARTUP_TIMEOUT ))
+while [ "$(date +%s)" -lt "$deadline_c2" ] && [ ! -f "$REC_FILE_C" ]; do sleep "$E2E_POLL_INTERVAL"; done
+
 STOP_PID=$(rec_field "$REC_FILE_C" "pid" 2>/dev/null || echo "")
 echo "Detached PID: ${STOP_PID:-unknown}"
+
+# Poll for the child to be alive instead of a one-shot check right after the
+# record-poll above -- defensive parity with the other /detach flows'
+# trailing-state checks (the child writes the record itself, so this should
+# already hold, but avoid relying on that timing).
+if [ -n "$STOP_PID" ] && [ "$STOP_PID" != "null" ]; then
+  deadline_c_child=$(( $(date +%s) + E2E_STARTUP_TIMEOUT ))
+  while [ "$(date +%s)" -lt "$deadline_c_child" ] && ! pid_alive "$STOP_PID"; do sleep "$E2E_POLL_INTERVAL"; done
+fi
 
 if [ -z "$STOP_PID" ] || [ "$STOP_PID" = "null" ]; then
   echo "ACTUAL: No discovery record"
@@ -323,38 +487,67 @@ kill_all_opencode
 TMUX_D="e2e-live-detach-d"
 
 start_opencode_in_tmux "$TMUX_D"
-echo "Waiting for TUI to start (10s)..."; sleep 10
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_D" || true
 
-# Send a long-running tool prompt
+# Send a long-running tool prompt. Turn start is detected by polling for the
+# "Bash(...)" tool-call header instead of blindly sleeping 15s, so
+# E2E_TOOL_SLEEP=12 still leaves most of the sleep remaining for the queued
+# second prompt and /detach below to land mid-turn.
 echo "Sending long-running tool prompt..."
-tmux send-keys -t "$TMUX_D" "run the shell command 'sleep 20' with the bash tool and report back when done" Enter
-echo "Waiting for model to start the tool call (15s)..."; sleep 15
+# No reply marker in this prompt; "sleep ${E2E_TOOL_SLEEP}" is the first text
+# in this fresh pane, so it's still a safe landed-nonce for tui_submit_prompt.
+tui_submit_prompt "$TMUX_D" "run the shell command 'sleep ${E2E_TOOL_SLEEP}' with the bash tool and report back when done" "sleep ${E2E_TOOL_SLEEP}"
+echo "Waiting for model to start the tool call (poll for Bash(sleep ${E2E_TOOL_SLEEP}), max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_pane "$TMUX_D" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT" || echo "WARNING (item d): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway"
 
-# Send a second prompt that should queue behind the in-flight one
+# Send a second prompt that should queue behind the in-flight one.
+# nonce is "now reply with" (not bare "done") -- prompt 1's own text ends in
+# "...report back when done", so a bare "done" landed-check would false-
+# positive against content already on screen before this prompt is even
+# typed.
 echo "Sending second prompt (queued)..."
-tmux send-keys -t "$TMUX_D" "now reply with 'done'" Enter
-sleep 2
+tui_submit_prompt "$TMUX_D" "now reply with 'done'" "now reply with" 1
 
 # Send /detach
 echo "Sending /detach..."
 tmux send-keys -t "$TMUX_D" "/detach" Enter
-sleep 10
 
-# Check bash prompt returned
+# Live-mode /detach mid-turn defers until the next safe turn boundary
+# (whenIdle): it only spawns the child, writes the record, and exits the
+# parent once turn 1 finishes, so the record appears roughly (remaining tool
+# sleep + model wrap-up + child spawn) after /detach -- a blind fixed sleep
+# here raced against that once the timeline got shorter. Poll instead
+# (deadline E2E_TURN_TIMEOUT, since this must cover turn-1 completion, not
+# just startup).
+REC_FILE_D="$DATA_DIR/server/$PROJECT_ID/server.json"
+echo "Waiting for discovery record after /detach (poll, max ${E2E_TURN_TIMEOUT}s)..."
+deadline_d2=$(( $(date +%s) + E2E_TURN_TIMEOUT ))
+while [ "$(date +%s)" -lt "$deadline_d2" ] && [ ! -f "$REC_FILE_D" ]; do sleep "$E2E_POLL_INTERVAL"; done
+
+# Check bash prompt returned (captured after the poll so the diagnostic still
+# shows the pane state at the moment we gave up waiting, on failure)
 CAP_D=$(tmux capture-pane -t "$TMUX_D" -p 2>/dev/null || echo "")
 echo "--- tmux pane after /detach (item d) ---"
 echo "$CAP_D" | tail -5
 echo "---"
 
 # Check discovery record
-REC_FILE_D="$DATA_DIR/server/$PROJECT_ID/server.json"
 if [ ! -f "$REC_FILE_D" ]; then
   echo "ACTUAL: No discovery record after /detach"
   tmux kill-session -t "$TMUX_D" 2>/dev/null || true
   fail "d"
 else
   CHILD_PID_D=$(rec_field "$REC_FILE_D" "pid")
-  echo "Child PID: ${CHILD_PID_D:-unknown}"
+  SID_D=$(rec_field "$REC_FILE_D" "sessionID")
+  echo "Child PID: ${CHILD_PID_D:-unknown}  Session: ${SID_D:-unknown}"
+
+  # Poll for the child to be alive instead of a one-shot check right after
+  # the record-poll above -- same defensive parity as item (c).
+  if [ -n "$CHILD_PID_D" ]; then
+    deadline_d_child=$(( $(date +%s) + E2E_STARTUP_TIMEOUT ))
+    while [ "$(date +%s)" -lt "$deadline_d_child" ] && ! pid_alive "$CHILD_PID_D"; do sleep "$E2E_POLL_INTERVAL"; done
+  fi
 
   if [ -z "$CHILD_PID_D" ] || ! pid_alive "$CHILD_PID_D"; then
     echo "ACTUAL: Child process dead"
@@ -390,9 +583,17 @@ else
       fi
     fi
 
-    # Wait for child to drain both turns (sleep 20 + second prompt processing)
-    echo "Waiting for child to drain both turns (~35s)..."
-    sleep 35
+    # Wait for child to drain both turns (tool sleep + second prompt
+    # processing). Poll the DB for the 'done' reply instead of blindly
+    # sleeping ~35s (deadline E2E_TURN_TIMEOUT, default 90s >= the old fixed
+    # 35s), when we have a sessionID to scope the query to.
+    echo "Waiting for child to drain both turns (poll DB, max ${E2E_TURN_TIMEOUT}s)..."
+    if [ -n "$SID_D" ]; then
+      wait_for_session_text "$SID_D" "done" "$E2E_TURN_TIMEOUT" || echo "WARNING: DB never showed 'done' within ${E2E_TURN_TIMEOUT}s"
+    else
+      echo "WARNING: no sessionID on record, falling back to fixed 35s wait"
+      sleep 35
+    fi
 
     # Attach and verify both results visible
     TMUX_D2="e2e-live-detach-d2"
@@ -400,7 +601,8 @@ else
     sleep 1
     tmux send-keys -t "$TMUX_D2" \
       "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --continue --dir /tmp/opencode-e2e-live/project 2>&1" Enter
-    echo "Waiting for attach to connect (15s)..."; sleep 15
+    echo "Waiting for attach to connect (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+    wait_for_tui_ready "$TMUX_D2" || true
 
     CAP_D2=$(tmux capture-pane -t "$TMUX_D2" -p -S -40 2>/dev/null || echo "")
     echo "--- attach output (item d) ---"
@@ -410,7 +612,7 @@ else
     # Check for both the sleep tool result and the "done" reply
     HAS_SLEEP_RESULT=false
     HAS_DONE_REPLY=false
-    if echo "$CAP_D2" | grep -qiE "(sleep|20|seconds)"; then HAS_SLEEP_RESULT=true; fi
+    if echo "$CAP_D2" | grep -qiE "(sleep|${E2E_TOOL_SLEEP}|seconds)"; then HAS_SLEEP_RESULT=true; fi
     if echo "$CAP_D2" | grep -qiE "('done'|done)"; then HAS_DONE_REPLY=true; fi
 
     if $HAS_SLEEP_RESULT && $HAS_DONE_REPLY; then
@@ -450,9 +652,10 @@ NONCE_EFGK="efgknonce$$"
 
 header "e/f/g/k setup" "detach a session containing a nonce reply"
 start_opencode_in_tmux "$TMUX_EFGK"
-echo "Waiting for TUI to start (10s)..."; sleep 10
-tmux send-keys -t "$TMUX_EFGK" "say the word $NONCE_EFGK and nothing else" Enter
-for i in $(seq 1 30); do tmux capture-pane -pt "$TMUX_EFGK" | grep -q "$NONCE_EFGK" && break; sleep 1; done
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_EFGK" || true
+tui_submit_prompt "$TMUX_EFGK" "say the word $NONCE_EFGK and nothing else" "$NONCE_EFGK"
+for i in $(seq 1 30); do tmux capture-pane -pt "$TMUX_EFGK" -J | grep -q "$NONCE_EFGK" && break; sleep 1; done
 sleep 3 # let the turn fully settle before detaching
 tmux send-keys -t "$TMUX_EFGK" "/detach" Enter
 REC_EFGK=""
@@ -479,14 +682,17 @@ else
   tmux new-session -d -s "$TMUX_EFGK" -x 120 -y 40 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_EFGK" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach 2>&1" Enter
-  sleep 8
+  # Poll for the picker instead of a blind sleep -- sending Enter before it
+  # renders would land on nothing (same lost-keystroke class of bug found in
+  # e2e-detachable.sh item b).
+  wait_for_pane "$TMUX_EFGK" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
   CAP_E1=$(tmux capture-pane -pt "$TMUX_EFGK" 2>/dev/null || echo "")
   echo "--- picker (item e) ---"; echo "$CAP_E1" | tail -15; echo "---"
   E_OK=true
   echo "$CAP_E1" | grep -q "Resume session" || { echo "ACTUAL: picker prompt not shown"; E_OK=false; }
   echo "$CAP_E1" | grep -q "Create new session" || { echo "ACTUAL: 'Create new session' row missing"; E_OK=false; }
   tmux send-keys -t "$TMUX_EFGK" Enter
-  sleep 10
+  wait_for_pane "$TMUX_EFGK" "$NONCE_EFGK" "$E2E_STARTUP_TIMEOUT" || true
   CAP_E2=$(tmux capture-pane -pt "$TMUX_EFGK" -S -60 2>/dev/null || echo "")
   echo "--- resumed (item e) ---"; echo "$CAP_E2" | tail -15; echo "---"
   echo "$CAP_E2" | grep -q "$NONCE_EFGK" || { echo "ACTUAL: resumed pane missing nonce"; E_OK=false; }
@@ -531,7 +737,9 @@ else
   tmux new-session -d -s "$TMUX_EFGK" -x 120 -y 40 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_EFGK" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach 2>&1" Enter
-  sleep 8
+  # Poll for the picker instead of a blind sleep before sending Escape --
+  # see item (e)'s comment above.
+  wait_for_pane "$TMUX_EFGK" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
   tmux send-keys -t "$TMUX_EFGK" Escape
   sleep 4
   CAP_G=$(tmux capture-pane -pt "$TMUX_EFGK" 2>/dev/null || echo "")
@@ -601,10 +809,19 @@ NONCE_H="zebrafoxtrot$$"
 NONCE_H_UPPER=$(printf '%s' "$NONCE_H" | tr a-z A-Z)
 
 start_opencode_in_tmux "$TMUX_H"
-echo "Waiting for TUI to start (10s)..."; sleep 10
-tmux send-keys -t "$TMUX_H" "use the bash tool to run the shell command 'sleep 15', then say done" Enter
-sleep 6 # turn now active (in-flight)
-tmux send-keys -t "$TMUX_H" "write the word $NONCE_H in all uppercase letters, nothing else" Enter
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_H" || true
+# Turn start is verified by tui_submit_prompt (landed + activity) and then
+# confirmed again by polling for the "Bash(...)" tool-call header (should now
+# normally succeed instantly). No reply marker in this prompt; "sleep
+# ${E2E_TOOL_SLEEP}" is the first text in this fresh pane, so it's still a
+# safe landed-nonce.
+tui_submit_prompt "$TMUX_H" "use the bash tool to run the shell command 'sleep ${E2E_TOOL_SLEEP}', then say done" "sleep ${E2E_TOOL_SLEEP}"
+wait_for_pane "$TMUX_H" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT" || echo "WARNING (item h): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway" # turn now active (in-flight)
+# Queued behind turn 1 -- NONCE_H is unique (not present in prompt 1's text),
+# so tui_submit_prompt's queued=1 path (verify landed, then verify it left
+# the composer) applies.
+tui_submit_prompt "$TMUX_H" "write the word $NONCE_H in all uppercase letters, nothing else" "$NONCE_H" 1
 sleep 2
 tmux send-keys -t "$TMUX_H" "/detach" Enter
 
@@ -639,9 +856,9 @@ else
   tmux new-session -d -s "$TMUX_H2" -x 120 -y 60 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_H2" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach 2>&1" Enter
-  sleep 8
+  wait_for_pane "$TMUX_H2" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
   tmux send-keys -t "$TMUX_H2" Enter
-  sleep 10
+  wait_for_pane "$TMUX_H2" "$NONCE_H_UPPER" "$E2E_STARTUP_TIMEOUT" || true
   CAP_H=$(tmux capture-pane -pt "$TMUX_H2" -S -200 2>/dev/null || echo "")
   echo "--- attach replay (item h) ---"; echo "$CAP_H" | tail -20; echo "---"
   echo "$CAP_H" | grep -q "$NONCE_H_UPPER" || { echo "ACTUAL: replay missing UPPERCASE reply"; H_OK=false; }
@@ -687,9 +904,15 @@ kill_all_opencode
 TMUX_I="e2e-live-detach-i"
 
 start_opencode_in_tmux "$TMUX_I"
-echo "Waiting for TUI to start (10s)..."; sleep 10
-tmux send-keys -t "$TMUX_I" "use the bash tool to run the shell command 'sleep 15', then say done" Enter
-sleep 6
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_I" || true
+# Turn start is verified by tui_submit_prompt (landed + activity) and then
+# confirmed again by polling for the "Bash(...)" tool-call header, which
+# should now normally succeed instantly. No reply marker in this prompt;
+# "sleep ${E2E_TOOL_SLEEP}" is the first text in this fresh pane, so it's
+# still a safe landed-nonce.
+tui_submit_prompt "$TMUX_I" "use the bash tool to run the shell command 'sleep ${E2E_TOOL_SLEEP}', then say done" "sleep ${E2E_TOOL_SLEEP}"
+wait_for_pane "$TMUX_I" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT" || echo "WARNING (item i): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway"
 tmux send-keys -t "$TMUX_I" "/new" Enter
 sleep 2
 tmux send-keys -t "$TMUX_I" "/detach" Enter
@@ -729,9 +952,10 @@ TMUX_JL="e2e-live-detach-jl"
 NONCE_JL="jlnonce$$"
 
 start_opencode_in_tmux "$TMUX_JL"
-echo "Waiting for TUI to start (10s)..."; sleep 10
-tmux send-keys -t "$TMUX_JL" "say the word $NONCE_JL and nothing else" Enter
-for i in $(seq 1 30); do tmux capture-pane -pt "$TMUX_JL" | grep -q "$NONCE_JL" && break; sleep 1; done
+echo "Waiting for TUI to start (poll, max ${E2E_STARTUP_TIMEOUT}s)..."
+wait_for_tui_ready "$TMUX_JL" || true
+tui_submit_prompt "$TMUX_JL" "say the word $NONCE_JL and nothing else" "$NONCE_JL"
+for i in $(seq 1 30); do tmux capture-pane -pt "$TMUX_JL" -J | grep -q "$NONCE_JL" && break; sleep 1; done
 sleep 3
 tmux send-keys -t "$TMUX_JL" "/detach" Enter
 REC_JL=""
