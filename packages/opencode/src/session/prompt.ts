@@ -54,6 +54,8 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { SessionInput } from "@opencode-ai/core/session/input"
+import { SessionMessage } from "@opencode-ai/core/session/message"
 import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
@@ -1066,6 +1068,13 @@ const layer = Layer.effect(
       const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       yield* revert.cleanup(session)
       const message = yield* createUserMessage(input)
+      // V1→V2 promotion bridge: mark any durable admission for this exact
+      // messageID promoted now that the user message is visible. No-ops when
+      // the prompt never went through httpapi admission (see SessionInput.promote).
+      yield* SessionInput.promote(db, events, {
+        id: SessionMessage.ID.make(message.info.id),
+        sessionID: input.sessionID,
+      })
       yield* sessions.touch(input.sessionID)
 
       const permissions: PermissionV1.Rule[] = []

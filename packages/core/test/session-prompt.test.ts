@@ -400,6 +400,67 @@ describe("SessionV2.prompt", () => {
     }),
   )
 
+  // The following three cover the V1→V2 promotion bridge (SessionInput.promote):
+  // V1's SessionPrompt.prompt calls this by exact messageID once its own user
+  // message becomes visible, instead of sweeping a delivery cutoff.
+  it.effect("promotes one pending admitted input directly by messageID", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const session = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const admittedInput = yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Promote directly" }),
+        resume: false,
+      })
+
+      expect(yield* SessionInput.hasPending(db, sessionID, "steer")).toBe(true)
+
+      yield* SessionInput.promote(db, events, { id: admittedInput.id, sessionID })
+
+      expect(yield* SessionInput.hasPending(db, sessionID, "steer")).toBe(false)
+      expect(yield* admitted(admittedInput.id)).toHaveProperty("promotedSeq")
+      expect(yield* session.messages({ sessionID })).toMatchObject([
+        { id: admittedInput.id, type: "user", text: "Promote directly" },
+      ])
+    }),
+  )
+
+  it.effect("no-ops when the messageID was never durably admitted", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const events = yield* EventV2.Service
+      const orphanID = SessionMessage.ID.create()
+
+      yield* SessionInput.promote(db, events, { id: orphanID, sessionID })
+
+      expect(yield* admitted(orphanID)).toBeUndefined()
+      expect(yield* eventCount(EventV2.versionedType(SessionEvent.Prompted.type, 1))).toBe(0)
+    }),
+  )
+
+  it.effect("promoting an already-promoted input is idempotent", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const { db } = yield* Database.Service
+      const session = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const admittedInput = yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Promote twice" }),
+        resume: false,
+      })
+
+      yield* SessionInput.promote(db, events, { id: admittedInput.id, sessionID })
+      yield* SessionInput.promote(db, events, { id: admittedInput.id, sessionID })
+
+      expect(yield* eventCount(EventV2.versionedType(SessionEvent.Prompted.type, 1))).toBe(1)
+      expect(yield* session.messages({ sessionID })).toHaveLength(1)
+    }),
+  )
+
   it.effect("reprojects pending inbox input without scheduling execution", () =>
     Effect.gen(function* () {
       yield* setup

@@ -26,7 +26,10 @@ import { Image } from "../../src/image/image"
 import { Question } from "../../src/question"
 import { Todo } from "../../src/session/todo"
 import { Session } from "@/session/session"
-import { SessionMessageTable } from "@opencode-ai/core/session/sql"
+import { SessionInputTable, SessionMessageTable } from "@opencode-ai/core/session/sql"
+import { SessionInput } from "@opencode-ai/core/session/input"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { Prompt } from "@opencode-ai/core/session/prompt"
 import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -585,6 +588,75 @@ it.instance("legacy prompt emits message events without session.next events", ()
     expect(seen).toContain(MessageV2.Event.Updated.type)
     expect(seen).toContain(MessageV2.Event.PartUpdated.type)
     expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
+  }),
+)
+
+// V1→V2 promotion bridge (RENOVATION P3b): direct SessionPrompt.prompt callers
+// (task tool, github handler, commands, handoff drain self-POST) never went
+// through httpapi admission, so the promotion publish must tolerate a missing
+// session_input row instead of erroring or fabricating one.
+it.instance("promotion no-ops when the prompt was never durably admitted", () =>
+  Effect.gen(function* () {
+    const { db } = yield* Database.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "No admission" })
+
+    const message = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+
+    expect(message.info.role).toBe("user")
+    const row = yield* db
+      .select()
+      .from(SessionInputTable)
+      .where(eq(SessionInputTable.id, SessionMessage.ID.make(message.info.id)))
+      .get()
+      .pipe(Effect.orDie)
+    expect(row).toBeUndefined()
+  }),
+)
+
+// Simulates the crash-recovery precondition: a handler admitted the input
+// (session_input row, pending) but the process died before V1 execution made
+// the user message visible. Once V1 execution runs (as the carry-forward wake
+// would trigger via the V2 runner, or here directly), the same messageID's
+// promotion clears hasPending — proving the row is drainable exactly once.
+it.instance("promotes a pre-admitted durable input when V1 execution makes it visible", () =>
+  Effect.gen(function* () {
+    const events = yield* EventV2Bridge.Service
+    const { db } = yield* Database.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pre-admitted" })
+    const messageID = MessageID.ascending()
+
+    yield* SessionInput.admit(db, events, {
+      id: SessionMessage.ID.make(messageID),
+      sessionID: chat.id,
+      prompt: Prompt.make({ text: "hello from admission" }),
+      delivery: "steer",
+    })
+
+    expect(yield* SessionInput.hasPending(db, chat.id, "steer")).toBe(true)
+
+    const message = yield* prompt.prompt({
+      sessionID: chat.id,
+      messageID,
+      agent: "build",
+      model: ref,
+      noReply: true,
+      parts: [{ type: "text", text: "hello from admission" }],
+    })
+
+    expect(message.info.id).toBe(messageID)
+    expect(yield* SessionInput.hasPending(db, chat.id, "steer")).toBe(false)
+    const admittedRow = yield* SessionInput.find(db, SessionMessage.ID.make(messageID))
+    expect(admittedRow?.promotedSeq).toBeDefined()
   }),
 )
 

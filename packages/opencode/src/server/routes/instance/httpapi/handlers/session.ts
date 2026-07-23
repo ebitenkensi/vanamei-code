@@ -15,6 +15,10 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { PromptInput } from "@opencode-ai/schema/prompt-input"
+import { AgentAttachment, Source } from "@opencode-ai/schema/prompt"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
@@ -45,11 +49,50 @@ const tryParseJson = (text: string) =>
     catch: () => new HttpApiError.BadRequest({}),
   })
 
+// Builds the durable admission's PromptInput.Prompt representation from the
+// legacy parts wire shape. Subtask parts have no V2 prompt equivalent and are
+// dropped here — the admitted record is a best-effort durability net for the
+// crash-recovery wake, not a faithful replay of everything V1 can do with a
+// prompt (see RENOVATION P3d for closing that gap).
+function admittedPrompt(parts: typeof PromptPayload.Type.parts): PromptInput.Prompt {
+  const text = parts
+    .filter((part): part is SessionV1.TextPartInput => part.type === "text" && !part.synthetic)
+    .map((part) => part.text)
+    .join("\n")
+  const files = parts
+    .filter((part): part is SessionV1.FilePartInput => part.type === "file")
+    .map((part) =>
+      PromptInput.FileAttachment.create({
+        uri: part.url,
+        name: part.filename,
+        source: part.source
+          ? Source.make({ start: part.source.text.start, end: part.source.text.end, text: part.source.text.value })
+          : undefined,
+      }),
+    )
+  const agents = parts
+    .filter((part): part is SessionV1.AgentPartInput => part.type === "agent")
+    .map((part) =>
+      AgentAttachment.make({
+        name: part.name,
+        source: part.source
+          ? Source.make({ start: part.source.start, end: part.source.end, text: part.source.value })
+          : undefined,
+      }),
+    )
+  return PromptInput.Prompt.make({
+    text,
+    ...(files.length > 0 ? { files } : {}),
+    ...(agents.length > 0 ? { agents } : {}),
+  })
+}
+
 export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
     const shareSvc = yield* SessionShare.Service
     const promptSvc = yield* SessionPrompt.Service
+    const sessionV2 = yield* SessionV2.Service
     const revertSvc = yield* SessionRevert.Service
     const compactSvc = yield* SessionCompaction.Service
     const runState = yield* SessionRunState.Service
@@ -295,14 +338,39 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return true
     })
 
+    // Durably admits the prompt (admit-only: resume:false, execution stays
+    // V1) before promptSvc.prompt ever runs, so a defect that kills the
+    // fire-and-forget prompt_async fiber cannot lose the input — the
+    // detach-child carry-forward wake can still recover it from the pending
+    // session_input row. Reuses SessionV2.prompt's own idempotent-retry /
+    // conflict semantics rather than re-deriving them here.
+    const admitPrompt = Effect.fn("SessionHttpApi.admitPrompt")(function* (input: {
+      sessionID: SessionID
+      messageID: MessageID
+      parts: typeof PromptPayload.Type.parts
+    }) {
+      yield* sessionV2
+        .prompt({
+          id: SessionMessage.ID.make(input.messageID),
+          sessionID: input.sessionID,
+          prompt: admittedPrompt(input.parts),
+          delivery: "steer",
+          resume: false,
+        })
+        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
+    })
+
     const prompt = Effect.fn("SessionHttpApi.prompt")(function* (ctx: {
       params: { sessionID: SessionID }
       payload: typeof PromptPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
+      const messageID = ctx.payload.messageID ?? MessageID.ascending()
+      yield* admitPrompt({ sessionID: ctx.params.sessionID, messageID, parts: ctx.payload.parts })
       const message = yield* promptSvc
         .prompt({
           ...ctx.payload,
+          messageID,
           sessionID: ctx.params.sessionID,
         })
         .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
@@ -316,7 +384,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof PromptPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      yield* promptSvc.prompt({ ...ctx.payload, sessionID: ctx.params.sessionID }).pipe(
+      const messageID = ctx.payload.messageID ?? MessageID.ascending()
+      yield* admitPrompt({ sessionID: ctx.params.sessionID, messageID, parts: ctx.payload.parts })
+      yield* promptSvc.prompt({ ...ctx.payload, messageID, sessionID: ctx.params.sessionID }).pipe(
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             yield* Effect.logError("prompt_async failed", { sessionID: ctx.params.sessionID, cause })

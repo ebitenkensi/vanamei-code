@@ -242,6 +242,27 @@ const publish = Effect.fn("SessionInput.publish")(function* (
   return rows.length
 })
 
+// V1 execution calls this once its own user message becomes durably visible,
+// naming the exact same messageID it just wrote. Tolerates callers that never
+// went through admission (task tool, github handler, commands, handoff drain
+// self-POST, direct SessionPrompt.prompt callers): no admitted row means
+// nothing to promote, so this is a silent no-op rather than an error. Already
+// promoted rows (retries, concurrent callers) are likewise a no-op.
+export const promote = Effect.fn("SessionInput.promote")(function* (
+  db: DatabaseService,
+  events: EventV2.Interface,
+  input: { readonly id: SessionMessage.ID; readonly sessionID: SessionSchema.ID },
+) {
+  const row = yield* db
+    .select()
+    .from(SessionInputTable)
+    .where(and(eq(SessionInputTable.id, input.id), eq(SessionInputTable.session_id, input.sessionID)))
+    .get()
+    .pipe(Effect.orDie)
+  if (row === undefined || row.promoted_seq !== null) return
+  yield* publish(db, events, input.sessionID, [row])
+})
+
 export const promoteSteers = Effect.fn("SessionInput.promoteSteers")(function* (
   db: DatabaseService,
   events: EventV2.Interface,
