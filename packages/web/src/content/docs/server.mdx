@@ -120,6 +120,7 @@ The opencode server exposes the following APIs.
 | ------ | ------------------- | ----------------------------------------------------------------------------------------------------- | ---------------- |
 | `POST` | `/instance/dispose` | Dispose the current instance                                                                          | `boolean`        |
 | `POST` | `/server/shutdown`  | Gracefully shut down a detached server: disposes all instances and stops the listener (auth required) | `204 No Content` |
+| `POST` | `/server/handoff`   | Accept queued prompts from a detaching TUI client and replay them after the active turn finishes (auth required) | `204 No Content` |
 
 ---
 
