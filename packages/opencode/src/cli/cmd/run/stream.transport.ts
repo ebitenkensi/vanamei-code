@@ -796,7 +796,7 @@ function createLayer(input: StreamInput) {
         })
 
         const bootstrap = Effect.fn("RunStreamTransport.bootstrap")(function* () {
-          const [messagesList, children, permissions, questions] = yield* Effect.all(
+          const [messagesList, children, permissions, questions, live] = yield* Effect.all(
             [
               messages(
                 input.sessionID,
@@ -821,6 +821,16 @@ function createLayer(input: StreamInput) {
               Effect.promise(() => input.sdk.question.list()).pipe(
                 Effect.map((item) => item.data ?? []),
                 Effect.orElseSucceed(() => []),
+              ),
+              // Fetched concurrently with (not after) the messages snapshot above
+              // so it costs no extra latency: replaySession() infers phase purely
+              // from whether the fetched messages/parts still look unfinished,
+              // which reads "idle" for the narrow window between one message
+              // finishing and the next being created server-side -- a mid-turn
+              // attach can land exactly there. The live status is the tiebreaker.
+              Effect.promise(() => input.sdk.session.status()).pipe(
+                Effect.map((item) => item.data?.[input.sessionID]?.type),
+                Effect.orElseSucceed(() => undefined),
               ),
             ],
             {
@@ -902,7 +912,11 @@ function createLayer(input: StreamInput) {
 
           const snapshot = currentSubagentState()
           traceTabs(input.trace, [], snapshot.tabs)
-          syncFooter([], replay?.patch, snapshot)
+          const patch =
+            live === "busy" && replay?.patch?.phase !== "running"
+              ? { ...replay?.patch, phase: "running" as const }
+              : replay?.patch
+          syncFooter([], patch, snapshot)
           if (replay) {
             yield* Effect.promise(() => input.footer.idle()).pipe(Effect.orElseSucceed(() => undefined))
           }
@@ -970,12 +984,34 @@ function createLayer(input: StreamInput) {
         })
 
         const mark = Effect.fn("RunStreamTransport.mark")(function* (event: Event) {
-          if (
-            event.type !== "session.status" ||
-            event.properties.sessionID !== input.sessionID ||
-            event.properties.status.type !== "idle"
-          ) {
+          if (event.type !== "session.status" || event.properties.sessionID !== input.sessionID) {
             return
+          }
+
+          // Re-arm the flush edge for turns this client only observes: after
+          // the first observed turn settles to idle, a follow-up turn started
+          // elsewhere (queue drain, another attach, a monitor) would stream
+          // into the uncommitted surface with the footer still idle -- and an
+          // idle->idle "transition" at its end flushes nothing. Busy is safe
+          // to reflect without the HTTP re-check below: a spurious running
+          // phase just re-arms the edge that the next verified idle resolves.
+          if (event.properties.status.type !== "idle") {
+            syncFooter([], { phase: "running" })
+            return
+          }
+
+          // An attach client observing someone else's already-running turn
+          // never calls runPromptTurn for it, so state.wait below stays
+          // unset for the whole turn. Without this, footer.ts's own
+          // running->idle transition -- the only thing that flushes the
+          // final streaming row out of RunScrollbackStream's uncommitted
+          // surface (footer.ts completeScrollback) -- never fires, leaving
+          // a reply the reducer already applied invisible on screen even
+          // though the DB has it. Re-verify with the same idle(true) HTTP
+          // check complete() uses below so a momentary idle blip ahead of a
+          // queued follow-up turn doesn't finalize the surface early.
+          if (yield* idle(true)) {
+            syncFooter([], { phase: "idle" })
           }
 
           const next = state.wait
