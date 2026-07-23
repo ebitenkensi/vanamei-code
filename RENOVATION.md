@@ -42,9 +42,12 @@
 
 ### P3 本丸
 
-- prompt_async を V2 経路 (SessionV2.prompt → SessionExecution) へ昇格し、`SessionPrompt.loop` と `SessionRunState.Runner` を撤去(直列化を SessionRunCoordinator に一本化)。
-- SSE にシーケンスカーソル(after= バックフィル)を導入し、attach の snapshot/live 縫合を根治。e2e の stale-attach RETRY を撤去して素の green を確認。
-- コーディネータ外の書き込み(admit / switchModel / switchAgent / revert)の直列化整理。
+仕様の正本は `SPEC-v2-seam.md` (2026-07-24 起草)。調査の結果、V2 runner のパリティ台帳 (`specs/v2/session.md`) に plugin hooks / mention 展開など missing が10項目あり、`SessionPrompt.loop` の即時全撤去は日常運用を壊すため、「二重経路の相互不認識の解消」を本体とする:
+
+- P3a: attach handshake 厳密化 (subscribe→connected→snapshot→drain) + 未知 message の fetch-on-miss。e2e の stale-attach RETRY を撤去して素の green を確認。
+- P3b: prompt/prompt_async の実行前 耐久 admission + V1 実行の promotion bridge (可視化と同時に promoted を刻む)。defect でも受理済み入力が消えない。
+- P3c: 直列化を SessionRunCoordinator に一本化し、`SessionRunState.Runner` は busy/cancel連鎖/status/shell 契約のファサードに縮退。
+- P3d (本リノベーション外・将来スペック): パリティ台帳の missing を潰してからの `SessionPrompt.loop` 撤去。
 
 ### P4 平坦化(任意)
 
