@@ -219,6 +219,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
+      // A running turn keeps writing messages for this session; deleting it
+      // out from under the loop resurrects rows or dies mid-write. Abort
+      // first (the abort endpoint), then remove.
+      yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
       yield* SessionError.mapStorageNotFound(session.remove(ctx.params.sessionID))
       return true
     })
@@ -463,6 +467,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID; messageID: MessageID; partID: PartID }
     }) {
       yield* requireSession(ctx.params.sessionID)
+      // Same protection as deleteMessage: the active turn streams into these
+      // parts and a concurrent mutation corrupts the in-flight projection.
+      yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
       yield* session.removePart(ctx.params)
       return true
     })
@@ -480,6 +487,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       ) {
         return yield* new HttpApiError.BadRequest({})
       }
+      // Same protection as deleteMessage: the active turn streams into these
+      // parts and a concurrent mutation corrupts the in-flight projection.
+      yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
       return yield* session.updatePart(payload)
     })
 
