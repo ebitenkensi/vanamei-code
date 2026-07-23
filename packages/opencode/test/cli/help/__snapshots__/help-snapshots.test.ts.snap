@@ -42,12 +42,12 @@ Options:
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode attach --help 1`] = `
-"opencode attach <url>
+"opencode attach [url]
 
 attach to a running opencode server
 
 Positionals:
-  url  http://localhost:4096                                                     [string] [required]
+  url  http://localhost:4096 (omit for auto-discovery from discovery record)                [string]
 
 Options:
   -h, --help          show help                                                            [boolean]
@@ -59,6 +59,7 @@ Options:
   -c, --continue      continue the last session                                            [boolean]
   -s, --session       session id to continue                                                [string]
       --fork          fork the session when continuing (use with --continue or --session)  [boolean]
+      --new           always create a new session (skip the resume picker)                 [boolean]
   -p, --password      basic auth password (defaults to OPENCODE_SERVER_PASSWORD)            [string]
   -u, --username      basic auth username (defaults to OPENCODE_SERVER_USERNAME or 'opencode')
                                                                                             [string]
@@ -103,7 +104,8 @@ Options:
       --thinking     show thinking blocks                                                  [boolean]
   -i, --interactive  run in direct interactive split-footer mode          [boolean] [default: false]
       --auto         auto-approve permissions that are not explicitly denied (dangerous!)
-                                                                          [boolean] [default: false]"
+                                                                          [boolean] [default: false]
+      --detach       spawn a detached server and connect the TUI over HTTP                 [boolean]"
 `;
 
 exports[`opencode CLI help-text snapshots every documented command emits stable help text: opencode debug --help 1`] = `
