@@ -429,7 +429,18 @@ export function createPromptState(input: PromptInput): PromptState {
       } satisfies SlashOption,
       { kind: "slash", name: "new", display: "/new", description: "start a new session" } satisfies SlashOption,
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
-      { kind: "slash", name: "auto", display: "/auto", description: "toggle LLM permission judge" } satisfies SlashOption,
+      {
+        kind: "slash",
+        name: "auto",
+        display: "/auto",
+        description: "toggle LLM permission judge",
+      } satisfies SlashOption,
+      {
+        kind: "slash",
+        name: "compact",
+        display: "/compact",
+        description: "compact session context",
+      } satisfies SlashOption,
       { kind: "slash", name: "detach", display: "/detach", description: "detach session" } satisfies SlashOption,
       { kind: "slash", name: "shutdown", display: "/shutdown", description: "shutdown session" } satisfies SlashOption,
     ]
@@ -452,7 +463,7 @@ export function createPromptState(input: PromptInput): PromptState {
           ]
         : []),
       // Panel openers — user commands of the same name take precedence
-      ...([
+      ...[
         {
           kind: "slash",
           action: "model" as const,
@@ -481,7 +492,7 @@ export function createPromptState(input: PromptInput): PromptState {
           display: "/variant",
           description: "switch model variant",
         } satisfies SlashOption,
-      ].filter((item) => !(input.commands() ?? []).some((cmd) => cmd.source !== "skill" && cmd.name === item.name))),
+      ].filter((item) => !(input.commands() ?? []).some((cmd) => cmd.source !== "skill" && cmd.name === item.name)),
       ...(input.commands() ?? [])
         .filter((item) => item.source !== "skill" && !hidden.has(item.name))
         .map(

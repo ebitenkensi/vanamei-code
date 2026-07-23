@@ -10,7 +10,7 @@
 // Resolves when the footer closes and all in-flight work finishes.
 import * as Locale from "@/util/locale"
 import { MessageID, PartID } from "@/session/schema"
-import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand } from "./prompt.shared"
+import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand, isCompactCommand } from "./prompt.shared"
 import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./types"
 
 type Trace = {
@@ -37,6 +37,11 @@ export type QueueInput = {
   // keeps the whenIdle() deferred behavior.
   detachImmediate?: boolean
   onShutdown?: () => Promise<void>
+  // Fires manual compaction for the current session. Rejected with a status
+  // notice (and dropped, not queued) while a turn is active, since the
+  // summarize handler drives its own V1 prompt loop server-side and must not
+  // run concurrently with an ordinary turn.
+  onCompact?: () => Promise<void>
   // If provided, normal exits (/exit, Ctrl+C double-press) run this before
   // closing. Only the detachable startup path sets this; plain --attach
   // leaves it undefined so exit only leaves the client.
@@ -375,6 +380,44 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         input.onShutdown = undefined // guard: only one shutdown per session
         void fn().then(() => input.footer.close())
       }
+      return
+    }
+
+    if (prompt.mode !== "shell" && isCompactCommand(prompt.text)) {
+      if (!input.onCompact) {
+        const status = "compact unavailable"
+        emit({ type: "stream.patch", patch: { status } }, { status })
+        return
+      }
+
+      if (state.active) {
+        const status = "compact: wait for the current turn to finish"
+        emit({ type: "stream.patch", patch: { status } }, { status })
+        return
+      }
+
+      const fn = input.onCompact
+      state.active = prompt
+      emit(
+        { type: "stream.patch", patch: { phase: "running", status: "compacting session" } },
+        { phase: "running", status: "compacting session" },
+      )
+
+      const runCompact = async () => {
+        try {
+          await fn()
+        } catch (error) {
+          const status = `compact failed: ${error instanceof Error ? error.message : String(error)}`
+          input.footer.append({ kind: "error", text: status, phase: "start", source: "system" })
+          emit({ type: "stream.patch", patch: { status } }, { status })
+        } finally {
+          state.active = undefined
+          emit({ type: "stream.patch", patch: { phase: "idle", status: "" } }, { phase: "idle", status: "" })
+          drain()
+        }
+      }
+
+      void runCompact()
       return
     }
 

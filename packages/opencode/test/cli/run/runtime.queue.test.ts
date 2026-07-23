@@ -466,6 +466,100 @@ describe("run runtime queue", () => {
     expect(seen).toEqual(["one"])
   })
 
+  test("/compact fires onCompact when idle", async () => {
+    const ui = footer()
+    let calls = 0
+
+    const task = runPromptQueue({
+      footer: ui.api,
+      onCompact: async () => {
+        calls += 1
+      },
+      run: async () => {},
+    })
+
+    ui.submit("/compact")
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(calls).toBe(1)
+    expect(
+      ui.events.some((event) => event.type === "stream.patch" && event.patch.status === "compacting session"),
+    ).toBe(true)
+
+    ui.api.close()
+    await task
+  })
+
+  test("drops /compact without firing while a turn is active", async () => {
+    const ui = footer()
+    const seen: string[] = []
+    let compactCalls = 0
+    let wake: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      wake = resolve
+    })
+
+    const task = runPromptQueue({
+      footer: ui.api,
+      onCompact: async () => {
+        compactCalls += 1
+      },
+      run: async (input) => {
+        seen.push(input.text)
+        if (seen.length === 1) {
+          await gate
+          return
+        }
+
+        ui.api.close()
+      },
+    })
+
+    ui.submit("one")
+    await Promise.resolve()
+
+    ui.submit("/compact")
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(compactCalls).toBe(0)
+    expect(
+      ui.events.some(
+        (event) =>
+          event.type === "stream.patch" && event.patch.status === "compact: wait for the current turn to finish",
+      ),
+    ).toBe(true)
+
+    wake?.()
+    ui.submit("two")
+    await task
+
+    expect(seen).toEqual(["one", "two"])
+    expect(compactCalls).toBe(0)
+  })
+
+  test("/compact surfaces an error notice when onCompact rejects", async () => {
+    const ui = footer()
+
+    const task = runPromptQueue({
+      footer: ui.api,
+      onCompact: async () => {
+        throw new Error("boom")
+      },
+      run: async () => {},
+    })
+
+    ui.submit("/compact")
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(ui.commits).toEqual([{ kind: "error", text: "compact failed: boom", phase: "start", source: "system" }])
+
+    ui.api.close()
+    await task
+  })
+
   test("propagates run errors", async () => {
     const ui = footer()
 

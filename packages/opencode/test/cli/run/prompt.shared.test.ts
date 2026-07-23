@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   createPromptHistory,
+  isCompactCommand,
   isExitCommand,
   isNewCommand,
   movePromptHistory,
@@ -97,5 +98,11 @@ describe("run prompt shared", () => {
     expect(isNewCommand("/new")).toBe(true)
     expect(isNewCommand(" /NEW ")).toBe(true)
     expect(isNewCommand("/new now")).toBe(false)
+  })
+
+  test("recognizes the compact command", () => {
+    expect(isCompactCommand("/compact")).toBe(true)
+    expect(isCompactCommand(" /Compact ")).toBe(true)
+    expect(isCompactCommand("/compact now")).toBe(false)
   })
 })

@@ -256,13 +256,7 @@ export function PanelShell(props: {
         </text>
       </box>
       <box height={1} flexShrink={0} />
-      <box
-        width="100%"
-        height={1}
-        paddingLeft={PANEL_PAD}
-        paddingRight={PANEL_PAD}
-        flexShrink={0}
-      >
+      <box width="100%" height={1} paddingLeft={PANEL_PAD} paddingRight={PANEL_PAD} flexShrink={0}>
         <input
           width="100%"
           focusedTextColor={props.theme().text}
@@ -492,8 +486,30 @@ export function RunCommandMenuBody(props: {
       ...prompt,
       ...agent,
       ...commands,
-      { action: "slash", name: "detach", category: "System", display: "Detach", footer: "/detach", keywords: "/detach detach background" },
-      { action: "slash", name: "shutdown", category: "System", display: "Shutdown", footer: "/shutdown", keywords: "/shutdown shutdown stop" },
+      {
+        action: "slash",
+        name: "compact",
+        category: "System",
+        display: "Compact",
+        footer: "/compact",
+        keywords: "/compact compact summarize context",
+      },
+      {
+        action: "slash",
+        name: "detach",
+        category: "System",
+        display: "Detach",
+        footer: "/detach",
+        keywords: "/detach detach background",
+      },
+      {
+        action: "slash",
+        name: "shutdown",
+        category: "System",
+        display: "Shutdown",
+        footer: "/shutdown",
+        keywords: "/shutdown shutdown stop",
+      },
       { action: "exit", category: "System", display: "Exit", footer: "/exit", keywords: "/exit exit" },
     ]
   })

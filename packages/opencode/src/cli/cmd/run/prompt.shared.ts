@@ -60,6 +60,10 @@ export function isShutdownCommand(input: string): boolean {
   return input.trim().toLowerCase() === "/shutdown"
 }
 
+export function isCompactCommand(input: string): boolean {
+  return input.trim().toLowerCase() === "/compact"
+}
+
 export function createPromptHistory(items?: RunPrompt[]): PromptHistoryState {
   const list = (items ?? []).filter((item) => item.text.trim().length > 0).map(promptCopy)
   const next: RunPrompt[] = []

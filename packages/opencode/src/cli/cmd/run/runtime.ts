@@ -911,6 +911,17 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       detachImmediate: input.detachImmediate,
       onShutdown: input.onShutdown,
       onExit: input.onExit,
+      onCompact: async () => {
+        if (!state.model) {
+          throw new Error("no model selected")
+        }
+
+        await ctx.sdk.session.summarize({
+          sessionID: state.sessionID,
+          providerID: state.model.providerID,
+          modelID: state.model.modelID,
+        })
+      },
       onSend: (prompt) => {
         state.shown = true
         state.history.push(prompt)
