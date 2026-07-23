@@ -270,9 +270,9 @@ const layer = Layer.effect(
       // Top-level sessions bind autostart monitors — subagent sessions
       // (parentID set) are short-lived and would steal the binding.
       if (session.parentID === undefined) {
-        yield* monitorAPI.rebind(sessionID, promptOps).pipe(
-          Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
-        )
+        yield* monitorAPI
+          .rebind(sessionID, promptOps)
+          .pipe(Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })))
       }
       const { task: taskTool } = yield* registry.named()
       const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
@@ -1224,33 +1224,27 @@ const layer = Layer.effect(
           }
           yield* sessions.updateMessage(msg)
 
-          const finalizeInterruptedAssistant = Effect.gen(function* () {
-            if (msg.time.completed) return
-            msg.error ??= MessageV2.fromError(new DOMException("Aborted", "AbortError"), {
-              providerID: msg.providerID,
-              aborted: true,
-            })
-            msg.time.completed = Date.now()
-            yield* sessions.updateMessage(msg)
-          })
-
-          const handle = yield* processor
-            .create({
+          // Covers the whole turn for this assistant message — handle creation,
+          // stream consumption, and the tool loop — not just handle creation.
+          // A failure or defect anywhere in that window (e.g. a caller passing
+          // an undefined agent, or any other bug that dies before handle.process
+          // even starts) must still finalize msg, otherwise it dangles with no
+          // error and no completed time until it resurfaces as an unrelated
+          // catchCause log elsewhere (e.g. SessionHttpApi.promptAsync).
+          const outcome: "break" | "continue" = yield* Effect.gen(function* () {
+            const handle = yield* processor.create({
               assistantMessage: msg,
               sessionID,
               model,
             })
-            .pipe(Effect.onInterrupt(() => finalizeInterruptedAssistant))
-
-          const outcome: "break" | "continue" = yield* Effect.gen(function* () {
             const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
             const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
             const promptOps = yield* ops()
             // Top-level sessions bind autostart monitors
             if (session.parentID === undefined) {
-              yield* monitorAPI.rebind(sessionID, promptOps).pipe(
-                Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })),
-              )
+              yield* monitorAPI
+                .rebind(sessionID, promptOps)
+                .pipe(Effect.catchCause((cause) => Effect.logWarning("monitor rebind failed", { cause })))
             }
 
             const tools = yield* SessionTools.resolve({
@@ -1365,8 +1359,21 @@ const layer = Layer.effect(
             }
             return "continue" as const
           }).pipe(
-            Effect.ensuring(instruction.clear(handle.message.id)),
-            Effect.onInterrupt(() => finalizeInterruptedAssistant),
+            Effect.ensuring(instruction.clear(msg.id)),
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                if (msg.time.completed) return
+                if (!Exit.isFailure(exit)) return
+                msg.error ??= Cause.hasInterruptsOnly(exit.cause)
+                  ? MessageV2.fromError(new DOMException("Aborted", "AbortError"), {
+                      providerID: msg.providerID,
+                      aborted: true,
+                    })
+                  : MessageV2.fromError(Cause.squash(exit.cause), { providerID: msg.providerID })
+                msg.time.completed = Date.now()
+                yield* sessions.updateMessage(msg)
+              }),
+            ),
           )
           if (cumulativeCost !== undefined) cumulativeCost += msg.cost
           if (outcome === "break") break

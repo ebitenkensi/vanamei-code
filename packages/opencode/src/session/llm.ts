@@ -13,6 +13,7 @@ import type { LLMClientService } from "@opencode-ai/llm/route"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
+import { NamedError } from "@opencode-ai/core/util/error"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
@@ -83,6 +84,17 @@ const live: Layer.Layer<
     const flags = yield* RuntimeFlags.Service
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      // StreamInput.agent is typed as required, but the 2026-07-20 defects
+      // (TypeError: undefined is not an object (evaluating 'C.name')) show a
+      // caller can still reach here with it undefined. Fail with a typed
+      // error instead of dying on the input.agent.name read below.
+      if (!input.agent) {
+        return yield* Effect.fail(
+          new NamedError.Unknown({
+            message: `LLM.run called without an agent for session ${input.sessionID}`,
+          }),
+        )
+      }
       yield* Effect.logInfo("stream", {
         providerID: input.model.providerID,
         modelID: input.model.id,

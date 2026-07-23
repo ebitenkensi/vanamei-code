@@ -11,6 +11,7 @@ import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/storage"
+import { NamedError } from "@opencode-ai/core/util/error"
 
 import { Effect, Layer, Context } from "effect"
 import { InstanceState } from "@/effect/instance-state"
@@ -326,6 +327,16 @@ const layer = Layer.effect(
       }
 
       const agent = yield* agents.get("compaction")
+      // Agent.Service.get is typed non-optional but is a plain lookup that
+      // returns undefined for a missing/misconfigured agent; an unguarded pass
+      // into LLM.run dies on agent.name (2026-07-20 C.name defect, ×13 via
+      // auto-compaction retries). The service contract keeps the error channel
+      // never, so publish + throw like prompt.ts does for missing agents.
+      if (!agent) {
+        const error = new NamedError.Unknown({ message: `Agent not found: "compaction"` })
+        yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+        throw error
+      }
       const model = agent.model
         ? yield* provider.getModel(agent.model.providerID, agent.model.modelID).pipe(Effect.orDie)
         : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID).pipe(Effect.orDie)
