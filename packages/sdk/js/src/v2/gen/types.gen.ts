@@ -73,6 +73,8 @@ export type Event =
   | EventPermissionReplied
   | EventPermissionDenied
   | EventPermissionJudged
+  | EventMonitorEvent
+  | EventMonitorStopped
   | EventTuiPromptAppend2
   | EventTuiCommandExecute2
   | EventTuiToastShow2
@@ -1425,11 +1427,33 @@ export type GlobalEvent = {
           requestID: string
           permission: string
           patterns: Array<string>
+          outcome: "allowed" | "denied" | "ask"
           reason: string
           tool?: {
             messageID: string
             callID: string
           }
+        }
+      }
+    | {
+        id: string
+        type: "monitor.event"
+        properties: {
+          sessionID: string
+          monitorID: string
+          description: string
+          lines: Array<string>
+        }
+      }
+    | {
+        id: string
+        type: "monitor.stopped"
+        properties: {
+          sessionID: string
+          monitorID: string
+          description: string
+          reason: "exit" | "timeout" | "flooded" | "stopped"
+          exitCode?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
         }
       }
     | {
@@ -1903,6 +1927,22 @@ export type McpRemoteConfig = {
   timeout?: number
 }
 
+export type MonitorConfig = {
+  autostart?: Array<{
+    /**
+     * Shell command to run
+     */
+    command: string
+    /**
+     * Short description shown in list and notifications
+     */
+    description: string
+    persistent?: boolean
+    timeout_ms?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    oneshot?: boolean
+  }>
+}
+
 /**
  * @deprecated Always uses stretch layout.
  */
@@ -2033,6 +2073,7 @@ export type Config = {
             }
       }
   instructions?: Array<string>
+  monitor?: MonitorConfig
   layout?: LayoutConfig
   permission?: PermissionConfig
   tools?: {
@@ -2062,6 +2103,7 @@ export type Config = {
     mcp_timeout?: number
     policies?: Array<ConfigV2ExperimentalPolicy>
   }
+  detach?: ConfigV2Detach
 }
 
 export type Model = {
@@ -2962,6 +3004,8 @@ export type V2Event =
   | PermissionReplied
   | PermissionDenied
   | PermissionJudged
+  | MonitorEvent
+  | MonitorStopped
   | TuiPromptAppend
   | TuiCommandExecute
   | TuiToastShow
@@ -3885,6 +3929,10 @@ export type ConfigV2ExperimentalPolicy = {
   action: "provider.use"
   effect: PolicyEffect
   resource: string
+}
+
+export type ConfigV2Detach = {
+  enabled?: boolean
 }
 
 export type ProjectDirectories = Array<{
@@ -5825,11 +5873,53 @@ export type PermissionJudged = {
     requestID: string
     permission: string
     patterns: Array<string>
+    outcome: "allowed" | "denied" | "ask"
     reason: string
     tool?: {
       messageID: string
       callID: string
     }
+  }
+}
+
+export type MonitorEvent = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "monitor.event"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    monitorID: string
+    description: string
+    lines: Array<string>
+  }
+}
+
+export type MonitorStopped = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "monitor.stopped"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    monitorID: string
+    description: string
+    reason: "exit" | "timeout" | "flooded" | "stopped"
+    exitCode?: number | "NaN" | "Infinity" | "-Infinity"
   }
 }
 
@@ -7001,11 +7091,35 @@ export type EventPermissionJudged = {
     requestID: string
     permission: string
     patterns: Array<string>
+    outcome: "allowed" | "denied" | "ask"
     reason: string
     tool?: {
       messageID: string
       callID: string
     }
+  }
+}
+
+export type EventMonitorEvent = {
+  id: string
+  type: "monitor.event"
+  properties: {
+    sessionID: string
+    monitorID: string
+    description: string
+    lines: Array<string>
+  }
+}
+
+export type EventMonitorStopped = {
+  id: string
+  type: "monitor.stopped"
+  properties: {
+    sessionID: string
+    monitorID: string
+    description: string
+    reason: "exit" | "timeout" | "flooded" | "stopped"
+    exitCode?: number | "NaN" | "Infinity" | "-Infinity"
   }
 }
 
@@ -11351,6 +11465,53 @@ export type ExperimentalWorkspaceWarpResponses = {
 
 export type ExperimentalWorkspaceWarpResponse =
   ExperimentalWorkspaceWarpResponses[keyof ExperimentalWorkspaceWarpResponses]
+
+export type ServerHandoffData = {
+  body?: {
+    sessionID: string
+    prompts: Array<{
+      parts: Array<unknown>
+    }>
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/server/handoff"
+}
+
+export type ServerHandoffErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ServerHandoffError = ServerHandoffErrors[keyof ServerHandoffErrors]
+
+export type ServerHandoffResponses = {
+  /**
+   * Handoff accepted
+   */
+  204: void
+}
+
+export type ServerHandoffResponse = ServerHandoffResponses[keyof ServerHandoffResponses]
+
+export type ServerShutdownData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/server/shutdown"
+}
+
+export type ServerShutdownResponses = {
+  /**
+   * <No Content>
+   */
+  200: unknown
+}
 
 export type V2HealthGetData = {
   body?: never

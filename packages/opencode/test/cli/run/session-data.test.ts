@@ -783,6 +783,84 @@ describe("run session data", () => {
     expect(judged.footer).toEqual({ patch: { judging: false } })
   })
 
+  // The judge rejects the pending request itself on a "denied" verdict --
+  // watch.ts never leaves the ask screen pending, so this only ever surfaces
+  // a passive scrollback notice and clears the "judging" pill.
+  test("surfaces a passive notice on outcome denied and never shows the interactive ask screen", () => {
+    const asked = reduce(createSessionData(), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["rm -rf /"],
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    })
+    expect(asked.footer).toEqual({ patch: { judging: true } })
+
+    const judged = reduce(asked.data, {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        permission: "bash",
+        patterns: ["rm -rf /"],
+        outcome: "denied",
+        reason: "destructive command",
+      },
+    })
+
+    expect(judged.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "● LLM judge denied bash(rm -rf /) — destructive command",
+        phase: "start",
+      }),
+    ])
+    expect(judged.footer).toEqual({ patch: { judging: false } })
+    expect(judged.data.permissions).toEqual([])
+  })
+
+  // Historical/replayed events may still carry the legacy "ask" outcome --
+  // it must resolve to the same passive notice, never the interactive screen.
+  test("treats a legacy outcome ask the same as denied", () => {
+    const asked = reduce(createSessionData(), {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        auto: true,
+      },
+    })
+
+    const judged = reduce(asked.data, {
+      type: "permission.judged",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        permission: "bash",
+        patterns: ["ls"],
+        outcome: "ask",
+        reason: "legacy escalation",
+      },
+    })
+
+    expect(judged.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: "● LLM judge denied bash(ls) — legacy escalation",
+      }),
+    ])
+    expect(judged.data.permissions).toEqual([])
+  })
+
   test("ignores permission.judged events for other sessions", () => {
     const out = reduce(createSessionData(), {
       type: "permission.judged",

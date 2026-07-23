@@ -74,7 +74,6 @@ export type SessionData = {
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
   pendingJudge: Map<string, PermissionRequest>
-  judgeReasons: Map<string, string>
   role: Map<string, MessageRole>
   msg: Map<string, string>
   part: Map<string, PartKind>
@@ -114,7 +113,6 @@ export function createSessionData(
     permissions: [],
     questions: [],
     pendingJudge: new Map(),
-    judgeReasons: new Map(),
     role: new Map(),
     msg: new Map(),
     part: new Map(),
@@ -194,6 +192,13 @@ function formatPermissionJudged(properties: { permission: string; patterns: stri
   return `⏺ Auto-allowed ${properties.permission}${suffix} — ${reason}`
 }
 
+function formatPermissionJudgeDenied(properties: { permission: string; patterns: string[]; reason?: string }): string {
+  const pattern = properties.patterns[0]
+  const suffix = pattern ? `(${pattern})` : ""
+  const reason = properties.reason?.trim() || "no reason"
+  return `● LLM judge denied ${properties.permission}${suffix} — ${reason}`
+}
+
 function msgErr(id: string): string {
   return `msg:${id}:error`
 }
@@ -249,17 +254,10 @@ export function blockerStatus(view: FooterView) {
 }
 
 function pickSessionView(data: SessionData): FooterView {
-  const view = pickBlockerView({
+  return pickBlockerView({
     permission: data.permissions[0],
     question: data.questions[0],
   })
-  if (view.type === "permission") {
-    const reason = data.judgeReasons.get(view.request.id)
-    if (reason !== undefined) {
-      return { ...view, judgeReason: reason }
-    }
-  }
-  return view
 }
 
 function queueFooter(data: SessionData): FooterOutput {
@@ -1213,9 +1211,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     // If the request is eligible for LLM judging (auto), delay the ask
-    // screen until the judge returns. Store in pendingJudge; the
-    // permission.judged event will move it to data.permissions if the
-    // judge rejects (outcome "ask").
+    // screen until the judge returns. Store in pendingJudge; the judge
+    // resolves the request itself (allow or deny), so this never surfaces
+    // the interactive ask screen -- only a passive scrollback notice.
     if (event.properties.auto === true) {
       const request = enrichPermission(data, event.properties)
       data.pendingJudge.set(request.id, request)
@@ -1234,7 +1232,6 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     // A judge auto-allow replies before publishing permission.judged, so this
     // may be the event that clears a pendingJudge entry — recompute judging.
     const hadPending = data.pendingJudge.delete(event.properties.requestID)
-    data.judgeReasons.delete(event.properties.requestID)
     if (!remove(data.permissions, event.properties.requestID)) {
       if (hadPending) {
         return out(data, commits, patch({ judging: data.pendingJudge.size > 0 }))
@@ -1303,31 +1300,22 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const requestID = event.properties.requestID
-    const pending = data.pendingJudge.get(requestID)
     const outcome = (event.properties as { outcome?: string }).outcome
     data.pendingJudge.delete(requestID)
     const stillJudging = data.pendingJudge.size > 0
 
-    if (outcome === "ask") {
-      // Judge escalated: show the ask screen now, with the judge's reason.
-      // Without a pendingJudge entry the request was already replied — there
-      // is no prompt left to surface.
-      if (!pending) {
-        return out(data, commits, patch({ judging: stillJudging }))
-      }
-      upsert(data.permissions, enrichPermission(data, pending))
-      data.judgeReasons.set(requestID, event.properties.reason || "")
+    // outcome "denied" (or the legacy "ask", kept only for decode-compat with
+    // historical/replayed events): the judge already rejected the pending
+    // request itself -- watch.ts never leaves an interactive ask screen
+    // pending on a judge outcome. Surface a passive notice only.
+    if (outcome === "denied" || outcome === "ask") {
       commits.push({
         kind: "system",
-        text: `● LLM judge escalated to manual approval — ${event.properties.reason || "no reason"}`,
+        text: formatPermissionJudgeDenied(event.properties),
         phase: "start",
         source: "system",
       })
-
-      return out(data, commits, {
-        view: pickSessionView(data),
-        patch: { judging: stillJudging },
-      })
+      return out(data, commits, patch({ judging: stillJudging }))
     }
 
     // outcome === "allowed": auto-allowed by judge. The judge replies "once"

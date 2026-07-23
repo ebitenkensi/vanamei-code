@@ -69,7 +69,7 @@ type JudgedData = {
   requestID: string
   permission: string
   patterns: string[]
-  outcome: "allowed" | "ask"
+  outcome: "allowed" | "denied"
   reason: string
   tool?: { messageID: string; callID: string }
 }
@@ -123,7 +123,7 @@ describe("watch with auto flag", () => {
     expect(judged).toBe(true)
   })
 
-  test("ask verdict leaves the prompt pending and publishes Judged with outcome ask", async () => {
+  test("denied verdict rejects the pending request and publishes Judged with outcome denied", async () => {
     await runTest(
       Effect.gen(function* () {
         const awaitJudged = yield* collectJudged()
@@ -131,16 +131,22 @@ describe("watch with auto flag", () => {
 
         const ask = yield* permission.ask(askInput("auto")).pipe(Effect.forkScoped)
         const data = yield* awaitJudged
-        expect(data?.outcome).toBe("ask")
-        expect(data?.reason).toBe("destructive command")
+        expect(data).toEqual({
+          sessionID,
+          requestID: expect.stringMatching(/^per/),
+          permission: "bash",
+          patterns: ["ls"],
+          outcome: "denied",
+          reason: "destructive command",
+          tool: undefined,
+        })
 
-        const pending = yield* permission.list()
-        expect(pending).toHaveLength(1)
-
-        yield* permission.reply({ requestID: pending[0].id, reply: "reject" })
+        // The reject reply resolved the pending ask without user input --
+        // there is no interactive prompt left for the user to answer.
         yield* Fiber.await(ask)
+        expect(yield* permission.list()).toEqual([])
       }),
-      { judge: () => Effect.succeed({ outcome: "ask", reason: "destructive command" }) },
+      { judge: () => Effect.succeed({ outcome: "denied", reason: "destructive command" }) },
     )
   })
 })
@@ -188,6 +194,27 @@ describe("watch without auto flag", () => {
       }),
       { judge: () => Effect.succeed({ outcome: "allowed", reason: "toggle judged" }) },
       true,
+    )
+  })
+})
+
+describe("watch defect-proofing", () => {
+  test("a defect from the judge still rejects the pending request and publishes Judged denied", async () => {
+    await runTest(
+      Effect.gen(function* () {
+        const awaitJudged = yield* collectJudged()
+        const permission = yield* Permission.Service
+
+        const ask = yield* permission.ask(askInput("auto")).pipe(Effect.forkScoped)
+        const data = yield* awaitJudged
+        expect(data?.outcome).toBe("denied")
+
+        // No prompt is left stuck on "judging" -- the catch-all in
+        // watch.ts's judgeRequest rejected it despite the defect.
+        yield* Fiber.await(ask)
+        expect(yield* permission.list()).toEqual([])
+      }),
+      { judge: () => Effect.die(new Error("judge blew up")) },
     )
   })
 })

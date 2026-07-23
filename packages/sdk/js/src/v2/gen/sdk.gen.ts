@@ -175,6 +175,9 @@ import type {
   QuestionReplyErrors,
   QuestionReplyResponses,
   QuestionV2Reply,
+  ServerHandoffErrors,
+  ServerHandoffResponses,
+  ServerShutdownResponses,
   SessionAbortErrors,
   SessionAbortResponses,
   SessionChildrenErrors,
@@ -5023,6 +5026,61 @@ export class Tui extends HeyApiClient {
   }
 }
 
+export class Server extends HeyApiClient {
+  /**
+   * Queue handoff
+   *
+   * Accept queued prompts from a detaching TUI client and replay them through the legacy prompt endpoint after the active turn finishes. Returns 204 immediately; the drain runs in the background.
+   */
+  public handoff<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      sessionID?: string
+      prompts?: Array<{
+        parts: Array<unknown>
+      }>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "sessionID" },
+            { in: "body", key: "prompts" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<ServerHandoffResponses, ServerHandoffErrors, ThrowOnError>({
+      url: "/server/handoff",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Shutdown the server
+   *
+   * Gracefully shutdown the detached server, disposing all instances and stopping the listener.
+   */
+  public shutdown<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<ServerShutdownResponses, unknown, ThrowOnError>({
+      url: "/server/shutdown",
+      ...options,
+    })
+  }
+}
+
 export class Health extends HeyApiClient {
   /**
    * Check server health
@@ -7212,6 +7270,11 @@ export class OpencodeClient extends HeyApiClient {
   private _tui?: Tui
   get tui(): Tui {
     return (this._tui ??= new Tui({ client: this.client }))
+  }
+
+  private _server?: Server
+  get server(): Server {
+    return (this._server ??= new Server({ client: this.client }))
   }
 
   private _v2?: V2

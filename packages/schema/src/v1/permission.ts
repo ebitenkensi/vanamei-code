@@ -80,7 +80,9 @@ const Judged = define({
     requestID: ID,
     permission: Schema.String,
     patterns: Schema.Array(Schema.String),
-    outcome: Schema.Literals(["allowed", "ask"]),
+    // "ask" is kept only for decode-compat with historical/replayed events --
+    // no current code emits it. The judge now only ever allows or denies.
+    outcome: Schema.Literals(["allowed", "denied", "ask"]),
     reason: Schema.String,
     tool: Schema.optional(Schema.Struct({ messageID: Schema.String, callID: Schema.String })),
   },

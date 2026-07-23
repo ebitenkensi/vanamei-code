@@ -52,18 +52,30 @@ describe("buildJudgePrompt", () => {
     expect(prompt).toContain("strict JSON")
     expect(prompt).toContain('"decision"')
     expect(prompt).toContain("allow")
-    expect(prompt).toContain("ask")
+    expect(prompt).toContain("deny")
   })
 
-  test("includes high-risk category callouts", () => {
+  test("includes deny category callouts", () => {
     const prompt = buildJudgePrompt(baseInput)
     expect(prompt).toContain("rm -rf")
     expect(prompt).toContain("force push")
     expect(prompt).toContain("git reset --hard")
-    expect(prompt).toContain("data deletion")
-    expect(prompt).toContain("exfiltration")
-    expect(prompt).toContain("external_directory")
-    expect(prompt).toContain("doom_loop")
+    expect(prompt).toContain("dropping databases or tables")
+    expect(prompt).toContain("Exfiltration of secrets")
+    expect(prompt).toContain("Doom loop")
+  })
+
+  test("external reads are always allowed; only dangerous external writes deny", () => {
+    const prompt = buildJudgePrompt(baseInput)
+    expect(prompt).toContain("Reading outside the workspace is always allowed")
+    expect(prompt).toContain("Dangerous writes outside the project workspace")
+    expect(prompt).not.toContain("external_directory")
+  })
+
+  test("defaults to allow under uncertainty", () => {
+    const prompt = buildJudgePrompt(baseInput)
+    expect(prompt).toContain("Everything else: allow")
+    expect(prompt).toContain("When uncertain, allow")
   })
 
   test("includes advisory note", () => {
@@ -100,9 +112,9 @@ describe("parseVerdict", () => {
     expect(result).toEqual({ decision: "allow", reason: "safe operation" })
   })
 
-  test("parses valid ask verdict", () => {
-    const result = parseVerdict('{"decision":"ask","reason":"destructive command"}')
-    expect(result).toEqual({ decision: "ask", reason: "destructive command" })
+  test("parses valid deny verdict", () => {
+    const result = parseVerdict('{"decision":"deny","reason":"destructive command"}')
+    expect(result).toEqual({ decision: "deny", reason: "destructive command" })
   })
 
   test("returns null for malformed JSON", () => {
@@ -135,21 +147,23 @@ describe("parseVerdict", () => {
   })
 
   test("handles unicode in reason", () => {
-    const result = parseVerdict('{"decision":"ask","reason":"危険な操作"}')
-    expect(result).toEqual({ decision: "ask", reason: "危険な操作" })
+    const result = parseVerdict('{"decision":"deny","reason":"危険な操作"}')
+    expect(result).toEqual({ decision: "deny", reason: "危険な操作" })
   })
 
   test("returns null when reason is empty string", () => {
     // Schema.String allows empty string, so this should return valid
-    const result = parseVerdict('{"decision":"ask","reason":""}')
-    expect(result).toEqual({ decision: "ask", reason: "" })
+    const result = parseVerdict('{"decision":"deny","reason":""}')
+    expect(result).toEqual({ decision: "deny", reason: "" })
   })
 })
 
 // ---------------------------------------------------------------------------
 // Judge layer: verdict wiring and fail-closed behavior via Layer substitution.
-// The 20s LLM timeout shares the same catch-all path as the stream-failure
-// case below, so it is covered without waiting out a real timeout.
+// The whole-flow 15s deadline (Effect.timeout wrapping model resolution
+// through parse) shares the same catchCause path as the stream-failure case
+// below, so the fail-closed behavior is covered without waiting out a real
+// timeout.
 // ---------------------------------------------------------------------------
 
 const sessionID = SessionID.make("ses_test")
@@ -232,31 +246,31 @@ describe("Judge layer", () => {
     expect(verdict).toEqual({ outcome: "allowed", reason: "ok" })
   })
 
-  test("returns ask with the model's reason", async () => {
+  test("returns denied with the model's reason", async () => {
     const verdict = await runJudge(
       judgeLayer({
         llm: {
           stream: () =>
-            Stream.make(LLMEvent.textDelta({ id: "blk_1", text: '{"decision":"ask","reason":"destructive"}' })),
+            Stream.make(LLMEvent.textDelta({ id: "blk_1", text: '{"decision":"deny","reason":"destructive"}' })),
         },
       }),
     )
-    expect(verdict).toEqual({ outcome: "ask", reason: "destructive" })
+    expect(verdict).toEqual({ outcome: "denied", reason: "destructive" })
   })
 
-  test("fail-closed: non-JSON model output escalates", async () => {
+  test("fail-closed: non-JSON model output denies", async () => {
     const verdict = await runJudge(
       judgeLayer({ llm: { stream: () => Stream.make(LLMEvent.textDelta({ id: "blk_1", text: "sure, go ahead" })) } }),
     )
-    expect(verdict.outcome).toBe("ask")
+    expect(verdict.outcome).toBe("denied")
   })
 
-  test("fail-closed: LLM stream failure escalates", async () => {
+  test("fail-closed: LLM stream failure denies", async () => {
     const verdict = await runJudge(judgeLayer({ llm: { stream: () => Stream.fail(new Error("provider down")) } }))
-    expect(verdict.outcome).toBe("ask")
+    expect(verdict.outcome).toBe("denied")
   })
 
-  test("fail-closed: unresolved model escalates without calling the LLM", async () => {
+  test("fail-closed: unresolved model denies without calling the LLM", async () => {
     let streamed = false
     const verdict = await runJudge(
       judgeLayer({
@@ -272,18 +286,18 @@ describe("Judge layer", () => {
         },
       }),
     )
-    expect(verdict.outcome).toBe("ask")
+    expect(verdict.outcome).toBe("denied")
     expect(streamed).toBe(false)
   })
 
-  test("fail-closed: session without a model escalates", async () => {
+  test("fail-closed: session without a model denies", async () => {
     const verdict = await runJudge(
       judgeLayer({ session: { get: () => Effect.succeed({ ...sessionInfo, model: undefined }) } }),
     )
-    expect(verdict.outcome).toBe("ask")
+    expect(verdict.outcome).toBe("denied")
   })
 
-  test("fail-closed: no real user message escalates", async () => {
+  test("fail-closed: no real user message denies", async () => {
     const synthetic = {
       ...userMessage,
       parts: [{ ...userMessage.parts[0], synthetic: true }],
@@ -295,6 +309,17 @@ describe("Judge layer", () => {
         },
       }),
     )
-    expect(verdict.outcome).toBe("ask")
+    expect(verdict.outcome).toBe("denied")
+  })
+
+  test("fail-closed: an unexpected defect still resolves to denied", async () => {
+    const verdict = await runJudge(
+      judgeLayer({
+        llm: {
+          stream: () => Stream.die(new Error("unexpected defect")),
+        },
+      }),
+    )
+    expect(verdict.outcome).toBe("denied")
   })
 })

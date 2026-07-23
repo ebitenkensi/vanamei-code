@@ -979,7 +979,6 @@ export function RunFooterView(props: RunFooterViewProps) {
                             theme={theme()}
                             block={block()}
                             diffStyle={props.diffStyle}
-                            judgeReason={permission()!.judgeReason}
                             onReply={props.onPermissionReply}
                           />
                         </Match>

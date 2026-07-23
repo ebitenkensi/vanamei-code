@@ -136,7 +136,6 @@ export function RunPermissionBody(props: {
   theme: RunFooterTheme
   block: RunBlockTheme
   diffStyle?: RunDiffStyle
-  judgeReason?: string
   onReply: (input: PermissionReply) => void | Promise<void>
 }) {
   const dims = useTerminalDimensions()
@@ -270,15 +269,6 @@ export function RunPermissionBody(props: {
         paddingBottom={1}
         flexShrink={0}
       >
-        <Show when={props.judgeReason}>
-          {(reason) => (
-            <box paddingLeft={1}>
-              <text fg={props.theme.muted} wrapMode="word">
-                auto judged: {reason()}
-              </text>
-            </box>
-          )}
-        </Show>
         <box flexDirection="row" gap={1} paddingLeft={1}>
           <text fg={state().stage === "reject" ? props.theme.error : props.theme.warning}>△</text>
           <text fg={props.theme.text}>{title()}</text>

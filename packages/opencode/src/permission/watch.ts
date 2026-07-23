@@ -4,11 +4,13 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Permission } from "@/permission"
 import { Judge } from "@/permission/judge"
 import { Session } from "@/session/session"
-import { Effect, Layer, Scope } from "effect"
+import { Cause, Effect, Layer, Scope } from "effect"
 
-// Daemon that watches Event.Asked and lets the LLM judge auto-allow safe
-// requests. Deny rules never reach this point (Permission.ask fails first),
-// so the judge can only grant a "once" reply or leave the prompt for the user.
+// Daemon that watches Event.Asked and lets the LLM judge auto-allow or
+// auto-deny requests unattended. Deny rules never reach this point
+// (Permission.ask fails first), so the judge only ever grants a "once" reply
+// or rejects the pending request itself -- it never leaves an interactive
+// ask screen pending, since nobody is there to answer it in automode.
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const events = yield* EventV2Bridge.Service
@@ -17,41 +19,44 @@ export const layer = Layer.effectDiscard(
     const permission = yield* Permission.Service
     const scope = yield* Scope.Scope
 
+    const publishJudged = (request: PermissionV1.Request, outcome: "allowed" | "denied", reason: string) =>
+      events.publish(Permission.Event.Judged, {
+        sessionID: request.sessionID,
+        requestID: request.id,
+        permission: request.permission,
+        patterns: request.patterns,
+        outcome,
+        reason,
+        tool: request.tool,
+      })
+
     const judgeRequest = (request: PermissionV1.Request) =>
       Effect.gen(function* () {
         const verdict = yield* judge.judge({ request })
-        if (verdict.outcome === "allowed") {
-          yield* permission.reply({ requestID: request.id, reply: "once" }).pipe(
-            Effect.andThen(
-              events.publish(Permission.Event.Judged, {
-                sessionID: request.sessionID,
-                requestID: request.id,
-                permission: request.permission,
-                patterns: request.patterns,
-                outcome: "allowed",
-                reason: verdict.reason,
-                tool: request.tool,
-              }),
-            ),
-            // NotFoundError means the user replied first; their answer wins.
-            Effect.catchTag("Permission.NotFoundError", () => Effect.void),
-          )
-          return
-        }
+        const reply = verdict.outcome === "allowed" ? "once" : "reject"
 
-        // Judge asked — publish Judged with outcome "ask" so the TUI knows it
-        // is safe to show the ask screen. The deferred stays pending so the
-        // user can answer.
-        yield* events.publish(Permission.Event.Judged, {
-          sessionID: request.sessionID,
-          requestID: request.id,
-          permission: request.permission,
-          patterns: request.patterns,
-          outcome: "ask",
-          reason: verdict.reason,
-          tool: request.tool,
-        })
-      })
+        yield* permission.reply({ requestID: request.id, reply }).pipe(
+          Effect.andThen(publishJudged(request, verdict.outcome, verdict.reason)),
+          // NotFoundError means the user replied first; their answer wins,
+          // and there is no pending request left to publish a verdict for.
+          Effect.catchTag("Permission.NotFoundError", () => Effect.void),
+        )
+      }).pipe(
+        // Defect-proof: judge.judge() never fails, but this daemon must
+        // survive anything unexpected regardless (a bug, a plugin throwing,
+        // an event-bus failure) -- a dead fiber here would leave the pending
+        // request stuck on "judging" forever with nobody able to answer it.
+        Effect.catchCause((cause) =>
+          Effect.logError("PermissionWatch.judgeRequest defect", { cause: Cause.pretty(cause) }).pipe(
+            Effect.andThen(
+              permission.reply({ requestID: request.id, reply: "reject" }).pipe(
+                Effect.andThen(publishJudged(request, "denied", "判定エラー")),
+                Effect.catchTag("Permission.NotFoundError", () => Effect.void),
+              ),
+            ),
+          ),
+        ),
+      )
 
     const unsubscribe = yield* events.listen((event) => {
       if (event.type !== Permission.Event.Asked.type) return Effect.void
