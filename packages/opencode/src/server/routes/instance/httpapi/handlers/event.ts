@@ -22,6 +22,14 @@ function eventID() {
   return EventV2.ID.create()
 }
 
+// Tracks live SSE connections so the detach-child idle-shutdown timer in
+// serve.ts can tell whether any client is still attached.
+let _subscriberCount = 0
+
+export function activeSubscribers() {
+  return _subscriberCount
+}
+
 function eventResponse(events: EventV2.Interface) {
   return Effect.gen(function* () {
     const instance = yield* InstanceState.context
@@ -65,14 +73,23 @@ function eventResponse(events: EventV2.Interface) {
       Stream.map(() => ({ id: eventID(), type: "server.heartbeat", properties: {} })),
     )
 
+    yield* Effect.sync(() => {
+      _subscriberCount++
+    })
     yield* Effect.logInfo("event connected")
+    const disconnected = Effect.gen(function* () {
+      yield* Effect.sync(() => {
+        _subscriberCount = Math.max(0, _subscriberCount - 1)
+      })
+      yield* Effect.logInfo("event disconnected")
+    })
     return HttpServerResponse.stream(
       Stream.make({ id: eventID(), type: "server.connected", properties: {} }).pipe(
         Stream.concat(output.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
         Stream.map(eventData),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
-        Stream.ensuring(Effect.logInfo("event disconnected")),
+        Stream.ensuring(disconnected),
       ),
       {
         contentType: "text/event-stream",

@@ -3,6 +3,7 @@ import type { InstanceContext } from "@/project/instance-context"
 import { InstanceStore } from "@/project/instance-store"
 import { Effect } from "effect"
 import { HttpEffect, HttpMiddleware, HttpServerRequest } from "effect/unstable/http"
+import { touch } from "./handlers/server"
 
 type MarkedInstance = {
   ctx: InstanceContext
@@ -42,6 +43,9 @@ export const markInstanceForReload = (ctx: InstanceContext, next: InstanceStore.
 
 export const disposeMiddleware: HttpMiddleware.HttpMiddleware = (effect) =>
   Effect.gen(function* () {
+    // Every request funnels through this middleware, so it's the single place
+    // that can record activity for the detach-child idle-shutdown timer.
+    touch()
     const response = yield* effect
     const request = yield* HttpServerRequest.HttpServerRequest
     const marked = disposeAfterResponse.get(request.source)

@@ -25,7 +25,7 @@ export const ServeCommand = effectCmd({
     // The parent spawned us with OPENCODE_DETACH_CHILD and the project info.
     if (process.env.OPENCODE_DETACH_CHILD) {
       const { Discovery } = yield* Effect.promise(() => import("../../server/discovery"))
-      const { registerListener } = yield* Effect.promise(
+      const { registerListener, lastActivity } = yield* Effect.promise(
         () => import("../../server/routes/instance/httpapi/handlers/server"),
       )
       const password = process.env.OPENCODE_SERVER_PASSWORD ?? ""
@@ -43,6 +43,54 @@ export const ServeCommand = effectCmd({
         sessionID,
       })
       registerListener(server.stop, projectID)
+
+      // Reclaim server/<projectID> directories left behind by detached servers
+      // that exited without cleanup (crash, SIGKILL, older builds with no
+      // signal handlers). Our own record above already has a live pid, so
+      // sweep never removes it.
+      Discovery.sweep()
+
+      // Make sure the discovery record never outlives this process, however
+      // it terminates. SIGTERM/SIGINT run the fast path (record + listener);
+      // the exit hook is the last-resort catch-all for every other exit cause.
+      const shutdownState = { started: false }
+      const shutdownOnSignal = async () => {
+        if (shutdownState.started) return
+        shutdownState.started = true
+        Discovery.remove(projectID)
+        // Same stop function passed to registerListener above.
+        await server.stop(true).catch(() => {})
+        process.exit(0)
+      }
+      process.on("SIGTERM", shutdownOnSignal)
+      process.on("SIGINT", shutdownOnSignal)
+      process.on("exit", () => Discovery.remove(projectID))
+
+      // Idle shutdown: a detached server with no SSE subscriber and no HTTP
+      // traffic for `server.idleTimeoutMinutes` (default 240, 0 disables) stops
+      // itself. Reused sequence, not duplicated: self-POST to the same
+      // /server/shutdown endpoint HTTP clients use (handlers/server.ts
+      // "shutdown" — disposeAll -> Discovery.remove -> listener stop -> exit 0).
+      const { Config } = yield* Effect.promise(() => import("../../config/config"))
+      const globalConfig = yield* Config.Service.use((cfg) => cfg.getGlobal())
+      const idleTimeoutMinutes = globalConfig.server?.idleTimeoutMinutes ?? 240
+      if (idleTimeoutMinutes > 0) {
+        const { activeSubscribers } = yield* Effect.promise(
+          () => import("../../server/routes/instance/httpapi/handlers/event"),
+        )
+        const { ServerAuth } = yield* Effect.promise(() => import("../../server/auth"))
+        const idleThresholdMs = idleTimeoutMinutes * 60_000
+        const idleTimer = setInterval(() => {
+          if (activeSubscribers() > 0) return
+          if (Date.now() - lastActivity() < idleThresholdMs) return
+          clearInterval(idleTimer)
+          fetch(`${server.url.href}server/shutdown`, {
+            method: "POST",
+            headers: ServerAuth.headers(),
+          }).catch(() => {})
+        }, 60_000)
+        idleTimer.unref()
+      }
 
       // Detach-child handoff (D案): queued TUI prompts the parent flushed to a
       // file before spawning us, because it couldn't send them itself without

@@ -13,10 +13,21 @@ import { ServerShutdownApi, HandoffPayload } from "../groups/server"
 
 let _listenerStop: ((close?: boolean) => Promise<void>) | undefined
 let _projectID: string | undefined
+let _lastActivity = Date.now()
 
 export function registerListener(stop: (close?: boolean) => Promise<void>, projectID: string) {
   _listenerStop = stop
   _projectID = projectID
+}
+
+// Touched by disposeMiddleware on every HTTP request. Read by the detach-child
+// idle-shutdown timer in serve.ts to decide whether the server has been idle.
+export function touch() {
+  _lastActivity = Date.now()
+}
+
+export function lastActivity() {
+  return _lastActivity
 }
 
 export const serverHandlers = HttpApiBuilder.group(ServerShutdownApi, "server", (handlers) =>
@@ -80,9 +91,7 @@ export const serverHandoffHandlers = HttpApiBuilder.group(InstanceHttpApi, "serv
           const current = yield* statusSvc.get(sessionID)
           if (current.type === "idle") return
           yield* Deferred.await(idle)
-        }).pipe(
-          Effect.ensuring(unsubscribe),
-        )
+        }).pipe(Effect.ensuring(unsubscribe))
       })
 
     return handlers.handle("handoff", (ctx: { payload: typeof HandoffPayload.Type }) =>
@@ -92,9 +101,7 @@ export const serverHandoffHandlers = HttpApiBuilder.group(InstanceHttpApi, "serv
         // Derive the self-POST base URL from the incoming request so the
         // drain targets the same listener that received this handoff.
         const request = yield* HttpServerRequest.HttpServerRequest
-        const url = Option.getOrElse(HttpServerRequest.toURL(request), () =>
-          new URL(request.url, "http://localhost"),
-        )
+        const url = Option.getOrElse(HttpServerRequest.toURL(request), () => new URL(request.url, "http://localhost"))
         const selfBaseUrl = `${url.protocol}//${url.host}/`
 
         // Fork the idle-wait + sequential drain into the long-lived scope so

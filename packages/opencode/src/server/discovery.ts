@@ -38,9 +38,31 @@ export function read(projectID: string): Record | undefined {
 
 export function remove(projectID: string) {
   try {
-    fs.unlinkSync(recordPath(projectID))
+    // server/<projectID> only ever holds server.json, so removing the whole
+    // directory (not just the file) prevents it from being left behind forever.
+    fs.rmSync(path.dirname(recordPath(projectID)), { recursive: true, force: true })
   } catch {
     // ignore if already gone
+  }
+}
+
+// Reclaims server/<projectID> directories left behind by detached servers that
+// exited without cleanup (crash, SIGKILL, older builds with no signal handlers).
+// A directory is stale when its record is missing, unparsable, or names a pid
+// that is no longer alive. Never throws -- meant to run opportunistically on
+// every detach-child startup. Returns the number of directories removed.
+export function sweep(): number {
+  try {
+    const root = path.join(Global.Path.data, "server")
+    const dirs = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+    const stale = dirs.filter((entry) => {
+      const rec = read(entry.name)
+      return !rec || !pidAlive(rec.pid)
+    })
+    stale.forEach((entry) => remove(entry.name))
+    return stale.length
+  } catch {
+    return 0
   }
 }
 
