@@ -23,13 +23,13 @@ import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
 import { Database } from "@opencode-ai/core/database/database"
 import { Project } from "../../src/project/project"
 import { Session } from "../../src/session/session"
-import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/workspace"
+import { WorkspacePaths } from "../../src/server/httpapi/groups/workspace"
 import {
   WorkspaceRoutingMiddleware,
   WorkspaceRoutingQuery,
   WorkspaceRouteContext,
   workspaceRoutingLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/workspace-routing"
+} from "../../src/server/httpapi/middleware/workspace-routing"
 import { HEADER as FenceHeader } from "../../src/server/shared/fence"
 import { resetDatabase } from "../fixture/db"
 import { workspaceLayerWithRuntimeFlags } from "../fixture/workspace"

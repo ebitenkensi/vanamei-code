@@ -1,6 +1,6 @@
 export type Runtime = {
-  PublicApi: (typeof import("../../../src/server/routes/instance/httpapi/public"))["PublicApi"]
-  HttpApiApp: (typeof import("../../../src/server/routes/instance/httpapi/server"))["HttpApiApp"]
+  PublicApi: (typeof import("../../../src/server/httpapi/public"))["PublicApi"]
+  HttpApiApp: (typeof import("../../../src/server/httpapi/server"))["HttpApiApp"]
   AppLayer: (typeof import("../../../src/effect/app-runtime"))["AppLayer"]
   memoMap: import("effect").Layer.MemoMap
   InstanceRef: (typeof import("../../../src/effect/instance-ref"))["InstanceRef"]
@@ -19,8 +19,8 @@ let runtimePromise: Promise<Runtime> | undefined
 
 export function runtime() {
   return (runtimePromise ??= (async () => {
-    const publicApi = await import("../../../src/server/routes/instance/httpapi/public")
-    const httpApiServer = await import("../../../src/server/routes/instance/httpapi/server")
+    const publicApi = await import("../../../src/server/httpapi/public")
+    const httpApiServer = await import("../../../src/server/httpapi/server")
     const appRuntime = await import("../../../src/effect/app-runtime")
     const { Layer } = await import("effect")
     const instanceRef = await import("../../../src/effect/instance-ref")

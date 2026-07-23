@@ -135,7 +135,7 @@ export async function executeDetach(input: DetachInput): Promise<import("@/serve
   })
 
   // Register listener stop for the server-side shutdown handler
-  const { registerListener } = await import("@/server/routes/instance/httpapi/handlers/server")
+  const { registerListener } = await import("@/server/httpapi/handlers/server")
   registerListener(listener.stop, input.projectID)
 
   // Ignore SIGHUP after detach

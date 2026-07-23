@@ -4,28 +4,28 @@ import { OpenApi } from "effect/unstable/httpapi"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Server } from "../../src/server/server"
 import { SessionID } from "../../src/session/schema"
-import { PublicApi } from "../../src/server/routes/instance/httpapi/public"
+import { PublicApi } from "../../src/server/httpapi/public"
 import {
   FilePaths,
   FileQuery,
   FindFileQuery,
   FindTextQuery,
-} from "../../src/server/routes/instance/httpapi/groups/file"
+} from "../../src/server/httpapi/groups/file"
 import {
   ExperimentalPaths,
   SessionListQuery as ExperimentalSessionListQuery,
   ToolListQuery,
-} from "../../src/server/routes/instance/httpapi/groups/experimental"
-import { InstancePaths, VcsDiffQuery } from "../../src/server/routes/instance/httpapi/groups/instance"
-import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/workspace"
+} from "../../src/server/httpapi/groups/experimental"
+import { InstancePaths, VcsDiffQuery } from "../../src/server/httpapi/groups/instance"
+import { WorkspacePaths } from "../../src/server/httpapi/groups/workspace"
 import {
   ListQuery as SessionListQuery,
   MessagesQuery,
   SessionPaths,
-} from "../../src/server/routes/instance/httpapi/groups/session"
-import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
+} from "../../src/server/httpapi/groups/session"
+import { PtyPaths } from "../../src/server/httpapi/groups/pty"
 import { SessionMessagesQuery } from "@opencode-ai/protocol/groups/message"
-import { QueryBoolean, QueryBooleanOpenApi } from "../../src/server/routes/instance/httpapi/groups/query"
+import { QueryBoolean, QueryBooleanOpenApi } from "../../src/server/httpapi/groups/query"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 import { it } from "../lib/effect"

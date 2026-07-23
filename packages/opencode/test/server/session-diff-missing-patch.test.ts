@@ -13,7 +13,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
-import { SessionPaths } from "@/server/routes/instance/httpapi/groups/session"
+import { SessionPaths } from "@/server/httpapi/groups/session"
 import { Session } from "@/session/session"
 import { Storage } from "@/storage/storage"
 import { SessionV1 } from "@opencode-ai/core/v1/session"

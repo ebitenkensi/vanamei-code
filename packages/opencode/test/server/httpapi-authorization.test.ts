@@ -9,7 +9,7 @@ import {
   authorizationLayer,
   ServerAuthorization,
   serverAuthorizationLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/authorization"
+} from "../../src/server/httpapi/middleware/authorization"
 import { testEffect } from "../lib/effect"
 
 const Api = HttpApi.make("test-authorization").add(

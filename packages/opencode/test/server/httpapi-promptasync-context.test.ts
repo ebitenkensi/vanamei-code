@@ -24,12 +24,12 @@ import { Session } from "../../src/session/session"
 import {
   InstanceContextMiddleware,
   instanceContextLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/instance-context"
+} from "../../src/server/httpapi/middleware/instance-context"
 import {
   WorkspaceRoutingMiddleware,
   WorkspaceRoutingQuery,
   workspaceRoutingLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/workspace-routing"
+} from "../../src/server/httpapi/middleware/workspace-routing"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdirScoped } from "../fixture/fixture"
 import { workspaceLayerWithRuntimeFlags } from "../fixture/workspace"

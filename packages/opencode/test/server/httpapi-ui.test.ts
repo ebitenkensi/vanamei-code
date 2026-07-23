@@ -15,8 +15,8 @@ import {
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { ServerAuth } from "../../src/server/auth"
-import { authorizationRouterMiddleware } from "../../src/server/routes/instance/httpapi/middleware/authorization"
-import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
+import { authorizationRouterMiddleware } from "../../src/server/httpapi/middleware/authorization"
+import { HttpApiApp } from "../../src/server/httpapi/server"
 import { serveEmbeddedUIEffect, serveUIEffect } from "../../src/server/shared/ui"
 import { testEffect } from "../lib/effect"
 

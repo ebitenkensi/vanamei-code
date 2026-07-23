@@ -26,7 +26,7 @@ export const ServeCommand = effectCmd({
     if (process.env.OPENCODE_DETACH_CHILD) {
       const { Discovery } = yield* Effect.promise(() => import("../../server/discovery"))
       const { registerListener, lastActivity } = yield* Effect.promise(
-        () => import("../../server/routes/instance/httpapi/handlers/server"),
+        () => import("../../server/httpapi/handlers/server"),
       )
       const password = process.env.OPENCODE_SERVER_PASSWORD ?? ""
       const directory = process.env.OPENCODE_DIRECTORY ?? ""
@@ -76,7 +76,7 @@ export const ServeCommand = effectCmd({
       const idleTimeoutMinutes = globalConfig.server?.idleTimeoutMinutes ?? 240
       if (idleTimeoutMinutes > 0) {
         const { activeSubscribers } = yield* Effect.promise(
-          () => import("../../server/routes/instance/httpapi/handlers/event"),
+          () => import("../../server/httpapi/handlers/event"),
         )
         const { ServerAuth } = yield* Effect.promise(() => import("../../server/auth"))
         const idleThresholdMs = idleTimeoutMinutes * 60_000

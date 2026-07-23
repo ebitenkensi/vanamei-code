@@ -13,16 +13,16 @@ import { Workspace } from "../../src/control-plane/workspace"
 import { InstanceRef, WorkspaceRef } from "../../src/effect/instance-ref"
 import { Project } from "../../src/project/project"
 import { Session } from "../../src/session/session"
-import { disposeMiddleware, markInstanceForDisposal } from "../../src/server/routes/instance/httpapi/lifecycle"
+import { disposeMiddleware, markInstanceForDisposal } from "../../src/server/httpapi/lifecycle"
 import {
   InstanceContextMiddleware,
   instanceContextLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/instance-context"
+} from "../../src/server/httpapi/middleware/instance-context"
 import {
   WorkspaceRoutingMiddleware,
   WorkspaceRoutingQuery,
   workspaceRoutingLayer,
-} from "../../src/server/routes/instance/httpapi/middleware/workspace-routing"
+} from "../../src/server/httpapi/middleware/workspace-routing"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdirScoped } from "../fixture/fixture"
 import { withFixedWorkspaceID } from "../fixture/flag"

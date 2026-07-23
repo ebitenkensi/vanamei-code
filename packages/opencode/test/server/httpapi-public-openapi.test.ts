@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { OpenApi } from "effect/unstable/httpapi"
-import { PublicApi } from "../../src/server/routes/instance/httpapi/public"
+import { PublicApi } from "../../src/server/httpapi/public"
 
 type Method = "get" | "post" | "put" | "delete" | "patch"
 type OpenApiSchema = {

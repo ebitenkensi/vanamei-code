@@ -10,7 +10,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
 import { eq } from "drizzle-orm"
 
-import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
+import { SessionPaths } from "../../src/server/httpapi/groups/session"
 import { Session } from "@/session/session"
 import { MessageID, PartID } from "../../src/session/schema"
 import { Database } from "@opencode-ai/core/database/database"

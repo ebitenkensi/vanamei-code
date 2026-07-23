@@ -51,8 +51,17 @@
 
 ### P4 平坦化(任意)
 
-- server/routes/instance/httpapi/handlers 等の深い階層の整理。
-- claude-code 参照実装に倣う不変式の徹底: エラーはターンを綺麗に終える / 全 tool_use に tool_result / ユーザ入力は実行前に永続化(V2 inbox で担保済み)。
+- server/routes/instance/httpapi/handlers 等の深い階層の整理。→ 実施済: `src/server/routes/instance/httpapi` を `src/server/httpapi` へ移動 (routes/instance は素通し2階層だった)。歴史的 specs/ 文書内の旧パス言及は記録として据え置き。
+- claude-code 参照実装に倣う不変式の徹底: エラーはターンを綺麗に終える (P2 onExit finalize で実装) / 全 tool_use に tool_result (V2 runner の failUnsettledTools + V1 processor の既存処理で担保) / ユーザ入力は実行前に永続化 (P3b の耐久 admission で実装)。
+
+## 実施記録 (2026-07-24)
+
+- P0: dev = queue-handoff 収容、タグ `freeze-base` (7aacdf351)。
+- P1: 13パッケージ + infra + sst + sst-env.d.ts×16 削除、catalog/patch 整理、Web UI 埋め込み除去。副産物: automode スキーマスナップショット欠落の修正。
+- P2: serve シグナルハンドラ + Discovery dir 削除 + 起動時 sweep + idle-shutdown (`server.idleTimeoutMinutes` 既定240) / assistant の onExit finalize + LLM.run agent ガード + compaction agent ガード (7/20 C.name defect の根本原因)。
+- P3: P3a attach flush 辺の修復 (stale-attach 根治、e2e RETRY 撤去) / P3b 耐久 admission + V1 promotion bridge / P3c busy 保護追加。e2e はノンス乱数化 + 低速プロバイダ延長待機で決定化。
+- P4: httpapi 平坦化。全フェーズのゲート: opencode 3235 pass / core 1074 pass / build / e2e 7項目 green。
+- 未了: 各フェーズ共通の「タグ付きビルドで1日 dogfood」は wall-clock 作業のため運用へ引き継ぎ (タグ `renovated-base`)。P3d は将来スペック。
 
 ## upstream 同期方針(切断後)
 

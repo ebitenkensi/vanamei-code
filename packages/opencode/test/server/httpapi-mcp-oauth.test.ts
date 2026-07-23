@@ -4,13 +4,13 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
-import { McpApi, McpPaths } from "../../src/server/routes/instance/httpapi/groups/mcp"
-import { Authorization } from "../../src/server/routes/instance/httpapi/middleware/authorization"
-import { InstanceContextMiddleware } from "../../src/server/routes/instance/httpapi/middleware/instance-context"
+import { McpApi, McpPaths } from "../../src/server/httpapi/groups/mcp"
+import { Authorization } from "../../src/server/httpapi/middleware/authorization"
+import { InstanceContextMiddleware } from "../../src/server/httpapi/middleware/instance-context"
 import {
   WorkspaceRouteContext,
   WorkspaceRoutingMiddleware,
-} from "../../src/server/routes/instance/httpapi/middleware/workspace-routing"
+} from "../../src/server/httpapi/middleware/workspace-routing"
 import { testEffect } from "../lib/effect"
 
 const TestHttpApi = HttpApi.make("opencode-instance").addHttpApi(McpApi)
