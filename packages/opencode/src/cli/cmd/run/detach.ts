@@ -64,7 +64,10 @@ async function spawnDetachChild(input: DetachInput, pollIntervalMs = 500): Promi
   for (let elapsed = 0; elapsed < maxWait; elapsed += pollIntervalMs) {
     await new Promise((r) => setTimeout(r, pollIntervalMs))
     const rec = Discovery.read(input.projectID)
-    if (rec && rec.pid !== process.pid) {
+    // Match the spawned child's pid exactly: a stale record from a dead
+    // server (or a live one about to be overwritten) also satisfies
+    // `pid !== process.pid` and would hand the parent a dead/foreign URL.
+    if (rec && rec.pid === child.pid) {
       return { url: rec.url, password, record: rec }
     }
   }
