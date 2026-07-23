@@ -139,10 +139,15 @@ async function tool(part: ToolPart) {
 // have used itself. Commands and shell prompts are TUI-local semantics the
 // child cannot resolve, so any of those queued still abort the whole
 // handoff (and, by extension, the detach).
-async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
-  // /new arrives as plain text and is only recognized at dequeue time, so it
-  // carries no .command marker -- test the text form too or it would be
-  // handed off to the child as a literal "/new" prompt.
+// Validates queued prompts for handoff and builds the { parts } payload the
+// server expects. Shell/command prompts are TUI-local semantics the server
+// cannot resolve, so any of those queued abort the whole handoff. /new
+// arrives as plain text and is only recognized at dequeue time, so the text
+// form is tested too. No messageID is included: the queue's pre-allocated IDs
+// sort before the in-flight turn's later messages in the ID-ordered legacy
+// history, which makes the child loop exit without replying. The server mints
+// a fresh ID at send time instead.
+async function buildHandoffPrompts(queued: FooterQueuedPrompt[]) {
   const { isNewCommand } = await import("./run/prompt.shared")
   const blocked = queued.find(
     (item) => item.prompt.mode === "shell" || item.prompt.command || isNewCommand(item.prompt.text),
@@ -153,21 +158,18 @@ async function writeHandoffFile(projectID: string, sessionID: string, queued: Fo
     )
   }
 
-  const { Global } = await import("@opencode-ai/core/global")
-  const fs = await import("fs")
-  // No messageID: the queue's pre-allocated IDs were minted before the
-  // in-flight turn's later messages, so reusing them makes the handoff user
-  // message sort BEFORE the turn's final assistant message in the legacy
-  // ID-ordered history -- the child's loop then sees a completed assistant
-  // as the newest entry and exits without replying. Let the server mint a
-  // fresh ID at send time instead (the parent TUI is exiting, so nothing
-  // references the old IDs).
-  const prompts = queued.map((item) => ({
+  return queued.map((item) => ({
     // Mirrors the legacy PromptPayload parts shape stream.transport.ts builds
     // for a live RunPrompt: a leading text part followed by any attachments.
     parts: [{ type: "text" as const, text: item.prompt.text }, ...item.prompt.parts],
   }))
+}
 
+async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
+  const prompts = await buildHandoffPrompts(queued)
+
+  const { Global } = await import("@opencode-ai/core/global")
+  const fs = await import("fs")
   const dir = path.join(Global.Path.data, "server", projectID)
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, "handoff.json")
@@ -1123,9 +1125,11 @@ export const RunCommand = effectCmd({
                 process.exit(1)
               }
 
-              // P2: immediate detach in the new server-first mode. The turn
+              // P2/P3: immediate detach in the new server-first mode. The turn
               // already lives in the server process, so /detach just leaves
-              // the client; the server keeps running the turn.
+              // the client; the server keeps running the turn. Queued prompts
+              // are handed off to the server via POST /server/handoff, which
+              // replays them after the active turn finishes.
               let detachSummary: DetachSummary | undefined
               let detaching = false
               const onDetach = async (
@@ -1136,30 +1140,51 @@ export const RunCommand = effectCmd({
                 if (detaching) return
                 detaching = true
 
-                // P3: queue handoff. The local queue is currently discarded
-                // when the client exits; until POST /server/handoff exists,
-                // refuse detach if there are queued prompts.
-                if (queuedPrompts && queuedPrompts.length > 0) {
-                  UI.println(
-                    UI.Style.TEXT_WARNING_BOLD +
-                      "!" +
-                      UI.Style.TEXT_NORMAL +
-                      " Cannot detach with queued prompts: queue handoff is coming in P3." +
-                      UI.Style.TEXT_DIM +
-                      " Finish or cancel them first." +
-                      UI.Style.TEXT_NORMAL,
-                  )
+                try {
+                  const sessionID = activeSessionID ?? sess.id
+
+                  // Hand off queued prompts before updating the record so a POST
+                  // failure aborts the detach and restores the queue (the caller
+                  // in runtime.queue.ts catches the throw and re-arms). SIGHUP
+                  // (live === undefined) uses a short timeout so the dying TUI
+                  // does not hang on an unreachable server.
+                  if (queuedPrompts && queuedPrompts.length > 0) {
+                    const prompts = await buildHandoffPrompts(queuedPrompts)
+                    const res = await fetch(`${started.url}/server/handoff`, {
+                      method: "POST",
+                      headers: { ...headers, "Content-Type": "application/json" },
+                      body: JSON.stringify({ sessionID, prompts }),
+                      signal: AbortSignal.timeout(live ? 10000 : 3000),
+                    }).catch((err: unknown) => {
+                      // SIGHUP is best-effort: if the POST fails, proceed to
+                      // exit anyway so the terminal death is not delayed.
+                      if (live === undefined) return undefined
+                      throw err
+                    })
+                    if (res && !res.ok) {
+                      if (live === undefined) {
+                        // best-effort: log and continue
+                        console.error("SIGHUP handoff POST failed:", res.status)
+                      } else {
+                        throw new Error(`handoff POST failed: ${res.status} ${await res.text().catch(() => "")}`)
+                      }
+                    }
+                  }
+
+                  const record = Discovery.read(projectID)
+                  if (record) {
+                    Discovery.write({ ...record, sessionID })
+                  }
+
+                  detachSummary = { sessionID: activeSessionID ?? sess.id, url: started.url }
+                } catch (error) {
+                  // Reset the guard so a subsequent /detach retry works —
+                  // runtime.queue.ts re-arms input.onDetach on abort, but this
+                  // closure's detaching flag is separate and must be cleared
+                  // or the next call silently no-ops and loses the queue.
                   detaching = false
-                  return
+                  throw error
                 }
-
-                const sessionID = activeSessionID ?? sess.id
-                const record = Discovery.read(projectID)
-                if (record) {
-                  Discovery.write({ ...record, sessionID })
-                }
-
-                detachSummary = { sessionID, url: started.url }
               }
 
               await runInteractiveMode({

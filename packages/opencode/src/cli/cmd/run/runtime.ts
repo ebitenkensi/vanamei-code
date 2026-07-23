@@ -482,7 +482,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
   const footer = shell.footer
 
   // SIGHUP auto-detach (P4). In local mode with onDetach available, detach on
-  // SIGHUP and close the TUI. In attach mode, exit gracefully.
+  // SIGHUP and close the TUI. In attach/detachable mode, hand off queued
+  // prompts (best-effort) before exiting so the server can replay them.
   const onSighup = input.onDetach
     ? () => {
         // A finished live /detach already moved the session to the child
@@ -491,7 +492,10 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         // A live /detach in flight owns the discovery record; ignore the
         // hangup and let it finish (see detachPending on RuntimeState).
         if (state.detachPending) return
-        void input.onDetach!(undefined, state.sessionID).then(() => {
+        // Best-effort: pass the current queued snapshot so onDetach can POST
+        // it to /server/handoff. A short timeout inside onDetach prevents
+        // SIGHUP from hanging if the server is unreachable.
+        void input.onDetach!(undefined, state.sessionID, footer.queued).then(() => {
           state.detached = true
           footer.close()
         })

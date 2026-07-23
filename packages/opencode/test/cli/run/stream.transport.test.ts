@@ -417,6 +417,7 @@ function footer(fn?: (commit: StreamCommit) => void) {
     get isClosed() {
       return closed
     },
+    queued: [],
     onPrompt: () => () => {},
     onQueuedRemove: () => () => {},
     onClose: () => () => {},

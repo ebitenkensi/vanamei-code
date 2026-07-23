@@ -427,6 +427,13 @@ export class RunFooter implements FooterApi {
     return this.closed || this.isGone
   }
 
+  // Exposes the current queued-prompt snapshot for SIGHUP handoff. The queue
+  // is managed internally by runtime.queue.ts; SIGHUP bypasses the queue's
+  // /detach path and needs the current snapshot to hand off to the server.
+  public get queued(): FooterQueuedPrompt[] {
+    return this.queuedPrompts()
+  }
+
   private get isGone(): boolean {
     return this.destroyed || this.renderer.isDestroyed
   }

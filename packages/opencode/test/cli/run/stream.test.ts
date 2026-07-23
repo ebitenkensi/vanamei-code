@@ -8,6 +8,7 @@ function footer() {
 
   const api: FooterApi = {
     isClosed: false,
+    queued: [],
     onPrompt: () => () => {},
     onQueuedRemove: () => () => {},
     onClose: () => () => {},
