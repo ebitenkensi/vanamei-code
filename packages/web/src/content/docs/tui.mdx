@@ -123,13 +123,13 @@ Compact the current session. _Alias_: `/summarize`
 
 ### detach
 
-Promote the running server into a background process so a long turn survives ending the terminal session, then reattach later. Only available in local mode, not while already attached to a remote server. [Learn more](/docs/cli#attach).
+Leave the running session so a long turn survives in the background, then reattach later. [Learn more](/docs/cli#attach).
 
 ```bash frame="none"
 /detach
 ```
 
-OpenCode spawns a detached `opencode serve` process bound to `127.0.0.1` on a random port, writes a per-project discovery record (including the active session), and exits the current process so your shell prompt returns. The in-flight turn finishes in the background, and any plain-text messages you'd queued behind it are handed off and run there too, in order. Commands and shell (`!`) entries left in the queue are TUI-local and can't be handed off, so `/detach` refuses to run (with a warning) while any are queued -- run or clear them first. Reattach with:
+By default, `opencode` starts in **detachable mode**: a child server process is spawned first and the TUI connects to it as a pure HTTP client. This means `/detach` exits the TUI immediately — the turn was never running in your terminal process. The server keeps running the in-flight turn, and any plain-text prompts you'd queued behind it are handed off to the server via `POST /server/handoff`, which replays them after the active turn finishes (in order). Commands and shell (`!`) entries left in the queue are TUI-local and can't be handed off, so `/detach` refuses to run (with a warning) while any are queued — run or clear them first. Reattach with:
 
 ```bash frame="none"
 opencode attach
@@ -137,8 +137,17 @@ opencode attach
 
 This opens the session picker with the detached session preselected, so pressing Enter resumes right where you left off. See [`opencode attach`](/docs/cli#attach) for the full picker and flag behavior.
 
+To opt out of detachable mode and use the legacy single-process local mode, pass `--no-detach` or set `detach.enabled: false` in your config.
+
 :::note
-If the terminal disconnects unexpectedly (for example an SSH drop or `SIGHUP`), OpenCode detaches automatically so the turn isn't lost. There's currently no config option to disable this.
+If the terminal disconnects unexpectedly (for example an SSH drop or `SIGHUP`), the TUI attempts a best-effort queue handoff to the server before exiting, so the turn and any queued prompts survive. There's currently no config option to disable SIGHUP auto-detach.
+:::
+
+:::note
+**Known limitations of queue handoff:**
+
+- `POST /server/handoff` provides **at-least-once** delivery. If the POST times out and you retry `/detach`, the same prompt may be submitted more than once. Duplication is considered safer than loss.
+- If the server-side drain fails (e.g. the server crashes mid-replay), queued prompts are silently lost. The failure is logged to the server's stderr but there is no retry or persistence beyond the in-memory drain.
 :::
 
 ---
@@ -167,7 +176,7 @@ Open external editor for composing messages. Uses the editor set in your `EDITOR
 
 ### exit
 
-Exit OpenCode. _Aliases_: `/quit`, `/q`
+Exit OpenCode and stop the server. In detachable mode (the default), `/exit` sends `POST /server/shutdown` so both the TUI and the server process terminate — the same as tmux's `exit`. In legacy `--no-detach` mode, the process simply exits. _Aliases_: `/quit`, `/q`
 
 ```bash frame="none"
 /exit
@@ -278,7 +287,7 @@ Share current session. [Learn more](/docs/share).
 
 ### shutdown
 
-Stop the remote server you're attached to. Only available when attached via `opencode attach`, not in local mode. [Learn more](/docs/cli#attach).
+Stop the server you're attached to. In detachable mode (the default), this is equivalent to [`/exit`](#exit) — both send `POST /server/shutdown`. Also available when attached via `opencode attach`. [Learn more](/docs/cli#attach).
 
 ```bash frame="none"
 /shutdown

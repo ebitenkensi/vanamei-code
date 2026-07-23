@@ -83,6 +83,11 @@ export const TuiThreadCommand = cmd({
         type: "boolean",
         hidden: true,
         default: false,
+      })
+      .option("detach", {
+        type: "boolean",
+        default: undefined,
+        describe: "spawn a detached server and connect the TUI over HTTP (--no-detach opts out)",
       }),
   handler: async (args) => {
     if (args.replay === true) {
@@ -150,6 +155,7 @@ export const TuiThreadCommand = cmd({
       replay: noReplay ? false : undefined,
       replayLimit: args.replayLimit,
       demo: args.demo,
+      detach: args.detach,
     })
   },
 })

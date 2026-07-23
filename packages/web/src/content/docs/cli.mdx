@@ -43,8 +43,9 @@ opencode [project]
 | <nobr><code>{"--port"}</code></nobr>         |       | Port for the local server (defaults to a random port)                                                                    |
 | <nobr><code>{"--no-replay"}</code></nobr>    |       | Disable session history replay on resume and after resize                                                                |
 | <nobr><code>{"--replay-limit"}</code></nobr> |       | Cap visible replay to the newest N messages                                                                              |
+| <nobr><code>{"--no-detach"}</code></nobr>     |       | Disable detachable-by-default mode; use legacy single-process local mode instead                                         |
 
-This is the same interactive UI documented in full on the [TUI page](/docs/tui). Passing `--attach` here is equivalent to running [`opencode attach`](#attach).
+This is the same interactive UI documented in full on the [TUI page](/docs/tui). Passing `--attach` here is equivalent to running [`opencode attach`](#attach). By default, `opencode` starts in detachable mode (spawns a child server and connects the TUI as an HTTP client); pass `--no-detach` or set `detach.enabled: false` in config to use the legacy single-process mode where `/detach` spawns a background server at detach time instead.
 
 ---
 

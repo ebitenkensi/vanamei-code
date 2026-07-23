@@ -93,6 +93,7 @@ function footer(): FooterApi {
     get isClosed() {
       return closed
     },
+    queued: [],
     onPrompt: () => () => {},
     onQueuedRemove: () => () => {},
     onClose(fn) {
@@ -146,6 +147,7 @@ function recordingFooter() {
     get isClosed() {
       return closed
     },
+    queued: [],
     onPrompt(fn) {
       promptHandler = fn
       return () => {

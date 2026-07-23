@@ -108,7 +108,7 @@ type RunFooterOptions = {
   onInterrupt?: () => void
   onBackground?: () => void
   onEditorOpen: (input: { value: string }) => Promise<string | undefined>
-  onExit?: () => void
+  onExit?: () => void | Promise<void>
   onSubagentSelect?: (sessionID: string | undefined) => void
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
   onSessionsOpen?: () => void
@@ -400,7 +400,7 @@ export class RunFooter implements FooterApi {
               onInputClear: footer.handleInputClear,
               onExitRequest: footer.handleExit,
               onRequestExit: footer.setRequestExitHandler,
-              onExit: () => footer.close(),
+              onExit: () => footer.options.onExit?.() ?? footer.close(),
               onModelSelect: footer.handleModelSelect,
               onAgentSelect: footer.handleAgentSelect,
               onVariantSelect: footer.handleVariantSelect,
@@ -425,6 +425,13 @@ export class RunFooter implements FooterApi {
 
   public get isClosed(): boolean {
     return this.closed || this.isGone
+  }
+
+  // Exposes the current queued-prompt snapshot for SIGHUP handoff. The queue
+  // is managed internally by runtime.queue.ts; SIGHUP bypasses the queue's
+  // /detach path and needs the current snapshot to hand off to the server.
+  public get queued(): FooterQueuedPrompt[] {
+    return this.queuedPrompts()
   }
 
   private get isGone(): boolean {
@@ -1265,8 +1272,13 @@ export class RunFooter implements FooterApi {
 
     this.clearExitTimer()
     this.patch({ exit: 0, status: "exiting" })
+    const fn = this.options.onExit
+    if (fn) {
+      this.options.onExit = undefined // guard: only one exit shutdown per session
+      void Promise.resolve(fn()).finally(() => this.close())
+      return true
+    }
     this.close()
-    this.options.onExit?.()
     return true
   }
 

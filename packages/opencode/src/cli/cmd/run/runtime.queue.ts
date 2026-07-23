@@ -30,7 +30,17 @@ export type QueueInput = {
   onSend?: (prompt: RunPrompt) => void
   onNewSession?: () => void | Promise<void>
   onDetach?: (live?: boolean, queued?: FooterQueuedPrompt[]) => Promise<void>
+  // When true, /detach acts immediately: snapshots the current queue and calls
+  // onDetach synchronously without waiting for the active turn to finish.
+  // Used by the detachable server-first startup path where the turn lives in
+  // the server process; the legacy local mode leaves this undefined/false and
+  // keeps the whenIdle() deferred behavior.
+  detachImmediate?: boolean
   onShutdown?: () => Promise<void>
+  // If provided, normal exits (/exit, Ctrl+C double-press) run this before
+  // closing. Only the detachable startup path sets this; plain --attach
+  // leaves it undefined so exit only leaves the client.
+  onExit?: () => void | Promise<void>
   run: (prompt: RunPrompt, signal: AbortSignal) => Promise<void>
 }
 
@@ -296,6 +306,12 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     }
 
     if (prompt.mode !== "shell" && isExitCommand(prompt.text)) {
+      if (input.onExit) {
+        const fn = input.onExit
+        input.onExit = undefined // guard: only one exit shutdown per session
+        void Promise.resolve(fn()).finally(() => input.footer.close())
+        return
+      }
       input.footer.close()
       return
     }
@@ -305,12 +321,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         const fn = input.onDetach
         input.onDetach = undefined // guard: only one detach per session
         // Stop promoting queued inputs immediately (synchronous, no await).
-        // The in-flight turn finishes naturally, then the remaining queue is
-        // snapshotted (order preserved) and handed to fn(), which writes the
-        // handoff file the spawned child executes before spawning it.
         detaching = true
-        void whenIdle().then(async () => {
-          const snapshot: FooterQueuedPrompt[] = state.queue.map(
+
+        // Snapshot the queue in order. For the immediate path this is taken
+        // synchronously; for the legacy deferred path the snapshot is taken
+        // inside runDetach (after whenIdle resolves) so it reflects the queue
+        // at hand-off time, matching the pre-detachImmediate behavior exactly.
+        const snapshot = (): FooterQueuedPrompt[] =>
+          state.queue.map(
             (item) =>
               state.queued.find((queued) => queued.prompt === item) ?? {
                 messageID: MessageID.ascending(),
@@ -319,8 +337,9 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
               },
           )
 
+        const runDetach = async (queued: FooterQueuedPrompt[]) => {
           try {
-            await fn(true, snapshot)
+            await fn(true, queued)
           } catch (error) {
             // Abort the detach: restore the pre-detach state so the local
             // queue keeps draining instead of silently losing prompts.
@@ -336,7 +355,16 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           }
 
           input.footer.close()
-        })
+        }
+
+        if (input.detachImmediate) {
+          void runDetach(snapshot())
+        } else {
+          // Legacy local mode: the in-flight turn must finish first because the
+          // turn lives in this process and the spawned child takes over. Wait
+          // for idle, then snapshot and hand off.
+          void whenIdle().then(() => runDetach(snapshot()))
+        }
       }
       return
     }

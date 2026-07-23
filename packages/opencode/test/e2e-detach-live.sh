@@ -27,10 +27,27 @@ PASS=0; FAIL=0; RESULTS=()
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 
 # ---- prepare temporary config ----
+# Force detach.enabled=false so the detachable-by-default startup
+# (introduced after this suite was written) does not route the bare TUI
+# launch through the new server-first path. This suite exists to guard
+# the legacy local-mode detach/re-attach behavior, so it must stay on
+# the legacy path regardless of the new default.
 if [ ! -f "$CONFIG_DIR/opencode.json" ]; then
   sed 's/"auto"/"allow"/g' ~/.config/opencode/opencode.json > "$CONFIG_DIR/opencode.json"
   cp ~/.config/opencode/tui.json "$CONFIG_DIR/" 2>/dev/null || true
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json; p='$CONFIG_DIR/opencode.json'; d=json.load(open(p)); d.setdefault('detach',{})['enabled']=False; json.dump(d, open(p,'w'), indent=2)"
+  elif command -v jq >/dev/null 2>&1; then
+    jq '.detach.enabled = false' "$CONFIG_DIR/opencode.json" > "$CONFIG_DIR/opencode.json.tmp" && mv "$CONFIG_DIR/opencode.json.tmp" "$CONFIG_DIR/opencode.json"
+  fi
 fi
+# The global config dir is $XDG_CONFIG_HOME/opencode/, not $XDG_CONFIG_HOME
+# itself, so the override above was never read. Write the detach opt-out where
+# opencode actually looks (opencode.jsonc wins the global merge). Unconditional:
+# opencode auto-creates an empty opencode.jsonc here on first run, so a stale
+# one from a previous run must be overwritten.
+mkdir -p "$CONFIG_DIR/opencode"
+printf '{\n  "detach": { "enabled": false }\n}\n' > "$CONFIG_DIR/opencode/opencode.jsonc"
 
 # ---- helpers ----
 header() { echo ""; echo "=========================================="; echo "  ITEM ($1): $2"; echo "=========================================="; }

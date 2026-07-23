@@ -19,7 +19,13 @@ export type DetachInput = {
   onShutdown: () => Promise<void>
 }
 
-async function spawnDetachChild(input: DetachInput) {
+export type DetachChildResult = {
+  url: string
+  password: string
+  record: Discovery.Record
+}
+
+async function spawnDetachChild(input: DetachInput, pollIntervalMs = 500): Promise<DetachChildResult | undefined> {
   // In bun-dev mode (running `bun run src/index.ts`) process.argv[1] is the
   // entry script; pass it as an argument to `bun` (process.execPath).
   // In the compiled binary (ELF), process.execPath IS the binary itself,
@@ -55,12 +61,34 @@ async function spawnDetachChild(input: DetachInput) {
   // If the timeout elapses, the parent still exits — bash gets its prompt
   // back and the child will write the record eventually.
   const maxWait = 10000
-  const pollInterval = 500
-  for (let elapsed = 0; elapsed < maxWait; elapsed += pollInterval) {
-    await new Promise((r) => setTimeout(r, pollInterval))
+  for (let elapsed = 0; elapsed < maxWait; elapsed += pollIntervalMs) {
+    await new Promise((r) => setTimeout(r, pollIntervalMs))
     const rec = Discovery.read(input.projectID)
-    if (rec && rec.pid !== process.pid) return
+    // Match the spawned child's pid exactly: a stale record from a dead
+    // server (or a live one about to be overwritten) also satisfies
+    // `pid !== process.pid` and would hand the parent a dead/foreign URL.
+    if (rec && rec.pid === child.pid) {
+      return { url: rec.url, password, record: rec }
+    }
   }
+
+  return undefined
+}
+
+export async function spawnDetachServer(
+  input: Pick<DetachInput, "directory" | "projectID" | "sessionID" | "handoffPath">,
+  pollIntervalMs = 500,
+): Promise<DetachChildResult | undefined> {
+  return spawnDetachChild(
+    {
+      directory: input.directory,
+      projectID: input.projectID,
+      sessionID: input.sessionID,
+      handoffPath: input.handoffPath,
+      onShutdown: async () => {},
+    },
+    pollIntervalMs,
+  )
 }
 
 export async function executeDetach(input: DetachInput & { live: true }): Promise<void>

@@ -14,6 +14,7 @@ function footer() {
     get isClosed() {
       return closed
     },
+    queued: [],
     onPrompt(fn) {
       prompts.add(fn)
       return () => {

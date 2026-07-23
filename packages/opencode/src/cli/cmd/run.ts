@@ -18,6 +18,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import { open } from "node:fs/promises"
 import { Effect } from "effect"
+import { Config } from "@/config/config"
 import { UI } from "../ui"
 import { effectCmd } from "../effect-cmd"
 import { EOL } from "os"
@@ -26,7 +27,7 @@ import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@openc
 import { Discovery } from "@/server/discovery"
 import { FormatError, FormatUnknownError } from "../error"
 import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
-import { executeDetach } from "./run/detach"
+import { executeDetach, spawnDetachServer } from "./run/detach"
 import type { FooterQueuedPrompt } from "./run/types"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
@@ -138,10 +139,15 @@ async function tool(part: ToolPart) {
 // have used itself. Commands and shell prompts are TUI-local semantics the
 // child cannot resolve, so any of those queued still abort the whole
 // handoff (and, by extension, the detach).
-async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
-  // /new arrives as plain text and is only recognized at dequeue time, so it
-  // carries no .command marker -- test the text form too or it would be
-  // handed off to the child as a literal "/new" prompt.
+// Validates queued prompts for handoff and builds the { parts } payload the
+// server expects. Shell/command prompts are TUI-local semantics the server
+// cannot resolve, so any of those queued abort the whole handoff. /new
+// arrives as plain text and is only recognized at dequeue time, so the text
+// form is tested too. No messageID is included: the queue's pre-allocated IDs
+// sort before the in-flight turn's later messages in the ID-ordered legacy
+// history, which makes the child loop exit without replying. The server mints
+// a fresh ID at send time instead.
+async function buildHandoffPrompts(queued: FooterQueuedPrompt[]) {
   const { isNewCommand } = await import("./run/prompt.shared")
   const blocked = queued.find(
     (item) => item.prompt.mode === "shell" || item.prompt.command || isNewCommand(item.prompt.text),
@@ -152,21 +158,18 @@ async function writeHandoffFile(projectID: string, sessionID: string, queued: Fo
     )
   }
 
-  const { Global } = await import("@opencode-ai/core/global")
-  const fs = await import("fs")
-  // No messageID: the queue's pre-allocated IDs were minted before the
-  // in-flight turn's later messages, so reusing them makes the handoff user
-  // message sort BEFORE the turn's final assistant message in the legacy
-  // ID-ordered history -- the child's loop then sees a completed assistant
-  // as the newest entry and exits without replying. Let the server mint a
-  // fresh ID at send time instead (the parent TUI is exiting, so nothing
-  // references the old IDs).
-  const prompts = queued.map((item) => ({
+  return queued.map((item) => ({
     // Mirrors the legacy PromptPayload parts shape stream.transport.ts builds
     // for a live RunPrompt: a leading text part followed by any attachments.
     parts: [{ type: "text" as const, text: item.prompt.text }, ...item.prompt.parts],
   }))
+}
 
+async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
+  const prompts = await buildHandoffPrompts(queued)
+
+  const { Global } = await import("@opencode-ai/core/global")
+  const fs = await import("fs")
   const dir = path.join(Global.Path.data, "server", projectID)
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, "handoff.json")
@@ -339,6 +342,11 @@ export const RunCommand = effectCmd({
         default: false,
         hidden: true,
         describe: "enable direct interactive demo slash commands; pass one as the message to run it immediately",
+      })
+      .option("detach", {
+        type: "boolean",
+        default: undefined,
+        describe: "spawn a detached server and connect the TUI over HTTP",
       }),
   handler: Effect.fn("Cli.run")(function* (args) {
     const { Agent } = yield* Effect.promise(() => import("@/agent/agent"))
@@ -348,6 +356,16 @@ export const RunCommand = effectCmd({
     const agentSvc = yield* Agent.Service
     const flags = yield* RuntimeFlags.Service
     const localInstance = yield* InstanceRef
+    // Only read the detach config when the instance context is available
+    // (local/non-attach path). `Config.get` routes through `InstanceState`,
+    // which dies with "InstanceRef not provided" when --attach skips the
+    // instance. The attach path never consults detachEnabled, so an Effect
+    // that succeeds iff localInstance is set keeps attach working.
+    const detachEnabledCfg = localInstance
+      ? yield* Config.Service.use((cfg) =>
+          cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)),
+        )
+      : true
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
       const interactive = args.mini || args.interactive
@@ -1039,10 +1057,184 @@ export const RunCommand = effectCmd({
         return
       }
 
-      if (interactive && !args.attach && !args.session && !args.continue) {
-        const model = pick(args.model)
+      if (interactive && !args.attach) {
         if (!localInstance) throw new Error("InstanceRef is undefined in local mode")
         const projectID = localInstance.project.id
+        const { Global } = await import("@opencode-ai/core/global")
+        const { Project } = await import("@/project/project")
+        const detachEnabled = args.detach ?? detachEnabledCfg ?? true
+
+        if (detachEnabled) {
+          const existing = Discovery.read(projectID)
+          if (existing && Discovery.pidAlive(existing.pid)) {
+            UI.println(
+              UI.Style.TEXT_WARNING_BOLD +
+                "!" +
+                UI.Style.TEXT_NORMAL +
+                ` A detached server is already running for this project (${existing.url}, pid ${existing.pid}).`,
+            )
+            UI.println(UI.Style.TEXT_DIM + "  Reattach with: opencode attach " + existing.url)
+            UI.println(UI.Style.TEXT_DIM + "  Or stop it with: kill " + existing.pid)
+            UI.println(
+              UI.Style.TEXT_DIM +
+                "  A new server will be spawned anyway and the old record will be overwritten." +
+                UI.Style.TEXT_NORMAL,
+            )
+          }
+
+          const started = await spawnDetachServer(
+            { directory: directory ?? root, projectID },
+            50,
+          )
+
+          if (started) {
+            const headers = ServerAuth.headers({ password: started.password })
+            const client = createOpencodeClient({
+              baseUrl: started.url,
+              directory: directory ?? root,
+              headers,
+            })
+            const model = pick(args.model)
+            const { runInteractiveMode } = await import("./run/runtime")
+            const onShutdown = async () => {
+              try {
+                const res = await fetch(`${started.url}/server/shutdown`, {
+                  method: "POST",
+                  headers: { ...headers, "Content-Type": "application/json" },
+                  signal: AbortSignal.timeout(10000),
+                })
+                if (!res.ok) {
+                  console.error("shutdown request failed:", res.status)
+                }
+              } catch (err) {
+                // Server may already be dead; best-effort clean up the stale
+                // discovery record so `opencode attach` does not point at it.
+                console.error("shutdown request error:", err)
+                try {
+                  Discovery.remove(projectID)
+                } catch {
+                  // ignore — record may already be gone
+                }
+              }
+            }
+
+            try {
+              const sess = await session(client)
+              if (!sess?.id) {
+                UI.error("Session not found")
+                process.exit(1)
+              }
+
+              // P2/P3: immediate detach in the new server-first mode. The turn
+              // already lives in the server process, so /detach just leaves
+              // the client; the server keeps running the turn. Queued prompts
+              // are handed off to the server via POST /server/handoff, which
+              // replays them after the active turn finishes.
+              let detachSummary: DetachSummary | undefined
+              let detaching = false
+              const onDetach = async (
+                live?: boolean,
+                activeSessionID?: string,
+                queuedPrompts?: FooterQueuedPrompt[],
+              ) => {
+                if (detaching) return
+                detaching = true
+
+                try {
+                  const sessionID = activeSessionID ?? sess.id
+
+                  // Hand off queued prompts before updating the record so a POST
+                  // failure aborts the detach and restores the queue (the caller
+                  // in runtime.queue.ts catches the throw and re-arms). SIGHUP
+                  // (live === undefined) uses a short timeout so the dying TUI
+                  // does not hang on an unreachable server.
+                  if (queuedPrompts && queuedPrompts.length > 0) {
+                    const prompts = await buildHandoffPrompts(queuedPrompts)
+                    const res = await fetch(`${started.url}/server/handoff`, {
+                      method: "POST",
+                      headers: { ...headers, "Content-Type": "application/json" },
+                      body: JSON.stringify({ sessionID, prompts }),
+                      signal: AbortSignal.timeout(live ? 10000 : 3000),
+                    }).catch((err: unknown) => {
+                      // SIGHUP is best-effort: if the POST fails, proceed to
+                      // exit anyway so the terminal death is not delayed.
+                      if (live === undefined) return undefined
+                      throw err
+                    })
+                    if (res && !res.ok) {
+                      if (live === undefined) {
+                        // best-effort: log and continue
+                        console.error("SIGHUP handoff POST failed:", res.status)
+                      } else {
+                        throw new Error(`handoff POST failed: ${res.status} ${await res.text().catch(() => "")}`)
+                      }
+                    }
+                  }
+
+                  const record = Discovery.read(projectID)
+                  if (record) {
+                    Discovery.write({ ...record, sessionID })
+                  }
+
+                  detachSummary = { sessionID: activeSessionID ?? sess.id, url: started.url }
+                } catch (error) {
+                  // Reset the guard so a subsequent /detach retry works —
+                  // runtime.queue.ts re-arms input.onDetach on abort, but this
+                  // closure's detaching flag is separate and must be cleared
+                  // or the next call silently no-ops and loses the queue.
+                  detaching = false
+                  throw error
+                }
+              }
+
+              await runInteractiveMode({
+                sdk: client,
+                directory: directory ?? root,
+                sessionID: sess.id,
+                sessionTitle: sess.title,
+                resume: Boolean(args.session || args.continue) && !args.fork,
+                replay,
+                replayLimit: args["replay-limit"],
+                agent: args.agent,
+                model,
+                variant: args.variant,
+                files,
+                initialInput,
+                createSession: createFreshSession,
+                thinking,
+                backgroundSubagents: flags.experimentalBackgroundSubagents,
+                demo: args.demo,
+                onShutdown,
+                // /exit, Ctrl+C double-press, and palette exit shut down the
+                // server in this mode (server-first = client owns lifecycle).
+                onExit: onShutdown,
+                detachImmediate: true,
+                onDetach,
+              } as const)
+
+              // Printed only now, after the shell has fully torn down, so the
+              // summary lands on a normal terminal instead of the renderer.
+              if (detachSummary) {
+                printDetachSummary(detachSummary)
+                process.exit(0)
+              }
+            } catch (error) {
+              dieInteractive(error)
+            }
+            return
+          }
+
+          const logPath = path.join(Global.Path.log, `detach-${projectID}.log`)
+          UI.println(
+            UI.Style.TEXT_WARNING_BOLD +
+              "!" +
+              UI.Style.TEXT_NORMAL +
+              " Failed to spawn detached server; falling back to local mode. Log: " +
+              logPath,
+          )
+        }
+
+        const model = pick(args.model)
         const { runInteractiveLocalMode } = await import("./run/runtime")
         const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const { Server } = await import("@/server/server")
@@ -1085,8 +1277,7 @@ export const RunCommand = effectCmd({
             return
           }
 
-          // SIGHUP auto-detach: in-place daemonize (live is undefined here so
-          // executeDetach overload resolves to the Listener return).
+          // SIGHUP auto-detach: in-place daemonize (existing behavior).
           const listener = await executeDetach({
             directory: directory ?? root,
             projectID,
@@ -1182,6 +1373,7 @@ type MiniCommandInput = {
   demo?: boolean
   new?: boolean
   sessionHint?: string
+  detach?: boolean
 }
 
 export async function runMini(input: MiniCommandInput) {
@@ -1220,5 +1412,6 @@ export async function runMini(input: MiniCommandInput) {
     new: input.new ?? false,
     "session-hint": input.sessionHint,
     sessionHint: input.sessionHint,
+    detach: input.detach,
   })
 }

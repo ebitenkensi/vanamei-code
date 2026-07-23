@@ -74,31 +74,15 @@ export const ServeCommand = effectCmd({
             // already gone
           }
 
-          const runHandoff = async () => {
-            const auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-            for (const prompt of handoff.prompts) {
-              const res = await fetch(`${server.url.href}session/${handoff.sessionID}/message`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: auth,
-                  "x-opencode-directory": directory,
-                },
-                // No messageID: the server mints one at send time so the new
-                // user message sorts after the finished turn's messages in the
-                // ID-ordered legacy history (pre-allocated queue IDs sort
-                // before them and make the loop exit without replying).
-                body: JSON.stringify({ parts: prompt.parts }),
-              }).catch((err: unknown) => {
-                console.error("detach-child handoff prompt error:", err)
-                return undefined
-              })
-              if (res && !res.ok) {
-                console.error("detach-child handoff prompt failed:", res.status, await res.text().catch(() => ""))
-              }
-            }
-          }
-          runHandoff().catch((err: unknown) => console.error("detach-child handoff error:", err))
+          const { Handoff } = yield* Effect.promise(() => import("../../server/handoff"))
+          const auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
+          Handoff.runHandoffDrain({
+            baseUrl: server.url.href,
+            authHeader: auth,
+            directory,
+            sessionID: handoff.sessionID,
+            prompts: handoff.prompts,
+          }).catch((err: unknown) => console.error("detach-child handoff error:", err))
         }
       }
 

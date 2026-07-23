@@ -72,7 +72,16 @@ type RunRuntimeInput = {
   // `sessionID` is the current session at call time, threaded through so
   // /detach carries the right session across /new and /sessions switches.
   onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
+  // When true, the prompt queue's /detach branch acts immediately instead of
+  // waiting for the active turn to finish. Used by the detachable server-first
+  // startup path where the turn already lives in the server process.
+  detachImmediate?: boolean
   onShutdown?: () => Promise<void>
+  // If provided, normal exits (/exit, Ctrl+C double-press, palette exit)
+  // run this before closing the client. Used by the detachable startup path
+  // to shut down the server; plain --attach leaves this undefined so exit
+  // only leaves the client.
+  onExit?: () => void | Promise<void>
 }
 
 type RunLocalInput = {
@@ -463,11 +472,18 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     onSessionSelect: (sessionID, title) => {
       void switchSession(sessionID, title)
     },
+    // Typed /exit is intercepted by footer.prompt before it reaches the
+    // queue's exit branch, and Ctrl+C double-press exits through the footer
+    // too — both land on the lifecycle's onExit wrapper, so the shutdown
+    // hook must be wired here as well or server-first mode leaves the
+    // spawned server (and its discovery record) behind on exit.
+    onExit: input.onExit,
   })
   const footer = shell.footer
 
   // SIGHUP auto-detach (P4). In local mode with onDetach available, detach on
-  // SIGHUP and close the TUI. In attach mode, exit gracefully.
+  // SIGHUP and close the TUI. In attach/detachable mode, hand off queued
+  // prompts (best-effort) before exiting so the server can replay them.
   const onSighup = input.onDetach
     ? () => {
         // A finished live /detach already moved the session to the child
@@ -476,7 +492,10 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
         // A live /detach in flight owns the discovery record; ignore the
         // hangup and let it finish (see detachPending on RuntimeState).
         if (state.detachPending) return
-        void input.onDetach!(undefined, state.sessionID).then(() => {
+        // Best-effort: pass the current queued snapshot so onDetach can POST
+        // it to /server/handoff. A short timeout inside onDetach prevents
+        // SIGHUP from hanging if the server is unreachable.
+        void input.onDetach!(undefined, state.sessionID, footer.queued).then(() => {
           state.detached = true
           footer.close()
         })
@@ -889,7 +908,9 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
             state.detached = true
           }
         : undefined,
+      detachImmediate: input.detachImmediate,
       onShutdown: input.onShutdown,
+      onExit: input.onExit,
       onSend: (prompt) => {
         state.shown = true
         state.history.push(prompt)
@@ -1146,7 +1167,13 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 
 // Attach mode. Uses the caller-provided SDK client directly.
 export async function runInteractiveMode(
-  input: RunInput & { createSession?: CreateSession; onShutdown?: () => Promise<void> },
+  input: RunInput & {
+    createSession?: CreateSession
+    onDetach?: (live?: boolean, sessionID?: string, queued?: FooterQueuedPrompt[]) => Promise<void>
+    detachImmediate?: boolean
+    onShutdown?: () => Promise<void>
+    onExit?: () => void | Promise<void>
+  },
   deps?: RunRuntimeDeps,
 ): Promise<void> {
   return runInteractiveRuntime(
@@ -1158,7 +1185,10 @@ export async function runInteractiveMode(
       replay: input.replay,
       replayLimit: input.replayLimit,
       demo: input.demo,
+      onDetach: input.onDetach,
+      detachImmediate: input.detachImmediate,
       onShutdown: input.onShutdown,
+      onExit: input.onExit,
       boot: async () => ({
         sdk: input.sdk,
         directory: input.directory,

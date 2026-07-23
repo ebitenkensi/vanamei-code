@@ -392,6 +392,7 @@ export type LocalReplayRow = {
 // touch the renderer directly -- they go through this interface.
 export type FooterApi = {
   readonly isClosed: boolean
+  readonly queued: FooterQueuedPrompt[]
   onPrompt(fn: (input: RunPrompt) => void): () => void
   onQueuedRemove(fn: (messageID: string) => boolean | Promise<boolean>): () => void
   onClose(fn: () => void): () => void
