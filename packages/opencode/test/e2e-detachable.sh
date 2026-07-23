@@ -11,7 +11,7 @@
 #   (e) long-running tool + queued prompt -> /detach -> both turns complete
 #       in order (queue handoff via POST /server/handoff)
 #   (f) --no-detach: legacy single-process mode (regression)
-#   (g) spawn failure fallback to local mode
+#   (g) existing-server warning on second bare launch (always-new-spawn)
 #
 # Usage: bash packages/opencode/test/e2e-detachable.sh
 # Requires: tmux, jq, git, bun
@@ -31,18 +31,35 @@ PASS=0; FAIL=0; RESULTS=()
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 
 # ---- prepare temporary config ----
-# Inherit the user's config but replace "auto" with "allow" (schema compat).
-# Do NOT force detach.enabled=false here — this suite tests the NEW detachable
-# default mode. We leave detach enabled (the default).
-if [ ! -f "$CONFIG_DIR/opencode.json" ]; then
-  sed 's/"auto"/"allow"/g' ~/.config/opencode/opencode.json > "$CONFIG_DIR/opencode.json"
-  cp ~/.config/opencode/tui.json "$CONFIG_DIR/" 2>/dev/null || true
-fi
-# Ensure no stale detach opt-out in the global config subdir
+# The global config dir is $XDG_CONFIG_HOME/opencode/, not $XDG_CONFIG_HOME
+# itself — a config written one level up is silently never read. Inherit the
+# user's config but replace "auto" with "allow" (schema compat). Do NOT force
+# detach.enabled=false here — this suite tests the NEW detachable default mode.
 mkdir -p "$CONFIG_DIR/opencode"
+if [ ! -f "$CONFIG_DIR/opencode/opencode.json" ]; then
+  sed 's/"auto"/"allow"/g' ~/.config/opencode/opencode.json > "$CONFIG_DIR/opencode/opencode.json"
+  cp ~/.config/opencode/tui.json "$CONFIG_DIR/opencode/" 2>/dev/null || true
+fi
+# A stale opt-out jsonc would win the global merge and silently flip the suite
+# back to legacy mode.
 rm -f "$CONFIG_DIR/opencode/opencode.jsonc"
 
 # ---- cleanup ----
+# Kill and remove ONLY records belonging to this suite's test project. The
+# data dir is shared with real servers (and other agents) on this machine, so
+# an unscoped glob here would kill unrelated live servers.
+cleanup_test_records() {
+  for f in "$DATA_DIR"/server/*/server.json; do
+    [ -f "$f" ] || continue
+    local dir pid
+    dir=$(jq -r '.directory // ""' "$f" 2>/dev/null || echo "")
+    [ "$dir" = "$PROJECT_DIR" ] || continue
+    pid=$(jq -r '.pid // ""' "$f" 2>/dev/null || echo "")
+    [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
+    rm -f "$f"
+  done
+}
+
 cleanup() {
   local ec=$?
   echo ""
@@ -50,12 +67,7 @@ cleanup() {
   for s in $(tmux list-sessions 2>/dev/null | grep '^e2e-detachable-' | cut -d: -f1 | tr -d ' '); do
     tmux kill-session -t "$s" 2>/dev/null || true
   done
-  for f in "$DATA_DIR"/server/*/server.json; do
-    [ -f "$f" ] || continue
-    pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-    [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-    rm -f "$f"
-  done
+  cleanup_test_records
   rm -rf "$PROJECT_DIR" 2>/dev/null || true
   exit $ec
 }
@@ -73,6 +85,7 @@ find_record() {
   local pid="$1"
   for f in "$DATA_DIR"/server/*/server.json; do
     [ -f "$f" ] || continue
+    [ "$(jq -r '.directory // ""' "$f" 2>/dev/null)" = "$PROJECT_DIR" ] || continue
     local rec_pid; rec_pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
     [ "$rec_pid" = "$pid" ] && { echo "$f"; return 0; }
   done
@@ -89,11 +102,14 @@ wait_for_record_pid() {
   return 1
 }
 
+# Records from unrelated projects may coexist in the shared data dir; only a
+# record for this suite's test project counts.
 wait_for_record_any() {
   local max_wait="${1:-30}"
   for i in $(seq 1 "$max_wait"); do
     for f in "$DATA_DIR"/server/*/server.json; do
-      [ -f "$f" ] && { echo "$f"; return 0; }
+      [ -f "$f" ] || continue
+      [ "$(jq -r '.directory // ""' "$f" 2>/dev/null)" = "$PROJECT_DIR" ] && { echo "$f"; return 0; }
     done
     sleep 1
   done
@@ -141,7 +157,7 @@ header "a" "bare launch: parent+child 2 processes + discovery record"
 echo "EXPECTED: 2 opencode processes (parent TUI + child server), discovery record exists"
 
 TMUX_A="e2e-detachable-a"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_A"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -178,12 +194,7 @@ fi
 
 # Cleanup for next test
 tmux kill-session -t "$TMUX_A" 2>/dev/null || true
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 sleep 2
 
 # ====================================================================
@@ -193,7 +204,7 @@ header "b" "detach mid-turn: parent exits, child finishes, attach shows result"
 echo "EXPECTED: /detach exits parent immediately, server completes turn, attach shows result"
 
 TMUX_B="e2e-detachable-b"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_B"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -211,7 +222,7 @@ else
 
   # Send a long-running prompt
   echo "Sending prompt: sleep 20..."
-  tmux send-keys -t "$TMUX_B" "run the shell command 'sleep 20' with the bash tool and tell me when done" Enter
+  tmux send-keys -t "$TMUX_B" "run the shell command 'sleep 20' with the bash tool, then reply with exactly TURN_B_DONE" Enter
   echo "Waiting for turn to start (15s)..."; sleep 15
 
   # Send /detach
@@ -252,8 +263,10 @@ else
       echo "$CAP_B" | tail -20
       echo "---"
 
-      if echo "$CAP_B" | grep -qiE "(done|complete|finished|sleep|ready|opencode)"; then
-        echo "ACTUAL: Attach connected, turn result visible"
+      # The prompt itself echoes once in the replay; the assistant's reply is a
+      # second occurrence. Requiring >=2 keeps the echo alone from passing.
+      if [ "$(echo "$CAP_B" | grep -c "TURN_B_DONE")" -ge 2 ]; then
+        echo "ACTUAL: Attach connected, TURN_B_DONE reply visible"
         tmux send-keys -t "$TMUX_B2" "/exit" Enter
         sleep 3
         pass "b"
@@ -268,12 +281,7 @@ else
 fi
 
 # Cleanup
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 sleep 2
 
 # ====================================================================
@@ -283,7 +291,7 @@ header "c" "/exit: both processes terminate, record deleted"
 echo "EXPECTED: /exit kills server + TUI, discovery record removed"
 
 TMUX_C="e2e-detachable-c"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_C"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -305,8 +313,6 @@ else
 
   tmux kill-session -t "$TMUX_C" 2>/dev/null || true
 
-  parent_dead=! pid_alive "$PARENT_PID_C"
-  child_dead=! pid_alive "$CHILD_PID_C"
   record_gone=true
   [ -f "$REC_C" ] && record_gone=false
 
@@ -331,7 +337,7 @@ header "d" "SIGHUP: server survives terminal death"
 echo "EXPECTED: SIGHUP kills TUI, server keeps running"
 
 TMUX_D="e2e-detachable-d"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_D"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -369,12 +375,7 @@ else
 fi
 
 # Cleanup
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 sleep 2
 
 # ====================================================================
@@ -384,7 +385,7 @@ header "e" "queue handoff: long tool + queued prompt -> /detach -> both turns co
 echo "EXPECTED: first turn completes, then queued prompt runs (order preserved)"
 
 TMUX_E="e2e-detachable-e"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_E"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -402,12 +403,12 @@ else
 
   # Send a long-running prompt
   echo "Sending first prompt (sleep 15)..."
-  tmux send-keys -t "$TMUX_E" "run the shell command 'sleep 15' with the bash tool and tell me when done" Enter
+  tmux send-keys -t "$TMUX_E" "run the shell command 'sleep 15' with the bash tool, then reply with exactly FIRST_E_DONE" Enter
   echo "Waiting for turn to start (12s)..."; sleep 12
 
   # Queue a second prompt while the first is running
   echo "Sending second queued prompt..."
-  tmux send-keys -t "$TMUX_E" "what is 2+2? just say the number" Enter
+  tmux send-keys -t "$TMUX_E" "reply with exactly HANDOFF_E_OK" Enter
   sleep 2
 
   # /detach — should hand off the queued prompt
@@ -446,12 +447,12 @@ else
       echo "$CAP_E" | tail -30
       echo "---"
 
-      # Check that both turns completed: first (sleep) and second (2+2)
-      # The first turn should appear before the second in the scrollback
-      if echo "$CAP_E" | grep -qiE "(done|complete|finished|sleep)"; then
-        echo "First turn result visible"
-        if echo "$CAP_E" | grep -qiE "(4|four)"; then
-          echo "Second turn result visible"
+      # Both turns must have replies. Each marker echoes once in its prompt,
+      # so >=2 occurrences means the assistant actually replied.
+      if [ "$(echo "$CAP_E" | grep -c "FIRST_E_DONE")" -ge 2 ]; then
+        echo "First turn reply visible"
+        if [ "$(echo "$CAP_E" | grep -c "HANDOFF_E_OK")" -ge 2 ]; then
+          echo "Second turn reply visible"
           echo "ACTUAL: Both turns completed, results visible"
           tmux send-keys -t "$TMUX_E2" "/exit" Enter
           sleep 3
@@ -473,12 +474,7 @@ else
 fi
 
 # Cleanup
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 sleep 2
 
 # ====================================================================
@@ -488,7 +484,7 @@ header "f" "--no-detach: legacy single-process mode"
 echo "EXPECTED: single opencode process, no discovery record"
 
 TMUX_F="e2e-detachable-f"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_F" "--no-detach"
 echo "Waiting for TUI to start (12s)..."; sleep 12
 
@@ -499,7 +495,8 @@ echo "Parent PID: ${PARENT_PID_F:-unknown}"
 sleep 5
 REC_F=""
 for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] && { REC_F="$f"; break; }
+  [ -f "$f" ] || continue
+  [ "$(jq -r '.directory // ""' "$f" 2>/dev/null)" = "$PROJECT_DIR" ] && { REC_F="$f"; break; }
 done
 
 if [ -z "$REC_F" ]; then
@@ -521,33 +518,20 @@ else
 fi
 
 tmux kill-session -t "$TMUX_F" 2>/dev/null || true
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 sleep 2
 
 # ====================================================================
-# ITEM (g): spawn failure fallback to local mode
+# ITEM (g): existing-server warning on second bare launch
 # ====================================================================
-header "g" "spawn failure: fallback to local mode"
-echo "EXPECTED: warning printed, falls back to single-process local mode"
+header "g" "existing server: warning on second launch, new spawn proceeds"
+echo "EXPECTED: warning about the existing server, new server spawned anyway"
 
-# Simulate spawn failure by making the binary path unreachable for the child.
-# We use a non-existent OPENCODE_BIN to force spawn to fail.
-# Actually, the child uses the same binary path. We can force failure by
-# setting a bogus PATH so the child can't find the binary.
-# Simpler: just check that if spawn fails, the TUI starts in local mode.
-# We can't easily force spawn failure without modifying code, so this test
-# verifies the fallback path exists by checking --no-detach equivalence.
-# Skip with a note if we can't simulate it.
-
-# Instead, verify that a second bare launch when a server is already running
-# shows the warning but still spawns (SPEC decision 3: always new spawn).
+# Spawn failure can't be forced without code changes, so this item covers the
+# other startup edge instead: a second bare launch while a server is already
+# running must warn but still spawn a new server (SPEC decision: always spawn).
 TMUX_G="e2e-detachable-g"
-rm -f "$DATA_DIR"/server/*/server.json
+cleanup_test_records
 start_opencode "$TMUX_G"
 echo "Waiting for first TUI to start (12s)..."; sleep 12
 
@@ -566,19 +550,16 @@ if [ -n "$REC_G" ] && [ -f "$REC_G" ]; then
   echo "$CAP_G" | tail -15
   echo "---"
 
-  if echo "$CAP_G" | grep -qiE "(already running|overwrite|warning|!)"; then
+  if echo "$CAP_G" | grep -qi "already running"; then
     echo "ACTUAL: Warning about existing server displayed"
     pass "g"
   else
     echo "ACTUAL: No warning about existing server"
-    # Still pass if a new record was created (spawn happened anyway)
+    # Still pass if a NEW server spawned anyway (record repointed to a new pid)
     sleep 3
-    REC_G2=""
-    for f in "$DATA_DIR"/server/*/server.json; do
-      [ -f "$f" ] && { REC_G2="$f"; break; }
-    done
-    if [ -n "$REC_G2" ]; then
-      echo "New record created anyway (always-spawn confirmed)"
+    REC_G2=$(wait_for_record_any 5) || true
+    if [ -n "$REC_G2" ] && [ "$(rec_field "$REC_G2" "pid")" != "$FIRST_PID" ]; then
+      echo "New record with new pid created anyway (always-spawn confirmed)"
       pass "g"
     else
       fail "g"
@@ -594,12 +575,7 @@ else
 fi
 
 # Cleanup
-for f in "$DATA_DIR"/server/*/server.json; do
-  [ -f "$f" ] || continue
-  pid=$(jq -r '.pid' "$f" 2>/dev/null || echo "")
-  [ -n "$pid" ] && [ "$pid" != "null" ] && kill "$pid" 2>/dev/null || true
-  rm -f "$f"
-done
+cleanup_test_records
 
 # ====================================================================
 # FINAL RESULTS
