@@ -46,8 +46,8 @@
 
 - P3a: attach handshake 厳密化 (subscribe→connected→snapshot→drain) + 未知 message の fetch-on-miss。e2e の stale-attach RETRY を撤去して素の green を確認。
 - P3b: prompt/prompt_async の実行前 耐久 admission + V1 実行の promotion bridge (可視化と同時に promoted を刻む)。defect でも受理済み入力が消えない。
-- P3c: 直列化を SessionRunCoordinator に一本化し、`SessionRunState.Runner` は busy/cancel連鎖/status/shell 契約のファサードに縮退。
-- P3d (本リノベーション外・将来スペック): パリティ台帳の missing を潰してからの `SessionPrompt.loop` 撤去。
+- P3c: coordinator 外書き込みの busy 保護 (remove/deletePart/updatePart に assertNotBusy 追加)。Runner の coordinator ファサード化は core API 拡張が前提のため P3d へ移動 (SPEC-v2-seam.md §直列化 参照)。
+- P3d (本リノベーション外・将来スペック): パリティ台帳の missing を潰してからの `SessionPrompt.loop` 撤去 + 直列化の SessionRunCoordinator 一本化。
 
 ### P4 平坦化(任意)
 

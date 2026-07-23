@@ -32,8 +32,12 @@ TUI の prompt 経路を「揮発 fire-and-forget」から「耐久 admission + 
 
 ### 直列化 (Phase 3)
 
-- 同一 Session の実行は経路 (V1 prompt / V2 wake) を問わず coordinator が直列化する。V1 の busy 判定は coordinator の active 登記と Runner ファサード状態から導出し、`BusyError` 契約を維持する。
-- coordinator 外の Session 書き込み (revert / unrevert / deleteMessage / switchModel / switchAgent) は従来どおり busy assertion で保護し、assertion の判定源を coordinator に付け替える。
+実装調査の結果 (2026-07-24)、core の `SessionRunCoordinator.make({drain})` は構築時固定 drain の汎用ファクトリで、V1 の任意 work を per-call で受ける口がない。V1 Runner を coordinator ファサードへ縮退させるには core API の拡張 (per-call work) と V1 の queueing/BusyError/status/shell 契約の再実装が必要で、V1 実行器が現役のまま行う変更としては過大 — Runner 縮退は P3d (V1 撤去) と同時に行う。
+
+本リノベーションでの P3c 実施分:
+
+- coordinator 外の Session 書き込みの busy 保護監査: `remove` (セッション削除)・`deletePart`・`updatePart` が無防備だったため `assertNotBusy` を追加 (deleteMessage と同一契約)。revert/unrevert/shell/deleteMessage は既存保護を確認。
+- 残余リスクの記録: /api 経由の V2 admission (wake あり) と V1 ターンが同一 Session で並走する窓は upstream 由来のまま残る。TUI 経路は P3b の即時 promote により実質的に閉じている。carry-forward wake は child boot 時のみで V1 ターン開始前。完全な単一飛行化は P3d で。
 
 ### attach (Phase 1)
 
