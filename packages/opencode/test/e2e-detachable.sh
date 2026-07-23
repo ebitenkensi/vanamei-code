@@ -42,6 +42,15 @@ E2E_TURN_TIMEOUT="${E2E_TURN_TIMEOUT:-90}"
 E2E_POLL_INTERVAL="${E2E_POLL_INTERVAL:-0.5}"
 E2E_TOOL_SLEEP="${E2E_TOOL_SLEEP:-12}"
 
+# Per-run unique turn markers: the data dir (and its per-branch DB) persists
+# across runs and the completion polls fall back to project-wide text search,
+# so a fixed marker would match a previous run's session and let the harness
+# attach before this run's turn actually finished.
+RUN_TAG="$(date +%s)_$$"
+TURN_B_DONE="TURN_B_DONE_${RUN_TAG}"
+FIRST_E_DONE="FIRST_E_DONE_${RUN_TAG}"
+HANDOFF_E_OK="HANDOFF_E_OK_${RUN_TAG}"
+
 mkdir -p "$TEMP_DIR" "$CONFIG_DIR"
 
 # ---- prepare temporary config ----
@@ -195,7 +204,7 @@ find_db() { ls -t "$DATA_DIR"/opencode*.db 2>/dev/null | head -1; }
 sql() { sqlite3 "$(find_db)" "$1" 2>/dev/null || echo ""; }
 
 # NOTE: role filtering alone is NOT enough -- the user's own prompt text
-# (e.g. "...reply with exactly HANDOFF_E_OK") is itself stored as a message
+# (e.g. "...reply with exactly ${HANDOFF_E_OK}") is itself stored as a message
 # part, so a bare `p.data LIKE` here would match on the prompt echo, not the
 # assistant's actual reply, before the assistant ever responds (a real run
 # proved this: item e's completion poll returned instantly, attach ran while
@@ -378,37 +387,28 @@ wait_for_pane_count() {
 # 2: once for the prompt's own echo, once for the assistant's reply) --
 # using a looser "seen at least once" here was the original bug: the prompt
 # echo alone satisfied it instantly on the very first (stale, mid-turn)
-# attach, so the retry below never fired even though the caller's stricter
-# check then correctly failed.
+# attach, so a failure here used to hide behind a same-attach retry even
+# though the caller's stricter check then correctly failed.
 #
-# If the first attach's replay doesn't reach min_count within
-# E2E_STARTUP_TIMEOUT, retry ONCE with a completely fresh attach session (old
-# one killed, brief settle, re-attach) and a shorter deadline -- a retry PASS
-# means the first failure was a connect-time replay race (still visible in
-# the log via the RETRY line); a retry FAIL is evidence of a genuine replay
-# bug, which the caller should dump via dump_session_evidence.
+# No retry: the stale-attach-replay bug (an attach observing an in-flight or
+# just-finished turn could get stuck showing "running" forever because
+# footer.ts's scrollback flush only fires on its own running->idle edge, see
+# stream.transport.ts's mark()/bootstrap()) is fixed at the source, so a
+# single attach reaching min_count within E2E_STARTUP_TIMEOUT is the real
+# assertion now. A failure here is a genuine regression -- the caller should
+# dump via dump_session_evidence.
 # Sets ATTACH_TMUX (the session now holding the client, for /exit + cleanup)
 # and ATTACH_CAP (its captured pane text). Returns 0 if min_count was reached.
 attach_and_wait_for_nonce() {
   local base="$1" attach_cmd="$2" nonce="$3" min_count="${4:-1}"
-  local tmux_name="$base" found=1
+  local tmux_name="$base"
 
   tmux new-session -d -s "$tmux_name" -x 120 -y 40
   sleep 1
   tmux send-keys -t "$tmux_name" "$attach_cmd" Enter
   echo "Waiting for attach (poll for ${nonce} x${min_count}, max ${E2E_STARTUP_TIMEOUT}s)..."
-  if wait_for_pane_count "$tmux_name" "$nonce" "$min_count" "$E2E_STARTUP_TIMEOUT"; then
-    found=0
-  else
-    echo "RETRY: re-attaching (first attach never showed ${nonce} x${min_count} within ${E2E_STARTUP_TIMEOUT}s)"
-    tmux kill-session -t "$tmux_name" 2>/dev/null || true
-    sleep 2
-    tmux_name="${base}-retry"
-    tmux new-session -d -s "$tmux_name" -x 120 -y 40
-    sleep 1
-    tmux send-keys -t "$tmux_name" "$attach_cmd" Enter
-    wait_for_pane_count "$tmux_name" "$nonce" "$min_count" 15 && found=0
-  fi
+  wait_for_pane_count "$tmux_name" "$nonce" "$min_count" "$E2E_STARTUP_TIMEOUT"
+  local found=$?
 
   ATTACH_TMUX="$tmux_name"
   ATTACH_CAP=$(tmux capture-pane -t "$tmux_name" -p -S -50 2>/dev/null || echo "")
@@ -508,7 +508,7 @@ else
   # confirmed activity. E2E_TOOL_SLEEP=12 still leaves most of the tool sleep
   # remaining when /detach is sent below -- comfortably mid-turn.
   echo "Sending prompt: sleep ${E2E_TOOL_SLEEP}..."
-  tui_submit_prompt "$TMUX_B" "run the shell command 'sleep ${E2E_TOOL_SLEEP}' with the bash tool, then reply with exactly TURN_B_DONE" "TURN_B_DONE"
+  tui_submit_prompt "$TMUX_B" "run the shell command 'sleep ${E2E_TOOL_SLEEP}' with the bash tool, then reply with exactly ${TURN_B_DONE}" "${TURN_B_DONE}"
   # tui_submit_prompt's own activity check ("Thinking"/"Bash("/"interrupt")
   # already confirmed the turn started; this dedicated header check is a
   # bonus confirmation and its failure is soft (warning only, item b's
@@ -566,32 +566,30 @@ else
       # session_id='' for the whole deadline).
       echo "Waiting for turn to complete (poll DB, max ${E2E_TURN_TIMEOUT}s)..."
       if [ -n "$SESSION_ID_B" ]; then
-        if wait_for_session_text "$SESSION_ID_B" "TURN_B_DONE" "$E2E_TURN_TIMEOUT"; then
-          echo "ACTUAL: DB shows turn complete (TURN_B_DONE found for session $SESSION_ID_B)"
+        if wait_for_session_text "$SESSION_ID_B" "${TURN_B_DONE}" "$E2E_TURN_TIMEOUT"; then
+          echo "ACTUAL: DB shows turn complete (${TURN_B_DONE} found for session $SESSION_ID_B)"
         else
-          echo "WARNING: DB never showed TURN_B_DONE within ${E2E_TURN_TIMEOUT}s"
+          echo "WARNING: DB never showed ${TURN_B_DONE} within ${E2E_TURN_TIMEOUT}s"
         fi
       else
         echo "WARNING (item b): sessionID never populated, falling back to project-scoped search"
-        if wait_for_project_text "$PROJECT_ID_B" "TURN_B_DONE" "$E2E_TURN_TIMEOUT"; then
-          echo "ACTUAL: DB shows turn complete (TURN_B_DONE found for project $PROJECT_ID_B)"
+        if wait_for_project_text "$PROJECT_ID_B" "${TURN_B_DONE}" "$E2E_TURN_TIMEOUT"; then
+          echo "ACTUAL: DB shows turn complete (${TURN_B_DONE} found for project $PROJECT_ID_B)"
         else
-          echo "WARNING: DB never showed TURN_B_DONE within ${E2E_TURN_TIMEOUT}s"
+          echo "WARNING: DB never showed ${TURN_B_DONE} within ${E2E_TURN_TIMEOUT}s"
         fi
       fi
 
       # Attach and check for the result (with replay so history is visible).
-      # The DB poll above already confirmed the reply exists server-side, so
-      # attach_and_wait_for_nonce retries once with a fresh attach session if
-      # the first attach's replay doesn't show it (connect-time replay race
-      # vs. a genuine replay bug -- see its own comment). min_count=2 matches
-      # the pass/fail check below exactly (echo + reply) -- passing 1 here
-      # was the wiring bug: the prompt's own echo alone satisfied it on the
-      # very first, stale, mid-turn attach, so the retry never fired even
-      # though the stricter check below then correctly failed.
+      # The DB poll above already confirmed the reply exists server-side --
+      # attach_and_wait_for_nonce no longer retries (see its own comment);
+      # min_count=2 matches the pass/fail check below exactly (echo + reply)
+      # -- passing 1 here was the original wiring bug: the prompt's own echo
+      # alone satisfied it on the very first, stale, mid-turn attach, hiding
+      # a failure that the stricter check below would have caught.
       attach_and_wait_for_nonce "e2e-detachable-b2" \
         "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --continue --dir $PROJECT_DIR 2>&1" \
-        "TURN_B_DONE" 2
+        "${TURN_B_DONE}" 2
 
       CAP_B="$ATTACH_CAP"
       echo "--- attach output ---"
@@ -600,14 +598,14 @@ else
 
       # The prompt itself echoes once in the replay; the assistant's reply is a
       # second occurrence. Requiring >=2 keeps the echo alone from passing.
-      if [ "$(echo "$CAP_B" | grep -c "TURN_B_DONE")" -ge 2 ]; then
-        echo "ACTUAL: Attach connected, TURN_B_DONE reply visible"
+      if [ "$(echo "$CAP_B" | grep -c "${TURN_B_DONE}")" -ge 2 ]; then
+        echo "ACTUAL: Attach connected, ${TURN_B_DONE} reply visible"
         tmux send-keys -t "$ATTACH_TMUX" "/exit" Enter
         sleep 3
         pass "b"
       else
         echo "ACTUAL: No result visible in attach"
-        [ -n "$SESSION_ID_B" ] && dump_session_evidence "$SESSION_ID_B" "TURN_B_DONE"
+        [ -n "$SESSION_ID_B" ] && dump_session_evidence "$SESSION_ID_B" "${TURN_B_DONE}"
         tmux kill-session -t "$ATTACH_TMUX" 2>/dev/null || true
         fail "b"
       fi
@@ -762,7 +760,7 @@ else
   # margin for both the queued second prompt below and the /detach that
   # follows it to land before the tool naturally finishes.
   echo "Sending first prompt (sleep ${E2E_TOOL_SLEEP})..."
-  tui_submit_prompt "$TMUX_E" "run the shell command 'sleep ${E2E_TOOL_SLEEP}' with the bash tool, then reply with exactly FIRST_E_DONE" "FIRST_E_DONE"
+  tui_submit_prompt "$TMUX_E" "run the shell command 'sleep ${E2E_TOOL_SLEEP}' with the bash tool, then reply with exactly ${FIRST_E_DONE}" "${FIRST_E_DONE}"
   # Soft check only -- see item (b)'s comment on why this dedicated header
   # poll's failure doesn't affect pass/fail (tui_submit_prompt's own activity
   # check already confirmed the turn started).
@@ -773,7 +771,7 @@ else
   # queued=1 path verifies the text landed then left the composer (turn 1's
   # activity markers already on screen prove nothing about this prompt).
   echo "Sending second queued prompt..."
-  tui_submit_prompt "$TMUX_E" "reply with exactly HANDOFF_E_OK" "HANDOFF_E_OK" 1
+  tui_submit_prompt "$TMUX_E" "reply with exactly ${HANDOFF_E_OK}" "${HANDOFF_E_OK}" 1
 
   # /detach — should hand off the queued prompt
   echo "Sending /detach..."
@@ -815,32 +813,29 @@ else
         [ -n "$SESSION_ID_E" ] && session_has_text "$SESSION_ID_E" "$1" || project_has_text "$PROJECT_ID_E" "$1"
       }
       deadline_e=$(( $(date +%s) + E2E_TURN_TIMEOUT ))
-      while [ "$(date +%s)" -lt "$deadline_e" ] && ! e_has_text "FIRST_E_DONE"; do sleep "$E2E_POLL_INTERVAL"; done
-      if e_has_text "FIRST_E_DONE"; then
-        echo "ACTUAL: DB shows first turn complete (FIRST_E_DONE found)"
+      while [ "$(date +%s)" -lt "$deadline_e" ] && ! e_has_text "${FIRST_E_DONE}"; do sleep "$E2E_POLL_INTERVAL"; done
+      if e_has_text "${FIRST_E_DONE}"; then
+        echo "ACTUAL: DB shows first turn complete (${FIRST_E_DONE} found)"
       else
-        echo "WARNING: DB never showed FIRST_E_DONE within ${E2E_TURN_TIMEOUT}s"
+        echo "WARNING: DB never showed ${FIRST_E_DONE} within ${E2E_TURN_TIMEOUT}s"
       fi
-      while [ "$(date +%s)" -lt "$deadline_e" ] && ! e_has_text "HANDOFF_E_OK"; do sleep "$E2E_POLL_INTERVAL"; done
-      if e_has_text "HANDOFF_E_OK"; then
-        echo "ACTUAL: DB shows second (queued) turn complete (HANDOFF_E_OK found)"
+      while [ "$(date +%s)" -lt "$deadline_e" ] && ! e_has_text "${HANDOFF_E_OK}"; do sleep "$E2E_POLL_INTERVAL"; done
+      if e_has_text "${HANDOFF_E_OK}"; then
+        echo "ACTUAL: DB shows second (queued) turn complete (${HANDOFF_E_OK} found)"
       else
-        echo "WARNING: DB never showed HANDOFF_E_OK within ${E2E_TURN_TIMEOUT}s"
+        echo "WARNING: DB never showed ${HANDOFF_E_OK} within ${E2E_TURN_TIMEOUT}s"
       fi
 
       # Attach and check for both results (with replay so history is
       # visible). The DB polls above already confirmed both replies exist
-      # server-side, so attach_and_wait_for_nonce retries once with a fresh
-      # attach session if the first attach's replay doesn't show the second
-      # (queued) turn's reply -- connect-time replay race vs. a genuine
-      # replay bug (see its own comment). min_count=2 matches the pass/fail
-      # check below (echo + reply) -- a real run showed this nonce's own
-      # queued-prompt echo can be absent too during the mid-turn stale
-      # window, so 2 held here regardless, but pin it explicitly rather than
-      # relying on that.
+      # server-side; attach_and_wait_for_nonce no longer retries (see its
+      # own comment) -- a single attach reaching min_count=2 (matching the
+      # pass/fail check below: echo + reply) within E2E_STARTUP_TIMEOUT is
+      # the real assertion now that the stale-attach-replay bug is fixed at
+      # the source.
       attach_and_wait_for_nonce "e2e-detachable-e2" \
         "XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --continue --dir $PROJECT_DIR 2>&1" \
-        "HANDOFF_E_OK" 2
+        "${HANDOFF_E_OK}" 2
 
       CAP_E="$ATTACH_CAP"
       echo "--- attach output (last 30 lines) ---"
@@ -849,9 +844,9 @@ else
 
       # Both turns must have replies. Each marker echoes once in its prompt,
       # so >=2 occurrences means the assistant actually replied.
-      if [ "$(echo "$CAP_E" | grep -c "FIRST_E_DONE")" -ge 2 ]; then
+      if [ "$(echo "$CAP_E" | grep -c "${FIRST_E_DONE}")" -ge 2 ]; then
         echo "First turn reply visible"
-        if [ "$(echo "$CAP_E" | grep -c "HANDOFF_E_OK")" -ge 2 ]; then
+        if [ "$(echo "$CAP_E" | grep -c "${HANDOFF_E_OK}")" -ge 2 ]; then
           echo "Second turn reply visible"
           echo "ACTUAL: Both turns completed, results visible"
           tmux send-keys -t "$ATTACH_TMUX" "/exit" Enter
@@ -859,14 +854,14 @@ else
           pass "e"
         else
           echo "ACTUAL: First turn done but second turn result not visible (may still be running)"
-          [ -n "$SESSION_ID_E" ] && dump_session_evidence "$SESSION_ID_E" "FIRST_E_DONE" "HANDOFF_E_OK"
+          [ -n "$SESSION_ID_E" ] && dump_session_evidence "$SESSION_ID_E" "${FIRST_E_DONE}" "${HANDOFF_E_OK}"
           tmux send-keys -t "$ATTACH_TMUX" "/exit" Enter
           sleep 3
           fail "e"
         fi
       else
         echo "ACTUAL: First turn result not visible"
-        [ -n "$SESSION_ID_E" ] && dump_session_evidence "$SESSION_ID_E" "FIRST_E_DONE" "HANDOFF_E_OK"
+        [ -n "$SESSION_ID_E" ] && dump_session_evidence "$SESSION_ID_E" "${FIRST_E_DONE}" "${HANDOFF_E_OK}"
         tmux kill-session -t "$ATTACH_TMUX" 2>/dev/null || true
         fail "e"
       fi
