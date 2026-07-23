@@ -515,7 +515,13 @@ else
   # pass/fail never depends on it -- a real run showed it can time out on
   # slow model latency even though the tool call reliably shows up later).
   echo "Waiting for turn to start (poll for Bash(sleep ${E2E_TOOL_SLEEP}), max ${E2E_STARTUP_TIMEOUT}s)..."
-  wait_for_pane "$TMUX_B" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT" || echo "WARNING (item b): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway"
+  # A slow provider can push the first tool call past the startup window;
+  # extend once by the turn budget so /detach below actually lands mid-turn.
+  if ! wait_for_pane "$TMUX_B" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT"; then
+    echo "WARNING (item b): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, extending wait by ${E2E_TURN_TIMEOUT}s"
+    wait_for_pane "$TMUX_B" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_TURN_TIMEOUT" \
+      || echo "WARNING (item b): tool-call header still not observed, proceeding anyway"
+  fi
 
   # Send /detach
   echo "Sending /detach..."
@@ -765,7 +771,13 @@ else
   # poll's failure doesn't affect pass/fail (tui_submit_prompt's own activity
   # check already confirmed the turn started).
   echo "Waiting for turn to start (poll for Bash(sleep ${E2E_TOOL_SLEEP}), max ${E2E_STARTUP_TIMEOUT}s)..."
-  wait_for_pane "$TMUX_E" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT" || echo "WARNING (item e): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, proceeding anyway"
+  # A slow provider can push the first tool call past the startup window;
+  # extend once by the turn budget so /detach below actually lands mid-turn.
+  if ! wait_for_pane "$TMUX_E" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_STARTUP_TIMEOUT"; then
+    echo "WARNING (item e): tool-call header not observed within ${E2E_STARTUP_TIMEOUT}s, extending wait by ${E2E_TURN_TIMEOUT}s"
+    wait_for_pane "$TMUX_E" "Bash(sleep ${E2E_TOOL_SLEEP}" "$E2E_TURN_TIMEOUT" \
+      || echo "WARNING (item e): tool-call header still not observed, proceeding anyway"
+  fi
 
   # Queue a second prompt while the first is running. tui_submit_prompt's
   # queued=1 path verifies the text landed then left the composer (turn 1's
