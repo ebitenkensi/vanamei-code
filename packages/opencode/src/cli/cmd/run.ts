@@ -368,6 +368,12 @@ export const RunCommand = effectCmd({
         hidden: true,
         describe: "attach: discovery record session id considered by the resume picker/auto-resolve",
       })
+      .option("session-direct", {
+        type: "boolean",
+        hidden: true,
+        default: false,
+        describe: "attach: resume --session-hint without showing the resume picker",
+      })
       .option("demo", {
         type: "boolean",
         default: false,
@@ -586,6 +592,17 @@ export const RunCommand = effectCmd({
       // which falls through to session-create below).
       async function resolveAttachSession(sdk: OpencodeClient): Promise<SessionInfo | "cancelled" | undefined> {
         const hint = args["session-hint"]
+
+        // The detached-server picker (cli/cmd/attach.ts) already named the
+        // session by naming the server, so a second "Resume session" prompt
+        // would ask the same question twice. A hint that no longer resolves
+        // still falls through to the picker below.
+        if (args["session-direct"] && hint) {
+          const current = await sdk.session.get({ sessionID: hint }).catch(() => undefined)
+          if (current?.data) {
+            return { id: current.data.id, title: current.data.title, directory: current.data.directory }
+          }
+        }
 
         if (!process.stdin.isTTY || !process.stdout.isTTY) {
           if (hint) {
@@ -1433,6 +1450,7 @@ type MiniCommandInput = {
   demo?: boolean
   new?: boolean
   sessionHint?: string
+  sessionDirect?: boolean
   detach?: boolean
 }
 
@@ -1472,6 +1490,8 @@ export async function runMini(input: MiniCommandInput) {
     new: input.new ?? false,
     "session-hint": input.sessionHint,
     sessionHint: input.sessionHint,
+    "session-direct": input.sessionDirect ?? false,
+    sessionDirect: input.sessionDirect ?? false,
     detach: input.detach,
   })
 }

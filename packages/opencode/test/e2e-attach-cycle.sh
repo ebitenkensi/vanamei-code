@@ -5,7 +5,8 @@
 # Verifies:
 #   (a) bare `opencode attach`, run from a directory that belongs to NEITHER
 #       detached project, lists both detached servers in a picker
-#   (b) picking an entry attaches to that server
+#   (b) picking an entry attaches to that server and resumes its detach-time
+#       session directly -- no second "Resume session" prompt
 #   (c) /detach from an ATTACHED client exits the client, leaves the server
 #       running, and stamps the record's sessionID (this is the cycle that
 #       used to be a silent no-op)
@@ -229,19 +230,19 @@ else
   done
   tmux send-keys -t "$TMUX_A" Enter
 
-  # Server pick is followed by the startup session picker; Enter takes its
-  # pre-selected row (the record's detach-time session).
-  if wait_for_pane "$TMUX_A" "Resume session"; then
-    sleep 0.5
-    tmux send-keys -t "$TMUX_A" Enter
-  fi
-
   ATTACH_PID=$(wait_for_oc_pid "$TMUX_A")
   # "Ask anything" is the input placeholder -- unlike "opencode", it cannot
   # match the shell command line still visible in the scrollback.
   if [ -n "$ATTACH_PID" ] && wait_for_pane "$TMUX_A" "Ask anything" "$E2E_STARTUP_TIMEOUT"; then
-    echo "ACTUAL: attached client running (pid $ATTACH_PID)"
-    pass "b"
+    # Picking the server already named its detach-time session, so the
+    # startup resume picker must not appear on top of it.
+    if tmux capture-pane -t "$TMUX_A" -p -S -80 | grep -q "Resume session"; then
+      echo "ACTUAL: resume picker shown after the server picker"
+      fail "b"
+    else
+      echo "ACTUAL: attached client running (pid $ATTACH_PID)"
+      pass "b"
+    fi
   else
     echo "ACTUAL: attach did not start"
     tmux capture-pane -t "$TMUX_A" -p -S -80
@@ -302,11 +303,13 @@ echo "EXPECTED: a second bare attach reaches a running TUI"
 TMUX_D="e2e-attach-cycle-d"
 start_in "$TMUX_D" "$NEUTRAL_DIR" "$OPENCODE_BIN attach"
 if wait_for_pane "$TMUX_D" "Attach to detached session"; then
-  sleep 0.5
-  tmux send-keys -t "$TMUX_D" Enter
-fi
-if wait_for_pane "$TMUX_D" "Resume session"; then
-  sleep 0.5
+  # The data dir is shared with any other server on this machine, so walk to
+  # project-a's row rather than trusting the initial (newest) value.
+  for _ in 1 2 3 4 5; do
+    tmux capture-pane -t "$TMUX_D" -p -S -80 | grep -E "●.*project-a" >/dev/null && break
+    tmux send-keys -t "$TMUX_D" Down
+    sleep 0.5
+  done
   tmux send-keys -t "$TMUX_D" Enter
 fi
 D_PID=$(wait_for_oc_pid "$TMUX_D")

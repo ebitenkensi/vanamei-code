@@ -104,6 +104,7 @@ export const AttachCommand = cmd({
       fork: args.fork,
       new: args.new,
       sessionHint: target.sessionHint,
+      sessionDirect: target.direct,
       replay: noReplay ? false : undefined,
       replayLimit: args.replayLimit,
     })
@@ -116,6 +117,9 @@ type AttachTarget = {
   username?: string
   sessionHint?: string
   directory?: string
+  // Set when the server was chosen from the detached-server picker: the
+  // choice already named a session, so the resume picker is skipped.
+  direct?: boolean
 }
 
 // Precedence: an explicit url wins, then `--dir` scopes discovery to that one
@@ -153,19 +157,22 @@ async function resolveTarget(args: { url?: string; dir?: string }): Promise<Atta
     }
   }
 
-  const rec = await pickDetachedServer()
+  const picked = await pickDetachedServer()
   return {
-    url: rec.url,
-    password: rec.password,
-    username: rec.username,
-    sessionHint: rec.sessionID,
-    directory: rec.directory,
+    url: picked.rec.url,
+    password: picked.rec.password,
+    username: picked.rec.username,
+    sessionHint: picked.rec.sessionID,
+    directory: picked.rec.directory,
+    direct: picked.direct,
   }
 }
 
 // Same @clack/prompts `select` the startup session picker uses (see
 // run/session-picker.ts) -- arrow keys move, Enter confirms, Esc cancels.
-async function pickDetachedServer(): Promise<Discovery.Record> {
+// Always shown on a terminal, even for a single server, so the attach target
+// is never picked invisibly.
+async function pickDetachedServer(): Promise<{ rec: Discovery.Record; direct: boolean }> {
   const alive = Discovery.list().filter((rec) => Discovery.pidAlive(rec.pid))
 
   if (alive.length === 0) {
@@ -174,15 +181,15 @@ async function pickDetachedServer(): Promise<Discovery.Record> {
     process.exit(1)
   }
 
-  if (alive.length === 1) return alive[0]
-
-  // No picker without a terminal. Scripts get the pre-picker behavior back --
-  // resolve the current directory's project -- and only fail when that is
-  // ambiguous too.
+  // No picker without a terminal. Scripts keep the pre-picker behavior --
+  // the only live server, else the current directory's project -- and the
+  // resume picker downstream still arbitrates the session for them.
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (alive.length === 1) return { rec: alive[0], direct: false }
+
     const projectID = await resolveProjectID(process.cwd())
     const local = projectID ? alive.find((rec) => rec.projectID === projectID) : undefined
-    if (local) return local
+    if (local) return { rec: local, direct: false }
 
     UI.error(`${alive.length} detached servers are running; pass a url or --dir to choose one`)
     alive.forEach((rec) => UI.println(UI.Style.TEXT_DIM + "  " + rec.url + "  " + rec.directory + UI.Style.TEXT_NORMAL))
@@ -211,7 +218,7 @@ async function pickDetachedServer(): Promise<Discovery.Record> {
     UI.error("Failed to resolve the selected server")
     process.exit(1)
   }
-  return chosen
+  return { rec: chosen, direct: chosen.sessionID !== undefined }
 }
 
 async function resolveProjectID(dir: string) {

@@ -125,6 +125,21 @@ wait_for_pane() {
   tmux capture-pane -pt "$session" 2>/dev/null | grep -q -- "$pattern"
 }
 
+# Bare `opencode attach` opens the detached-server picker before anything
+# else. The data dir is shared with every other server on this machine, so
+# walk to this project's row (clack marks the highlighted one with "●")
+# instead of trusting the initial value, then confirm.
+pick_server_row() {
+  local session="$1"
+  wait_for_pane "$session" "Attach to detached session" "$E2E_STARTUP_TIMEOUT" || return 1
+  for _ in 1 2 3 4 5; do
+    tmux capture-pane -pt "$session" 2>/dev/null | grep -E "●.*$PROJECT_DIR" >/dev/null && break
+    tmux send-keys -t "$session" Down
+    sleep 0.5
+  done
+  tmux send-keys -t "$session" Enter
+}
+
 # TUI readiness marker (as items e/f/g/k below already poll for). Used
 # instead of a blind sleep whenever we just need the TUI to be up and
 # accepting input.
@@ -674,10 +689,10 @@ else
   echo "baseline root session count: $ROOT_COUNT_BASE"
 
   # ------------------------------------------------------------------
-  # ITEM (e): bare attach TTY -- picker shown, Enter resumes record's session
+  # ITEM (e): bare attach TTY -- server picker shown, Enter resumes directly
   # ------------------------------------------------------------------
-  header "e" "bare attach TTY -- picker shown, Enter resumes the record's session"
-  echo "EXPECTED: picker rows visible; Enter resumes; DB shows nonce under record's sessionID"
+  header "e" "bare attach TTY -- detached-server picker shown, Enter resumes the record's session"
+  echo "EXPECTED: server rows visible; no resume picker; Enter resumes; DB shows nonce under record's sessionID"
   tmux kill-session -t "$TMUX_EFGK" 2>/dev/null || true
   tmux new-session -d -s "$TMUX_EFGK" -x 120 -y 40 -c "$PROJECT_DIR"
   sleep 1
@@ -685,17 +700,20 @@ else
   # Poll for the picker instead of a blind sleep -- sending Enter before it
   # renders would land on nothing (same lost-keystroke class of bug found in
   # e2e-detachable.sh item b).
-  wait_for_pane "$TMUX_EFGK" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
+  wait_for_pane "$TMUX_EFGK" "Attach to detached session" "$E2E_STARTUP_TIMEOUT" || true
   CAP_E1=$(tmux capture-pane -pt "$TMUX_EFGK" 2>/dev/null || echo "")
   echo "--- picker (item e) ---"; echo "$CAP_E1" | tail -15; echo "---"
   E_OK=true
-  echo "$CAP_E1" | grep -q "Resume session" || { echo "ACTUAL: picker prompt not shown"; E_OK=false; }
-  echo "$CAP_E1" | grep -q "Create new session" || { echo "ACTUAL: 'Create new session' row missing"; E_OK=false; }
-  tmux send-keys -t "$TMUX_EFGK" Enter
+  echo "$CAP_E1" | grep -q "Attach to detached session" || { echo "ACTUAL: server picker prompt not shown"; E_OK=false; }
+  echo "$CAP_E1" | grep -q "$PROJECT_DIR" || { echo "ACTUAL: this project's server row missing"; E_OK=false; }
+  pick_server_row "$TMUX_EFGK"
   wait_for_pane "$TMUX_EFGK" "$NONCE_EFGK" "$E2E_STARTUP_TIMEOUT" || true
   CAP_E2=$(tmux capture-pane -pt "$TMUX_EFGK" -S -60 2>/dev/null || echo "")
   echo "--- resumed (item e) ---"; echo "$CAP_E2" | tail -15; echo "---"
   echo "$CAP_E2" | grep -q "$NONCE_EFGK" || { echo "ACTUAL: resumed pane missing nonce"; E_OK=false; }
+  # Choosing the server already names its detach-time session, so the resume
+  # picker must not appear on top of it.
+  echo "$CAP_E2" | grep -q "Resume session" && { echo "ACTUAL: resume picker shown after the server picker"; E_OK=false; }
   if [ -n "$SID_EFGK" ] && session_has_text "$SID_EFGK" "$NONCE_EFGK"; then
     echo "ACTUAL: DB confirms nonce lives under record sessionID $SID_EFGK"
   else
@@ -732,14 +750,14 @@ else
   # ------------------------------------------------------------------
   # ITEM (g): picker Esc cancels -- no new session created
   # ------------------------------------------------------------------
-  header "g" "picker Esc cancels -- no session created"
+  header "g" "server picker Esc cancels -- no session created"
   echo "EXPECTED: cancellation message; root session count unchanged"
   tmux new-session -d -s "$TMUX_EFGK" -x 120 -y 40 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_EFGK" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach 2>&1" Enter
   # Poll for the picker instead of a blind sleep before sending Escape --
   # see item (e)'s comment above.
-  wait_for_pane "$TMUX_EFGK" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
+  wait_for_pane "$TMUX_EFGK" "Attach to detached session" "$E2E_STARTUP_TIMEOUT" || true
   tmux send-keys -t "$TMUX_EFGK" Escape
   sleep 4
   CAP_G=$(tmux capture-pane -pt "$TMUX_EFGK" 2>/dev/null || echo "")
@@ -756,11 +774,13 @@ else
   # ------------------------------------------------------------------
   # ITEM (k): `attach --new` always creates a fresh session
   # ------------------------------------------------------------------
-  header "k" "attach --new -- creates a fresh session, skips the picker"
-  echo "EXPECTED: no picker; root session count +1; new session has no prior messages"
+  header "k" "attach --new -- creates a fresh session, skips the resume picker"
+  echo "EXPECTED: no resume picker; root session count +1; new session has no prior messages"
   tmux new-session -d -s "$TMUX_EFGK" -x 120 -y 40 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_EFGK" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach --new 2>&1" Enter
+  # --new only skips the session choice; the server still has to be named.
+  pick_server_row "$TMUX_EFGK"
   READY_K=1
   for i in $(seq 1 20); do
     tmux capture-pane -pt "$TMUX_EFGK" | grep -q "Ask anything" && { READY_K=0; break; }
@@ -850,14 +870,13 @@ else
   echo "$([ $DRAINED_H = 0 ] && echo "ACTUAL: DB shows UPPERCASE reply after ~${i}s" || echo "ACTUAL: DB never showed UPPERCASE reply within 90s")"
   [ "$DRAINED_H" = 0 ] || H_OK=false
 
-  # attach via the picker (Enter on the preselected record session) and
+  # attach via the server picker (which resumes the record's session) and
   # confirm the reply is visible in the replay too
   TMUX_H2="e2e-live-detach-h2"
   tmux new-session -d -s "$TMUX_H2" -x 120 -y 60 -c "$PROJECT_DIR"
   sleep 1
   tmux send-keys -t "$TMUX_H2" "cd $PROJECT_DIR && XDG_CONFIG_HOME=$CONFIG_DIR $OPENCODE_BIN attach 2>&1" Enter
-  wait_for_pane "$TMUX_H2" "Resume session" "$E2E_STARTUP_TIMEOUT" || true
-  tmux send-keys -t "$TMUX_H2" Enter
+  pick_server_row "$TMUX_H2"
   wait_for_pane "$TMUX_H2" "$NONCE_H_UPPER" "$E2E_STARTUP_TIMEOUT" || true
   CAP_H=$(tmux capture-pane -pt "$TMUX_H2" -S -200 2>/dev/null || echo "")
   echo "--- attach replay (item h) ---"; echo "$CAP_H" | tail -20; echo "---"
