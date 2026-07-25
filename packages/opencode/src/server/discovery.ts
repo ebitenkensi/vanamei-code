@@ -36,6 +36,29 @@ export function read(projectID: string): Record | undefined {
   }
 }
 
+// Every record currently written by a detached server, newest first. Callers
+// that need running servers must filter with `pidAlive` -- a record survives a
+// SIGKILL, so presence alone proves nothing.
+export function list(): Record[] {
+  try {
+    return fs
+      .readdirSync(path.join(Global.Path.data, "server"), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => read(entry.name))
+      .filter((rec): rec is Record => rec !== undefined)
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+  } catch {
+    return []
+  }
+}
+
+// Records store `listener.url.href`, which always carries a trailing slash,
+// while a url typed on the command line usually does not.
+export function findByUrl(url: string): Record | undefined {
+  const target = url.replace(/\/+$/, "")
+  return list().find((rec) => rec.url.replace(/\/+$/, "") === target)
+}
+
 export function remove(projectID: string) {
   try {
     // server/<projectID> only ever holds server.json, so removing the whole

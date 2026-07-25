@@ -47,7 +47,7 @@ exports[`opencode CLI help-text snapshots every documented command emits stable 
 attach to a running opencode server
 
 Positionals:
-  url  http://localhost:4096 (omit for auto-discovery from discovery record)                [string]
+  url  http://localhost:4096 (omit to pick from the detached servers)                       [string]
 
 Options:
   -h, --help          show help                                                            [boolean]
@@ -55,7 +55,8 @@ Options:
       --print-logs    print logs to stderr                                                 [boolean]
       --log-level     log level                 [string] [choices: "DEBUG", "INFO", "WARN", "ERROR"]
       --pure          run without external plugins                                         [boolean]
-      --dir           directory to run in                                                   [string]
+      --dir           attach to the detached server of this directory's project instead of picking
+                      one                                                                   [string]
   -c, --continue      continue the last session                                            [boolean]
   -s, --session       session id to continue                                                [string]
       --fork          fork the session when continuing (use with --continue or --session)  [boolean]

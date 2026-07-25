@@ -2,6 +2,9 @@ import { cmd } from "./cmd"
 import { UI } from "@/cli/ui"
 import { Discovery } from "@/server/discovery"
 import { Project } from "@/project/project"
+import { ServerAuth } from "@/server/auth"
+import { Locale } from "@/util/locale"
+import { isCancel, select } from "@clack/prompts"
 import { Effect } from "effect"
 
 export const AttachCommand = cmd({
@@ -11,12 +14,12 @@ export const AttachCommand = cmd({
     yargs
       .positional("url", {
         type: "string",
-        describe: "http://localhost:4096 (omit for auto-discovery from discovery record)",
+        describe: "http://localhost:4096 (omit to pick from the detached servers)",
         demandOption: false,
       })
       .option("dir", {
         type: "string",
-        description: "directory to run in",
+        description: "attach to the detached server of this directory's project instead of picking one",
       })
       .option("continue", {
         alias: ["c"],
@@ -75,41 +78,13 @@ export const AttachCommand = cmd({
       process.stderr.write("opencode: --mini is now the default and the flag is deprecated\n")
     }
 
-    let attachUrl = args.url
-    let sessionHint: string | undefined
+    const target = await resolveTarget(args)
 
-    // When URL is omitted, discover from the project's discovery record
-    if (!attachUrl) {
-      const dir = args.dir ?? process.cwd()
-      const { AppRuntime } = await import("@/effect/app-runtime")
-      const projectID = await AppRuntime.runPromise(
-        Effect.gen(function* () {
-          const project = yield* Project.Service
-          const info = yield* project.fromDirectory(dir)
-          return info.project.id
-        }),
-      ).catch(() => undefined)
-
-      if (!projectID) {
-        UI.error("Failed to resolve project ID for auto-discovery")
-        process.exit(1)
-      }
-
-      const rec = await Discovery.resolve(projectID)
-      attachUrl = rec.url
-      sessionHint = rec.sessionID
-
-      // Inherit password from the discovery record if not explicitly provided
-      if (!args.password) {
-        args.password = rec.password
-      }
-      if (!args.username) {
-        args.username = rec.username
-      }
-    }
-
+    // `--dir` still chdirs so relative `--file` paths resolve against it; the
+    // picker path leaves the shell's cwd alone and takes the directory from
+    // the chosen server's record instead.
     const directory = (() => {
-      if (!args.dir) return undefined
+      if (!args.dir) return target.directory
       try {
         process.chdir(args.dir)
         return process.cwd()
@@ -120,17 +95,148 @@ export const AttachCommand = cmd({
 
     const { runMini } = await import("./run")
     await runMini({
-      attach: attachUrl,
+      attach: target.url,
       directory,
-      password: args.password,
-      username: args.username,
+      password: args.password ?? target.password,
+      username: args.username ?? target.username,
       continue: args.continue,
       session: args.session,
       fork: args.fork,
       new: args.new,
-      sessionHint,
+      sessionHint: target.sessionHint,
       replay: noReplay ? false : undefined,
       replayLimit: args.replayLimit,
     })
   },
 })
+
+type AttachTarget = {
+  url: string
+  password?: string
+  username?: string
+  sessionHint?: string
+  directory?: string
+}
+
+// Precedence: an explicit url wins, then `--dir` scopes discovery to that one
+// project (the pre-picker behavior), and a bare `opencode attach` picks from
+// every detached server on the machine regardless of the current directory.
+async function resolveTarget(args: { url?: string; dir?: string }): Promise<AttachTarget> {
+  if (args.url) {
+    const rec = Discovery.findByUrl(args.url)
+    return {
+      url: args.url,
+      password: rec?.password,
+      username: rec?.username,
+      sessionHint: rec?.sessionID,
+      directory: rec?.directory,
+    }
+  }
+
+  if (args.dir) {
+    const projectID = await resolveProjectID(args.dir)
+    if (!projectID) {
+      UI.error("Failed to resolve project ID for " + args.dir)
+      process.exit(1)
+    }
+
+    const rec = await Discovery.resolve(projectID).catch((error: unknown) => {
+      UI.error(error instanceof Error ? error.message : String(error))
+      process.exit(1)
+    })
+    return {
+      url: rec.url,
+      password: rec.password,
+      username: rec.username,
+      sessionHint: rec.sessionID,
+      directory: rec.directory,
+    }
+  }
+
+  const rec = await pickDetachedServer()
+  return {
+    url: rec.url,
+    password: rec.password,
+    username: rec.username,
+    sessionHint: rec.sessionID,
+    directory: rec.directory,
+  }
+}
+
+// Same @clack/prompts `select` the startup session picker uses (see
+// run/session-picker.ts) -- arrow keys move, Enter confirms, Esc cancels.
+async function pickDetachedServer(): Promise<Discovery.Record> {
+  const alive = Discovery.list().filter((rec) => Discovery.pidAlive(rec.pid))
+
+  if (alive.length === 0) {
+    UI.error("No detached opencode servers are running")
+    UI.println(UI.Style.TEXT_DIM + "  Start one with: opencode, then /detach" + UI.Style.TEXT_NORMAL)
+    process.exit(1)
+  }
+
+  if (alive.length === 1) return alive[0]
+
+  // No picker without a terminal. Scripts get the pre-picker behavior back --
+  // resolve the current directory's project -- and only fail when that is
+  // ambiguous too.
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    const projectID = await resolveProjectID(process.cwd())
+    const local = projectID ? alive.find((rec) => rec.projectID === projectID) : undefined
+    if (local) return local
+
+    UI.error(`${alive.length} detached servers are running; pass a url or --dir to choose one`)
+    alive.forEach((rec) => UI.println(UI.Style.TEXT_DIM + "  " + rec.url + "  " + rec.directory + UI.Style.TEXT_NORMAL))
+    process.exit(1)
+  }
+
+  const described = await Promise.all(alive.map(async (rec) => ({ rec, title: await sessionTitle(rec) })))
+
+  const picked = await select({
+    message: "Attach to detached session",
+    initialValue: alive[0].url,
+    options: described.map((item) => ({
+      value: item.rec.url,
+      label: `${item.title ?? "No active session"} ${UI.Style.TEXT_DIM}${item.rec.directory}${UI.Style.TEXT_NORMAL}`,
+      hint: `pid ${item.rec.pid} · up ${Locale.duration(Math.max(0, Date.now() - Date.parse(item.rec.startedAt)))}`,
+    })),
+  })
+
+  if (isCancel(picked)) {
+    UI.println(UI.Style.TEXT_DIM + "Attach cancelled." + UI.Style.TEXT_NORMAL)
+    process.exit(0)
+  }
+
+  const chosen = alive.find((rec) => rec.url === picked)
+  if (!chosen) {
+    UI.error("Failed to resolve the selected server")
+    process.exit(1)
+  }
+  return chosen
+}
+
+async function resolveProjectID(dir: string) {
+  const { AppRuntime } = await import("@/effect/app-runtime")
+  return AppRuntime.runPromise(
+    Effect.gen(function* () {
+      const project = yield* Project.Service
+      const info = yield* project.fromDirectory(dir)
+      return info.project.id
+    }),
+  ).catch(() => undefined)
+}
+
+// Best-effort label for the picker: an unreachable or slow server just loses
+// its title rather than stalling the list.
+async function sessionTitle(rec: Discovery.Record) {
+  if (!rec.sessionID) return undefined
+  const res = await fetch(`${rec.url.replace(/\/+$/, "")}/session/${rec.sessionID}`, {
+    headers: {
+      ...ServerAuth.headers({ password: rec.password, username: rec.username }),
+      "x-opencode-directory": encodeURIComponent(rec.directory),
+    },
+    signal: AbortSignal.timeout(1500),
+  }).catch(() => undefined)
+  if (!res?.ok) return undefined
+  const body = (await res.json().catch(() => undefined)) as { title?: string } | undefined
+  return body?.title?.trim() || undefined
+}

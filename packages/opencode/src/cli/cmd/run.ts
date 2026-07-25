@@ -165,6 +165,37 @@ async function buildHandoffPrompts(queued: FooterQueuedPrompt[]) {
   }))
 }
 
+// Hands the TUI's locally queued prompts to an already-running server, which
+// replays them once the active turn finishes. A live /detach (`live === true`)
+// must throw on failure so the caller can abort the detach and restore the
+// queue; SIGHUP (`live === undefined`) is best-effort with a short timeout so
+// a dying terminal is never held up by an unreachable server.
+async function postHandoff(input: {
+  url: string
+  headers: Record<string, string>
+  sessionID: string
+  queued: FooterQueuedPrompt[]
+  live?: boolean
+}) {
+  const prompts = await buildHandoffPrompts(input.queued)
+  const res = await fetch(`${input.url.replace(/\/+$/, "")}/server/handoff`, {
+    method: "POST",
+    headers: { ...input.headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionID: input.sessionID, prompts }),
+    signal: AbortSignal.timeout(input.live ? 10000 : 3000),
+  }).catch((err: unknown) => {
+    if (input.live === undefined) return undefined
+    throw err
+  })
+
+  if (!res || res.ok) return
+  if (input.live === undefined) {
+    console.error("SIGHUP handoff POST failed:", res.status)
+    return
+  }
+  throw new Error(`handoff POST failed: ${res.status} ${await res.text().catch(() => "")}`)
+}
+
 async function writeHandoffFile(projectID: string, sessionID: string, queued: FooterQueuedPrompt[]) {
   const prompts = await buildHandoffPrompts(queued)
 
@@ -362,9 +393,7 @@ export const RunCommand = effectCmd({
     // instance. The attach path never consults detachEnabled, so an Effect
     // that succeeds iff localInstance is set keeps attach working.
     const detachEnabledCfg = localInstance
-      ? yield* Config.Service.use((cfg) =>
-          cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)),
-        )
+      ? yield* Config.Service.use((cfg) => cfg.get().pipe(Effect.map((info) => info.detach?.enabled ?? true)))
       : true
     yield* Effect.promise(async () => {
       const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
@@ -1016,10 +1045,50 @@ export const RunCommand = effectCmd({
 
         const model = pick(args.model)
         const { runInteractiveMode } = await import("./run/runtime")
+        const attachBase = args.attach!.replace(/\/+$/, "")
+
+        // /detach while attached: the server already runs on its own, so this
+        // only hands off the queue and leaves the client. The discovery record
+        // is rewritten with the session that was live at detach time so the
+        // next `opencode attach` resumes it -- without this, detach/attach
+        // could only be done once.
+        let detachSummary: DetachSummary | undefined
+        let detaching = false
+        const onDetach = async (live?: boolean, activeSessionID?: string, queuedPrompts?: FooterQueuedPrompt[]) => {
+          if (detaching) return
+          detaching = true
+
+          try {
+            const detached = activeSessionID ?? sessionID
+            if (queuedPrompts && queuedPrompts.length > 0) {
+              await postHandoff({
+                url: attachBase,
+                headers: attachHeaders ?? {},
+                sessionID: detached,
+                queued: queuedPrompts,
+                live,
+              })
+            }
+
+            const record = Discovery.findByUrl(attachBase)
+            if (record) {
+              Discovery.write({ ...record, sessionID: detached })
+            }
+
+            detachSummary = { sessionID: detached, url: attachBase }
+          } catch (error) {
+            // Reset the guard so a retry works: runtime.queue.ts re-arms
+            // input.onDetach on abort, but this closure's flag is separate and
+            // would otherwise make the next call a silent no-op.
+            detaching = false
+            throw error
+          }
+        }
+
         const onShutdown = async () => {
           const headers = attachHeaders ?? {}
           try {
-            const res = await fetch(`${args.attach}/server/shutdown`, {
+            const res = await fetch(`${attachBase}/server/shutdown`, {
               method: "POST",
               headers: { ...headers, "Content-Type": "application/json" },
               signal: AbortSignal.timeout(10000),
@@ -1050,9 +1119,18 @@ export const RunCommand = effectCmd({
             backgroundSubagents: flags.experimentalBackgroundSubagents,
             demo: args.demo,
             onShutdown,
+            detachImmediate: true,
+            onDetach,
           })
         } catch (error) {
           dieInteractive(error)
+        }
+
+        // Printed only now, after the shell has fully torn down, so the summary
+        // lands on a normal terminal instead of the renderer.
+        if (detachSummary) {
+          printDetachSummary(detachSummary)
+          process.exit(0)
         }
         return
       }
@@ -1082,10 +1160,7 @@ export const RunCommand = effectCmd({
             )
           }
 
-          const started = await spawnDetachServer(
-            { directory: directory ?? root, projectID },
-            50,
-          )
+          const started = await spawnDetachServer({ directory: directory ?? root, projectID }, 50)
 
           if (started) {
             const headers = ServerAuth.headers({ password: started.password })
@@ -1098,7 +1173,7 @@ export const RunCommand = effectCmd({
             const { runInteractiveMode } = await import("./run/runtime")
             const onShutdown = async () => {
               try {
-                const res = await fetch(`${started.url}/server/shutdown`, {
+                const res = await fetch(`${started.url.replace(/\/+$/, "")}/server/shutdown`, {
                   method: "POST",
                   headers: { ...headers, "Content-Type": "application/json" },
                   signal: AbortSignal.timeout(10000),
@@ -1145,30 +1220,15 @@ export const RunCommand = effectCmd({
 
                   // Hand off queued prompts before updating the record so a POST
                   // failure aborts the detach and restores the queue (the caller
-                  // in runtime.queue.ts catches the throw and re-arms). SIGHUP
-                  // (live === undefined) uses a short timeout so the dying TUI
-                  // does not hang on an unreachable server.
+                  // in runtime.queue.ts catches the throw and re-arms).
                   if (queuedPrompts && queuedPrompts.length > 0) {
-                    const prompts = await buildHandoffPrompts(queuedPrompts)
-                    const res = await fetch(`${started.url}/server/handoff`, {
-                      method: "POST",
-                      headers: { ...headers, "Content-Type": "application/json" },
-                      body: JSON.stringify({ sessionID, prompts }),
-                      signal: AbortSignal.timeout(live ? 10000 : 3000),
-                    }).catch((err: unknown) => {
-                      // SIGHUP is best-effort: if the POST fails, proceed to
-                      // exit anyway so the terminal death is not delayed.
-                      if (live === undefined) return undefined
-                      throw err
+                    await postHandoff({
+                      url: started.url,
+                      headers: headers ?? {},
+                      sessionID,
+                      queued: queuedPrompts,
+                      live,
                     })
-                    if (res && !res.ok) {
-                      if (live === undefined) {
-                        // best-effort: log and continue
-                        console.error("SIGHUP handoff POST failed:", res.status)
-                      } else {
-                        throw new Error(`handoff POST failed: ${res.status} ${await res.text().catch(() => "")}`)
-                      }
-                    }
                   }
 
                   const record = Discovery.read(projectID)
