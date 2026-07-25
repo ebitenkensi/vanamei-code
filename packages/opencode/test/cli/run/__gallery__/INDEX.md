@@ -39,6 +39,8 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.statusline.accept-edits.w120.txt` | Statusline with the accept-edits permission mode pill visible beside a prompt composer. |
 | `footer.statusline.auto.w80.txt` | Statusline with the AUTO automode indicator beside the agent name. |
 | `footer.statusline.auto.w120.txt` | Statusline with the AUTO automode indicator beside the agent name. |
+| `footer.statusline.monitor.w80.txt` | Statusline with the ▶ N monitor-count pill visible for background monitor tool processes. |
+| `footer.statusline.monitor.w120.txt` | Statusline with the ▶ N monitor-count pill visible for background monitor tool processes. |
 | `footer.statusline.budget-ok.w80.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-ok.w120.txt` | Statusline budget-fraction pill ($cost/$soft) in muted color while the session's agent cost is under its soft budget. |
 | `footer.statusline.budget-soft.w80.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |

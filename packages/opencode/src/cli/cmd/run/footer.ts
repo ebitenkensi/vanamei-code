@@ -286,6 +286,7 @@ export class RunFooter implements FooterApi {
       contextPercent: null,
       cost: 0,
       modified: 0,
+      monitorCount: 0,
       first: options.first,
       interrupt: 0,
       exit: 0,
@@ -620,6 +621,7 @@ export class RunFooter implements FooterApi {
       contextPercent: "contextPercent" in next ? (next.contextPercent ?? null) : prev.contextPercent,
       cost: typeof next.cost === "number" ? next.cost : prev.cost,
       modified: typeof next.modified === "number" ? Math.max(0, next.modified) : prev.modified,
+      monitorCount: typeof next.monitorCount === "number" ? Math.max(0, next.monitorCount) : prev.monitorCount,
       first: typeof next.first === "boolean" ? next.first : prev.first,
       interrupt:
         typeof next.interrupt === "number" && Number.isFinite(next.interrupt)

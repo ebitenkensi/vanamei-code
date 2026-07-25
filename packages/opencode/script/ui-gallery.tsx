@@ -179,6 +179,7 @@ function footerState(input: Partial<FooterState> = {}): FooterState {
     contextPercent: null,
     cost: 0,
     modified: 0,
+    monitorCount: 0,
     first: false,
     interrupt: 0,
     exit: 0,
@@ -1412,6 +1413,17 @@ const CASES: GalleryCase[] = [
         width,
         height,
         state: { automode: true },
+      }),
+  },
+  {
+    name: "footer.statusline.monitor",
+    description: "Statusline with the ▶ N monitor-count pill visible for background monitor tool processes.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        state: { monitorCount: 2 },
       }),
   },
   {

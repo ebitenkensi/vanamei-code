@@ -96,6 +96,9 @@ export type FooterState = {
   cost: number
   // Count of files with uncommitted changes in the bound session (session.diff).
   modified: number
+  // Count of monitor tool background processes currently running for the
+  // bound session (started but not yet stopped/exited).
+  monitorCount: number
   first: boolean
   interrupt: number
   exit: number

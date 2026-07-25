@@ -33,7 +33,8 @@ const Parameters = Schema.Struct({
     description: "Timeout in milliseconds. Default 300000, max 3600000. Only for non-persistent monitors",
   }),
   oneshot: Schema.optional(Schema.Boolean).annotate({
-    description: "Use oneshot=true for single-shot completion notifications (e.g. a build or test run that exits when done). The monitor accumulates stdout and injects it as one notification on process exit.",
+    description:
+      "Use oneshot=true for single-shot completion notifications (e.g. a build or test run that exits when done). The monitor accumulates stdout and injects it as one notification on process exit.",
   }),
   monitor_id: Schema.optional(Schema.String).annotate({
     description: "Monitor ID to stop (required for stop)",
@@ -134,10 +135,7 @@ const layer = Layer.effect(
       }
     }
 
-    const doInject = (
-      monitorID: string,
-      lines: string[],
-    ): Effect.Effect<void> => {
+    const doInject = (monitorID: string, lines: string[]): Effect.Effect<void> => {
       const entry = entries.get(monitorID)
       if (!entry) return Effect.void
       const ops = entry.promptOps
@@ -146,6 +144,17 @@ const layer = Layer.effect(
 
       const label = `${entry.description} (${monitorID})`
       return Effect.gen(function* () {
+        // Publish the notification before triggering the turn it feeds, so
+        // the client renders "⏺ monitor(...)" ahead of the assistant reply
+        // it caused rather than after it.
+        yield* events
+          .publish(MonitorV1.Event.Event, {
+            sessionID,
+            monitorID,
+            description: label,
+            lines,
+          })
+          .pipe(Effect.ignore)
         yield* ops
           .prompt({
             sessionID,
@@ -159,19 +168,11 @@ const layer = Layer.effect(
               },
             ],
           })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("monitor inject failed", { cause, monitorID, description: label }),
-              ),
-            )
-        yield* events
-          .publish(MonitorV1.Event.Event, {
-            sessionID,
-            monitorID,
-            description: label,
-            lines,
-          })
-          .pipe(Effect.ignore)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("monitor inject failed", { cause, monitorID, description: label }),
+            ),
+          )
       })
     }
 
@@ -205,18 +206,19 @@ const layer = Layer.effect(
               },
             ],
           })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("monitor exit inject failed", { cause, monitorID, description: `${description} (${monitorID})` }),
-              ),
-            )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("monitor exit inject failed", {
+                cause,
+                monitorID,
+                description: `${description} (${monitorID})`,
+              }),
+            ),
+          )
       })
     }
 
-    const startMonitor = (
-      input: StartInput,
-      promptOps?: TaskPromptOps,
-    ): Effect.Effect<{ monitorID: string }> => {
+    const startMonitor = (input: StartInput, promptOps?: TaskPromptOps): Effect.Effect<{ monitorID: string }> => {
       return Effect.gen(function* () {
         const oneshot = input.oneshot === true
         const persistent = input.persistent === true && !oneshot
@@ -441,8 +443,7 @@ const layer = Layer.effect(
 
           const stoppedSessionID = entry.currentSessionID
           if (stoppedSessionID !== null) {
-            yield* doExitInject(monitorID, entry.agent, entry.description, reason, exitCode)
-            entries.delete(monitorID)
+            // Publish before injecting the exit turn, same ordering reason as doInject.
             yield* events
               .publish(MonitorV1.Event.Stopped, {
                 sessionID: stoppedSessionID,
@@ -452,6 +453,8 @@ const layer = Layer.effect(
                 exitCode: exitCode ?? undefined,
               })
               .pipe(Effect.ignore)
+            yield* doExitInject(monitorID, entry.agent, entry.description, reason, exitCode)
+            entries.delete(monitorID)
           } else {
             entries.delete(monitorID)
             yield* Effect.logWarning(`monitor exited unbound: ${entry.description} (${monitorID})`).pipe(Effect.ignore)
@@ -477,10 +480,7 @@ const layer = Layer.effect(
       })
     }
 
-    const stopMonitor = (
-      monitorID: string,
-      sessionID: SessionID,
-    ): Effect.Effect<{ description: string } | null> => {
+    const stopMonitor = (monitorID: string, sessionID: SessionID): Effect.Effect<{ description: string } | null> => {
       return Effect.gen(function* () {
         const entry = entries.get(monitorID)
         if (!entry || (entry.sessionID !== sessionID && entry.sessionID !== null)) {
@@ -505,28 +505,28 @@ const layer = Layer.effect(
       return Effect.forEach(
         Array.from(entries.entries()),
         ([monitorID, entry]) =>
-          entry.semaphore.withPermit(
-            Effect.gen(function* () {
-              entry.promptOps = promptOps
-              entry.currentSessionID = sessionID
+          entry.semaphore
+            .withPermit(
+              Effect.gen(function* () {
+                entry.promptOps = promptOps
+                entry.currentSessionID = sessionID
 
-              // Flush pending lines — fork so caller (e.g. prompt runLoop)
-              // doesn't deadlock when doInject → ops.prompt → ensureRunning
-              // awaits the currently-running loop.
-              if (entry.pendingLines.length > 0) {
-                const lines = [...entry.pendingLines]
-                entry.pendingLines.length = 0
-                yield* doInject(monitorID, lines).pipe(
-                  Effect.forkIn(scope, { startImmediately: true }),
-                )
-              }
-            }),
-          ).pipe(
-            Effect.timeout("5 seconds"),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.logWarning("monitor rebind timed out after 5s", { monitorID, sessionID }),
+                // Flush pending lines — fork so caller (e.g. prompt runLoop)
+                // doesn't deadlock when doInject → ops.prompt → ensureRunning
+                // awaits the currently-running loop.
+                if (entry.pendingLines.length > 0) {
+                  const lines = [...entry.pendingLines]
+                  entry.pendingLines.length = 0
+                  yield* doInject(monitorID, lines).pipe(Effect.forkIn(scope, { startImmediately: true }))
+                }
+              }),
+            )
+            .pipe(
+              Effect.timeout("5 seconds"),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.logWarning("monitor rebind timed out after 5s", { monitorID, sessionID }),
+              ),
             ),
-          ),
         { discard: true },
       )
     }
@@ -535,19 +535,21 @@ const layer = Layer.effect(
       return Effect.forEach(
         Array.from(entries.entries()),
         ([monitorID, entry]) =>
-          entry.semaphore.withPermit(
-            Effect.sync(() => {
-              if (entry.currentSessionID === sessionID) {
-                entry.promptOps = null
-                entry.currentSessionID = null
-              }
-            }),
-          ).pipe(
-            Effect.timeout("5 seconds"),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.logWarning("monitor unbindForSession timed out after 5s", { monitorID, sessionID }),
+          entry.semaphore
+            .withPermit(
+              Effect.sync(() => {
+                if (entry.currentSessionID === sessionID) {
+                  entry.promptOps = null
+                  entry.currentSessionID = null
+                }
+              }),
+            )
+            .pipe(
+              Effect.timeout("5 seconds"),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.logWarning("monitor unbindForSession timed out after 5s", { monitorID, sessionID }),
+              ),
             ),
-          ),
         { discard: true },
       )
     }

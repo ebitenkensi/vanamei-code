@@ -334,6 +334,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   // which case the cost pill falls back to its plain (non-fraction) form.
   const agentBudget = createMemo(() => props.agents().find((item) => item.name === props.state().agent)?.budget)
   const modifiedCount = createMemo(() => props.state().modified)
+  const monitorCount = createMemo(() => props.state().monitorCount)
   const todoCount = createMemo(() => (props.todos?.() ?? []).filter((item) => item.status !== "completed").length)
   const interruptLabel = createMemo(() => {
     if (!interrupt()) {
@@ -507,10 +508,10 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return shell() ? "Shell mode" : ""
   })
-  // Statusline info pills (P3): ctx% > cost > todos > modified, in that
-  // priority order. All of them hide together below the `compact` breakpoint
-  // (same as the raw-usage string they replace); above that, footerWidthPolicy
-  // drops the lower-priority pills first as width shrinks.
+  // Statusline info pills (P3): ctx% > monitor > cost > todos > modified, in
+  // that priority order. All of them hide together below the `compact`
+  // breakpoint (same as the raw-usage string they replace); above that,
+  // footerWidthPolicy drops the lower-priority pills first as width shrinks.
   const ctxColor = createMemo(() => {
     const percent = contextPercent()
     if (percent === null) {
@@ -537,6 +538,10 @@ export function RunFooterView(props: RunFooterViewProps) {
       items.push({ text: `◆ ${percent}%`, color: ctxColor() })
     } else if (tokens > 0) {
       items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
+    }
+
+    if (stats.pills.monitor && monitorCount() > 0) {
+      items.push({ text: `▶ ${monitorCount()}`, color: theme().highlight })
     }
 
     if (stats.pills.cost) {

@@ -82,6 +82,10 @@ export type SessionData = {
   visible: Map<string, string>
   end: Set<string>
   echo: Map<string, Set<string>>
+  // Monitor IDs the reducer has seen started (via a completed monitor/start
+  // tool call) and not yet seen stopped (via monitor.stopped). Drives the
+  // footer's "N monitors running" pill.
+  monitors: Set<string>
 }
 
 export type SessionDataInput = {
@@ -121,6 +125,7 @@ export function createSessionData(
     visible: new Map(),
     end: new Set(),
     echo: new Map(),
+    monitors: new Set(),
   }
 }
 
@@ -429,6 +434,31 @@ function toolStatus(part: ToolPart): string {
   }
 
   return "running task"
+}
+
+// Tracks monitor start/stop tool calls to drive the footer's monitor-count
+// pill. Returns the new count when the call actually changed it, undefined
+// otherwise (so callers can skip an unnecessary patch).
+function syncMonitorTool(data: SessionData, part: ToolPart): number | undefined {
+  if (part.tool !== "monitor" || part.state.status !== "completed") {
+    return undefined
+  }
+
+  const metadata = "metadata" in part.state ? part.state.metadata : undefined
+  const monitorID = typeof metadata?.monitorID === "string" ? metadata.monitorID : undefined
+  if (!monitorID) {
+    return undefined
+  }
+
+  const action = typeof part.state.input?.action === "string" ? part.state.input.action : "start"
+  const before = data.monitors.size
+  if (action === "start") {
+    data.monitors.add(monitorID)
+  } else if (action === "stop") {
+    data.monitors.delete(monitorID)
+  }
+
+  return data.monitors.size !== before ? data.monitors.size : undefined
 }
 
 // Returns true if we can flush this part's text to scrollback.
@@ -1110,7 +1140,11 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         }
 
         const todos = part.tool === "todowrite" ? extractTodos(part.state.input) : undefined
-        const footer = view || todos ? { ...view, todos } : undefined
+        const monitorCount = syncMonitorTool(data, part)
+        const footer =
+          view || todos || monitorCount !== undefined
+            ? { ...view, todos, patch: { ...view?.patch, ...(monitorCount !== undefined ? { monitorCount } : {}) } }
+            : undefined
         return out(data, commits, footer)
       }
 
@@ -1349,7 +1383,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
   }
 
   if ((event.type as string) === "monitor.stopped") {
-    const props = event.properties as { sessionID: string; description: string; reason: string }
+    const props = event.properties as { sessionID: string; monitorID: string; description: string; reason: string }
     if (props.sessionID !== input.sessionID) {
       return out(data, commits)
     }
@@ -1360,7 +1394,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       phase: "start",
       source: "system",
     })
-    return out(data, commits)
+
+    const before = data.monitors.size
+    data.monitors.delete(props.monitorID)
+    return out(data, commits, data.monitors.size !== before ? patch({ monitorCount: data.monitors.size }) : undefined)
   }
 
   // AUTO pill state follows the server's session record. The /auto toggle
