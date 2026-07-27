@@ -269,6 +269,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       history: input.history,
       theme,
       wrote,
+      statePath: Global.Path.state,
       keymap,
       tuiConfig: input.tuiConfig,
       backgroundSubagents: input.backgroundSubagents,

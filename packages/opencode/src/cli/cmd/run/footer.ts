@@ -24,12 +24,15 @@
 // Ctrl-c clears a live prompt draft first; otherwise interrupt and exit use a
 // two-press pattern where the first press shows a hint and the second press
 // within 5 seconds actually fires the action.
+import path from "path"
 import { CliRenderEvents, type CliRenderer, type KeyEvent, type Renderable, type TreeSitterClient } from "@opentui/core"
 import type { Keymap } from "@opentui/keymap"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { Flock } from "@opencode-ai/core/util/flock"
 import { OpencodeKeymapProvider } from "@/cli/ui/keymap"
+import { readJson, writeJsonAtomic } from "@/util/persistence"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
@@ -107,6 +110,7 @@ type RunFooterOptions = {
   onInterrupt?: () => void
   onBackground?: () => void
   onEditorOpen: (input: { value: string }) => Promise<string | undefined>
+  statePath?: string
   onExit?: () => void | Promise<void>
   onSubagentSelect?: (sessionID: string | undefined) => void
   onSessionSelect?: (sessionID: string, title: string | undefined) => void
@@ -251,6 +255,7 @@ export class RunFooter implements FooterApi {
   private requestExitHandler: (() => boolean) | undefined
   private scrollback: RunScrollbackStream
   private themes: RunTheme[]
+  private kvFile: string | undefined
   private paletteRefreshRunning = false
   private paletteRefreshQueued = false
   private themeRefreshTimeouts: NodeJS.Timeout[] = []
@@ -325,6 +330,7 @@ export class RunFooter implements FooterApi {
     this.theme = theme
     this.setTheme = setTheme
     this.themes = [options.theme]
+    this.kvFile = options.statePath ? path.join(options.statePath, "kv.json") : undefined
     const [subagent, setSubagent] = createStore<FooterSubagentState>(createEmptySubagentState())
     this.subagent = () => subagent
     this.setSubagent = (next) => {
@@ -1340,6 +1346,57 @@ export class RunFooter implements FooterApi {
 
   public refreshTheme(): void {
     this.handleThemeRefresh()
+  }
+
+  public async setThemeByName(name: string): Promise<boolean> {
+    if (this.isGone) {
+      return false
+    }
+
+    const { resolveNamedRunTheme } = await import("./theme")
+    const theme = await resolveNamedRunTheme(this.renderer, name)
+    if (theme === RUN_THEME_FALLBACK) {
+      const themes = await import("@/cli/ui/theme")
+      const available = Object.keys(themes.allThemes()).slice(0, 5).join(", ")
+      this.setNotice(`theme "${name}" not found (${available}...)`)
+      return false
+    }
+
+    this.themes.push(theme)
+    this.setTheme(theme)
+    this.renderer.setBackgroundColor(theme.background)
+    this.flushing = this.flushing
+      .then(() => this.scrollback.setTheme(theme))
+      .catch((error) => {
+        this.flushError = error
+      })
+    void this.persistTheme(name)
+    this.setNotice(`theme: ${name}`)
+    return true
+  }
+
+  private async persistTheme(name: string): Promise<void> {
+    if (!this.kvFile) {
+      return
+    }
+
+    const file = this.kvFile
+    const lock = `tui-kv:${file}`
+    try {
+      await Flock.withLock(lock, async () => {
+        let data: Record<string, unknown>
+        try {
+          data = await readJson<Record<string, unknown>>(file)
+        } catch {
+          data = {}
+        }
+
+        data.theme = name
+        await writeJsonAtomic(file, data)
+      })
+    } catch (error) {
+      console.error("Failed to persist theme", { error })
+    }
   }
 
   private handleThemeSignal = (): void => {

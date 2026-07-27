@@ -402,6 +402,7 @@ export type FooterApi = {
   event(next: FooterEvent): void
   append(commit: StreamCommit): void
   idle(): Promise<void>
+  setThemeByName(name: string): Promise<boolean>
   close(): void
   destroy(): void
 }

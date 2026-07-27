@@ -47,6 +47,9 @@ function footer() {
     idle() {
       return Promise.resolve()
     },
+    setThemeByName() {
+      return Promise.resolve(false)
+    },
     close() {
       if (closed) {
         return

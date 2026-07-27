@@ -112,6 +112,9 @@ function footer(): FooterApi {
     idle() {
       return Promise.resolve()
     },
+    setThemeByName() {
+      return Promise.resolve(false)
+    },
     close() {
       if (closed) {
         return
@@ -174,6 +177,9 @@ function recordingFooter() {
     append() {},
     idle() {
       return Promise.resolve()
+    },
+    setThemeByName() {
+      return Promise.resolve(false)
     },
     close() {
       if (closed) {

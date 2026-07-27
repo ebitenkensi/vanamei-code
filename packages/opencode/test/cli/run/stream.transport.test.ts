@@ -432,6 +432,9 @@ function footer(fn?: (commit: StreamCommit) => void) {
       idleCalls += 1
       return Promise.resolve()
     },
+    setThemeByName() {
+      return Promise.resolve(false)
+    },
     close() {
       closed = true
     },

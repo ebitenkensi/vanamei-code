@@ -10,7 +10,7 @@
 // Resolves when the footer closes and all in-flight work finishes.
 import * as Locale from "@/util/locale"
 import { MessageID, PartID } from "@/session/schema"
-import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand, isCompactCommand } from "./prompt.shared"
+import { isExitCommand, isNewCommand, isDetachCommand, isShutdownCommand, isCompactCommand, parseThemeCommand } from "./prompt.shared"
 import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./types"
 
 type Trace = {
@@ -419,6 +419,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
 
       void runCompact()
       return
+    }
+
+    if (prompt.mode !== "shell") {
+      const themeName = parseThemeCommand(prompt.text)
+      if (themeName !== null) {
+        void input.footer.setThemeByName(themeName)
+        return
+      }
     }
 
     const active = state.active

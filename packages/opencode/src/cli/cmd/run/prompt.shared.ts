@@ -64,6 +64,15 @@ export function isCompactCommand(input: string): boolean {
   return input.trim().toLowerCase() === "/compact"
 }
 
+export function parseThemeCommand(input: string): string | null {
+  const parts = input.trim().toLowerCase().split(/\s+/)
+  if (parts.length < 2 || parts[0] !== "/theme") {
+    return null
+  }
+
+  return parts[1]
+}
+
 export function createPromptHistory(items?: RunPrompt[]): PromptHistoryState {
   const list = (items ?? []).filter((item) => item.text.trim().length > 0).map(promptCopy)
   const next: RunPrompt[] = []

@@ -19,6 +19,7 @@ function footer() {
       commits.push(next)
     },
     idle: () => Promise.resolve(),
+    setThemeByName: () => Promise.resolve(false),
     close: () => {},
     destroy: () => {},
   }

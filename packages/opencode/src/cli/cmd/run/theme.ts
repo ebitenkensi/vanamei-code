@@ -658,16 +658,11 @@ export async function resolveRunTheme(renderer: CliRenderer): Promise<RunTheme> 
     const colors = await renderer.getPalette({
       size: 256,
     })
-    const bg = colors.defaultBackground ?? colors.palette[0]
-    if (!bg) {
+    const pick = resolveRunThemeMode(renderer, colors)
+    if (!pick) {
       return RUN_THEME_FALLBACK
     }
 
-    // Palette-only terminal reloads can leave renderer.themeMode stale, but
-    // ANSI slot zero is not the terminal background when OSC 11 is absent.
-    const pick = colors.defaultBackground
-      ? mode(RGBA.fromHex(colors.defaultBackground))
-      : (renderer.themeMode ?? mode(RGBA.fromHex(bg)))
     const footerTheme = resolveTheme(generateSystem(colors, pick), pick)
     const indexed = indexedPalette(colors, 256)
     const scrollbackTheme = quantizeTheme(footerTheme, indexed)
@@ -687,4 +682,61 @@ export async function resolveRunTheme(renderer: CliRenderer): Promise<RunTheme> 
   } catch {
     return RUN_THEME_FALLBACK
   }
+}
+
+export async function resolveNamedRunTheme(renderer: CliRenderer, name: string): Promise<RunTheme> {
+  try {
+    const themes = await import("@/cli/ui/theme")
+    if (!themes.hasTheme(name)) {
+      return RUN_THEME_FALLBACK
+    }
+
+    const themeJson = themes.allThemes()[name]
+    if (!themeJson) {
+      return RUN_THEME_FALLBACK
+    }
+
+    const colors = await renderer.getPalette({
+      size: 256,
+    })
+    const pick = resolveRunThemeMode(renderer, colors)
+    if (!pick) {
+      return RUN_THEME_FALLBACK
+    }
+
+    const footerTheme = resolveTheme(themeJson as ThemeJson, pick)
+    const indexed = indexedPalette(colors, 256)
+    const scrollbackTheme = quantizeTheme(footerTheme, indexed)
+    const shared = await import("@/cli/ui/context/theme")
+    const syntaxTheme: SharedSyntaxTheme = {
+      ...scrollbackTheme,
+      _hasSelectedListItemText: true,
+    }
+    const syntax = shared.generateSyntax(syntaxTheme)
+    return map(
+      footerTheme,
+      scrollbackTheme,
+      splashTheme(scrollbackTheme, indexed),
+      syntax,
+      shared.generateSubtleSyntax(syntaxTheme),
+    )
+  } catch {
+    return RUN_THEME_FALLBACK
+  }
+}
+
+function resolveRunThemeMode(
+  renderer: CliRenderer,
+  colors: TerminalColors,
+): "dark" | "light" | undefined {
+  const bg = colors.defaultBackground ?? colors.palette[0]
+  if (!bg) {
+    return undefined
+  }
+
+  // Palette-only terminal reloads can leave renderer.themeMode stale, but
+  // ANSI slot zero is not the terminal background when OSC 11 is absent.
+  return colors.defaultBackground
+    ? mode(RGBA.fromHex(colors.defaultBackground))
+    : (renderer.themeMode ?? mode(RGBA.fromHex(bg)))
 }
