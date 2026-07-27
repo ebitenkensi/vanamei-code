@@ -1,5 +1,7 @@
 # Session Detach / Re-attach — Spec
 
+> **Status:** ✅ Shipped — P1–P4 完了(2026-07-17, `3e2c536e3`)。デフォルト起動方式は `SPEC-detachable-default.md` で server-first へ切り替え済みだが、本 Spec の live-detach 機構はオプトアウト時の経路として存続する。
+
 ## 目的
 
 素の `opencode`（TUI + サーバー同一プロセス）で長いターンを実行中、`/detach`

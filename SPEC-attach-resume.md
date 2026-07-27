@@ -1,5 +1,7 @@
 # Attach Session Resume + Detach Queue Handoff — Spec
 
+> **Status:** ✅ Shipped — P1–P4 完了(2026-07-21, `4e3aa7d8a`)。設計判断は `SPEC-detachable-default.md` に踏襲されている。
+
 ## 目的
 
 `/detach` → `opencode attach` の再接続で**元のセッションに戻れる**ようにする。

@@ -1,5 +1,7 @@
 # Detachable-by-Default Startup (Server-First + Auto-Attach) — Spec
 
+> **Status:** ✅ Shipped — P1–P4 完了、`queue-handoff` ブランチ dev マージ済み(2026-07-23, `5e3c7c8a6`)。デフォルト起動方式として現行有効。
+
 ## 目的
 
 デフォルトの `opencode` 対話起動を「**先にサーバー子プロセスを spawn し、TUI は

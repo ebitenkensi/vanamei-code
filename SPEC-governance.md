@@ -1,5 +1,7 @@
 # ガバナンス・ゲートのネイティブ化 — Spec
 
+> **Status:** ✅ Shipped — P1–P4 完了、`governance-gates` ブランチ dev マージ済み(2026-07-18, `69b19eb26`)。
+
 ## 目的
 
 ~/dotfiles/config/opencode で実証済みの「安価なモデルの複合体 + 決定的ゲート」構成のうち、
@@ -23,6 +25,7 @@ ask/deny/task の構造ゲートだけ」。本 Spec はその決定的ゲート
 ## スコープ外
 
 - SPEC-automode.md の P2/P3(LLM permission judge)— 別 Spec として既存。本 Spec と独立
+  (注: このファイルは本リポジトリには存在せず、`~/dotfiles/config/opencode` 側で管理されている)
 - dotfiles 側 conductor-guard.ts の新フック対応リライト — 本体側 API が先。フォローアップ
 - 親セッション予算への子セッション(task)コストの合算 — 予算は**セッション自身のコストのみ**を
   数える(dotfiles の semantics を踏襲)。子は自分の agent の budget で自律的に律する

@@ -1,5 +1,7 @@
 # V2 Seam Unification — Spec (RENOVATION P3)
 
+> **Status:** 🟡 Partially shipped — P3a/P3b/P3c 完了(直近 2026-07-24, `f43d3140d`)。P3d(V1 loop 撤去)は本 Spec・RENOVATION.md ともに「将来スペック」として未起票のまま残存。
+
 2026-07-24 起草。RENOVATION.md P3 の実施仕様。診断 (`instability-diagnosis`) の原因 2 (エラー経路) と 3 (V1/V2 二重経路・attach 縫い目) を構造的に除去する。
 
 ## 目的
@@ -51,7 +53,7 @@ TUI の prompt 経路を「揮発 fire-and-forget」から「耐久 admission + 
 
 1. **P3a attach 縫合** — stream.transport の handshake 厳密化 + fetch-on-miss + e2e RETRY 撤去。
 2. **P3b 耐久 admission + promotion bridge** — handlers/session.ts と prompt.ts と input.ts。二重実行なきことを e2e (e) (queue handoff) で確認。
-3. **P3c 直列化一本化** — run-state.ts の coordinator 委譲 + busy/cancel/status/shell 契約テスト維持。
+3. **P3c 直列化一本化(部分実施)** — run-state.ts の coordinator 委譲は下記の理由で本体不可と判明したため見送り、coordinator 外書き込みの busy 保護監査(`remove`/`deletePart`/`updatePart` への `assertNotBusy` 追加)のみ実施。Runner 縮退自体は P3d へ委譲。
 4. **P3d V1 loop 撤去 (将来・別スペック)** — パリティ台帳の missing を潰し切ってから。本リノベーションでは着手しない。RENOVATION.md にこの旨を反映する。
 
 ## スコープ外

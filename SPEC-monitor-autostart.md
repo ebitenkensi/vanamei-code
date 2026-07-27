@@ -1,5 +1,7 @@
 # Monitor 常用化・自動武装 — Spec
 
+> **Status:** ✅ Shipped — P1–P3 完了(2026-07-21, `d92d148b9`)。P4(`.opencode/rules` ネイティブロード)はスコープ外として明示的に見送り。
+
 ## 目的
 
 monitor ツール(既存 SPEC.md で実装済み)を常用可能にし、セッション起動時に
@@ -80,40 +82,49 @@ shell ツール相当の「単発完了通知」を monitor ツールの `onesho
 ### P1 — monitor ツールの start ロジック分離(インスタンス所属・latest-session-wins)
 
 - `packages/opencode/src/tool/monitor.ts` — 既存 start 処理(action === "start" ブロック)を関数として抽出:
+
   ```ts
   export type StartInput = {
     command: string
     description: string
     persistent?: boolean
     timeout_ms?: number
-    oneshot?: boolean  // P2 で追加
+    oneshot?: boolean // P2 で追加
   }
   export function startMonitor(input: StartInput): Effect.Effect<{ monitorID: string }>
   ```
+
   - **セッションID を StartInput に取らない**: autostart monitor はインスタンス所属とし、セッションには紐付けない。LLM 経由 start は `ctx.sessionID` を使うが、autostart は null/インスタンス ID を使う。
   - `entries` のエントリ型 `MonitorEntry` の `sessionID` を `SessionID | null` に変更(null = インスタンス所属 autostart)。
   - 既存の `run` 内 start ブロックは `startMonitor` を呼ぶ thin ラッパへ置換。
   - `Tool.define` の Effect.gen 内で `Scope.Scope` / `ChildProcessSpawner` / `Session.Service` / `EventV2Bridge.Service` を capture し、`startMonitor` はそれらを引数(or 依存)として受け取る形にする。プロセス表 `entries` も共有。
+
 - `packages/opencode/src/tool/monitor.ts` — `rebind(promptOps)` 関数追加。インスタンス内の全エントリ(未バインド + 旧バインド)の promptOps を最新のものへ再設定。イベント発生時、未バインドなら行をエントリ内キューに蓄え(サイズ上限あり、超過は破棄 + warning log)、バインド済みなら直接注入。rebind 時に蓄積キューを flush。
 - `packages/opencode/src/tool/monitor.ts` — `unbind(promptOps)` 関数追加。旧セッション dispose 時に呼び、当該 promptOps へのバインドを null へ戻す。エントリ自体は残り、イベントはキュー蓄積へ戻る。
 
 ### P1 — bootstrap からの autostart 起動
 
 - `packages/opencode/src/project/bootstrap.ts` — `run` 内で `plugin.init()` の後に autostart を処理:
+
   ```ts
-  yield* plugin.init()
+  yield * plugin.init()
   // ... existing init ...
   // Deterministic monitor autostart (no LLM in the loop)
-  const cfg = yield* config.get()
+  const cfg = yield * config.get()
   const autostart = cfg.monitor?.autostart ?? []
   if (autostart.length > 0) {
-    yield* Effect.forEach(autostart, (entry) =>
-      MonitorTool.startMonitor(entry)
-        .pipe(Effect.catchCause((cause) => Effect.logWarning("monitor autostart failed", { cause }))),
-      { discard: true },
-    )
+    yield *
+      Effect.forEach(
+        autostart,
+        (entry) =>
+          MonitorTool.startMonitor(entry).pipe(
+            Effect.catchCause((cause) => Effect.logWarning("monitor autostart failed", { cause })),
+          ),
+        { discard: true },
+      )
   }
   ```
+
   - `MonitorTool` の Layer が bootstrap の依存に入るよう、`node.deps` に `ToolRegistry.node` (または Monitor.layer 単独) を追加。
 
 ### P1 — promptOps 再バインド + 旧セッション unbind フック
@@ -225,6 +236,7 @@ autostart は bootstrap(インスタンス起動)で走るが、この時点で�
 ### B. config 書き込み先(global vs project)
 
 agmsg プラグインが autostart エントリを書き込む先:
+
 - **global**(`~/.config/opencode/opencode.json`)→ 全プロジェクトで agmsg watcher が起動。プロジェクトを開くたびに起動。
 - **project**(`<project>/.opencode/opencode.json` または `<project>/opencode.json`)→ 当該プロジェクトでのみ起動。
 
@@ -238,6 +250,7 @@ agmsg プラグインが autostart へ書き込む際、複数プロジェクト
 ### C'. ベイク済み instance-id の共有(ライブ E2E で検出 → 修正済み)
 
 当初の実装では `opencode.local.json` の watch コマンドに `delivery.sh set` 実行時点の固定 instance-id を焼き込んでいた。これにより:
+
 - 同一プロジェクトの複数インスタンス(TUI と vanamei run 同時起動、SIGHUP 自動デタッチで生き残った旧インスタンス含む)が同一 id の watcher を複数持ち、共有 watermark を先取りした側だけが配信を受ける = 他方は恒久的にメッセージ消失
 - `set` 時に agent pid 未解決のため watcher の死活リンクが張られず、インスタンス終了後も watcher が無期限残留
 

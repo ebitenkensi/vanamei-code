@@ -1,5 +1,7 @@
 # Monitor ツール + agmsg monitor/both 対応 — Spec
 
+> **Status:** ✅ Shipped — P1–P4 完了(2026-07-14, `846ec5c33`)。常用化・自動武装は `SPEC-monitor-autostart.md` へ引き継ぎ済み。
+
 ## 目的
 
 opencode(vanamei-code)に Claude Code 相当の **monitor ツール**を追加する: 長寿命のバックグラウンドコマンドを起動し、その stdout 行を非同期イベントとして実行中セッションへ注入する。あわせて agmsg の opencode タイプ定義を外部プラグインでシャドウし、配信モード `monitor` / `both` を opencode エージェントで使えるようにする。
