@@ -5,7 +5,7 @@
    ⎿  Grep("SessionExecution")
  ✓ Task(Migrate config schema) General $0.11
    ⎿  Done
-BUILD                                                            ctrl+b background · ctrl+x down subagents · ctrl+p cmd
+BUILD                                                                                                 ^b background  ^p
 
 
 

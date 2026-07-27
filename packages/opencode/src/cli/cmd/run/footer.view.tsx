@@ -30,11 +30,11 @@ import {
 import { FOOTER_MENU_ROWS, RunFooterMenu } from "./footer.menu"
 import { canOpenSessionsMenu, RunSessionSelectBody } from "./footer.sessions"
 import { RunFooterSubagentBody } from "./footer.subagent"
-import { RunSubagentTree } from "./footer.subagent-tree"
+import { RunSubagentTree, subagentTreeRowCount } from "./footer.subagent-tree"
 import { RunPromptBody, createPromptState } from "./footer.prompt"
 import { RunPermissionBody } from "./footer.permission"
 import { RunQuestionBody } from "./footer.question"
-import { footerWidthPolicy } from "./footer.width"
+import { fitStatusline, statuslineGap, type StatuslineGroup, type StatuslineSegment } from "./footer.width"
 import {
   OPENCODE_BASE_MODE,
   formatKeyBindings,
@@ -162,16 +162,29 @@ export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
 
 export const MAX_TODO_ROWS = 6
 
-// Rows the todo panel needs: one per visible todo, plus one more when the
-// list is truncated (for the "… +N more" summary row). Shared with
+// Rows the todo panel takes within a `cap`: one per visible todo, plus one
+// more when the list is truncated (for the "… +N more" row). Shared with
 // RunFooter.applyHeight() so the reserved footer height always matches what
 // RunFooterTodoPanel actually renders.
-export function todoPanelRowCount(todos: FooterTodoItem[]): number {
-  if (todos.length === 0) {
+export function todoPanelRowCount(total: number, summary: boolean, cap: number): number {
+  if (total === 0) {
     return 0
   }
 
-  return Math.min(todos.length, MAX_TODO_ROWS) + (todos.length > MAX_TODO_ROWS ? 1 : 0)
+  if (summary) {
+    return Math.min(1, cap)
+  }
+
+  const rows = Math.min(Math.min(total, MAX_TODO_ROWS) + (total > MAX_TODO_ROWS ? 1 : 0), cap)
+  // A single row can only hold the "… +N more" line, which says nothing the
+  // ☐N counter on the statusline does not already say.
+  return rows === 1 && total > 1 ? 0 : rows
+}
+
+// Inverse of the above: todo items to draw once the panel knows its rows. One
+// row goes to "… +N more" whenever anything is left out.
+export function todoPanelVisible(total: number, rows: number): number {
+  return rows >= total ? total : Math.max(0, rows - 1)
 }
 
 export const MAX_THINKING_ROWS = 10
@@ -180,7 +193,12 @@ export const MAX_THINKING_ROWS = 10
 // each row is exactly one cell row. First row carries the tool-style ⎿
 // marker so the block reads as one unit with the committed "● Thinking…"
 // header directly above the footer.
-export function thinkingTailRows(text: string, width: number): string[] {
+export function thinkingTailRows(text: string, width: number, max = MAX_THINKING_ROWS): string[] {
+  // slice(-0) returns the whole array, so a zero budget has to short-circuit.
+  if (max <= 0) {
+    return []
+  }
+
   const cols = Math.max(10, width - 5)
   return text
     .split("\n")
@@ -188,14 +206,94 @@ export function thinkingTailRows(text: string, width: number): string[] {
     .flatMap((line) =>
       Array.from({ length: Math.ceil(line.length / cols) }, (_, i) => line.slice(i * cols, (i + 1) * cols)),
     )
-    .slice(-MAX_THINKING_ROWS)
+    .slice(-max)
     .map((row, index) => (index === 0 ? `  ⎿  ${row}` : `     ${row}`))
+}
+
+// Combined row budget for the panels stacked above the composer. Uncapped, a
+// live thinking tail, a long todo list, and a subagent tree claim twenty rows
+// between them and push the composer off the top of a short terminal.
+export function footerPanelBudget(terminalHeight: number): number {
+  return Math.max(4, Math.floor(terminalHeight / 2))
+}
+
+// Shares that budget out in the order the rows earn their keep: the subagent
+// tree is live work, the todo list is the plan, and the thinking tail is
+// ephemeral -- it gets committed to scrollback when the reasoning part ends,
+// so losing rows off the live tail costs the least.
+//
+// Returns the rows each panel will actually draw, not a cap it may undershoot.
+// Both RunFooterView and RunFooter.applyHeight() go through this, so the
+// reserved footer height always matches what ends up on screen.
+export function footerPanelRows(input: {
+  budget: number
+  // Thinking panel rows the tail wants: 0, or the tail length plus its header.
+  thinking: number
+  todos: number
+  todoSummary: boolean
+  tabs: number
+}) {
+  // The tree takes what the other two leave it, but never less than half the
+  // budget: a fleet of subagents is worth seeing, and so is the plan under it.
+  const wanted = todoPanelRowCount(input.todos, input.todoSummary, input.budget)
+  const tree = subagentTreeRowCount(
+    input.tabs,
+    Math.max(Math.ceil(input.budget / 2), input.budget - wanted - input.thinking),
+  )
+  const todos = todoPanelRowCount(input.todos, input.todoSummary, input.budget - tree)
+  const thinking = Math.min(input.thinking, input.budget - tree - todos)
+  // A lone header with no tail under it says nothing, so the panel takes two
+  // rows or none.
+  return { tree, todos, thinking: thinking < 2 ? 0 : thinking }
+}
+
+// Context usage below this is not worth a pill -- it is the normal state of
+// every session for its first hour.
+const CTX_PILL_MIN_PERCENT = 50
+
+// Columns the status zone occupies even when idle and empty: its box carries
+// minWidth={12} plus a column of padding on each side, and the right zone
+// adds one more. Counted so the fit below never hands out columns that the
+// flexbox will then take back by truncating.
+const STATUS_MIN_COLUMNS = 12
+const STATUSLINE_PADDING = 4
+
+// Statusline drop order, lowest first. Counters describing accumulated work go
+// before the model name (checkable any time from the command palette), which
+// goes before an action only available right now, which goes before the two
+// numbers that can actually stop a turn.
+const STATUSLINE_PRIORITY = {
+  modified: 1,
+  todos: 2,
+  monitor: 3,
+  queued: 4,
+  model: 5,
+  background: 6,
+  cost: 7,
+  ctx: 8,
+  command: 9,
+} as const
+
+type StatuslinePart = { text: string; color: RunFooterTheme["muted"]; bold?: boolean }
+type StatuslineItem = StatuslineSegment & { parts: StatuslinePart[] }
+
+function statuslineItem(
+  key: string,
+  group: StatuslineGroup,
+  priority: number,
+  parts: StatuslinePart[],
+): StatuslineItem {
+  return { key, group, priority, parts, text: parts.map((part) => part.text).join("") }
+}
+
+// ctrl+p -> ^p. Chorded sequences keep their tail ("ctrl+x down" -> "^x down").
+function compactKey(sequence: string): string {
+  return sequence.replaceAll("ctrl+", "^")
 }
 
 export function RunFooterView(props: RunFooterViewProps) {
   const term = useTerminalDimensions()
   const width = createMemo(() => term().width)
-  const responsive = createMemo(() => footerWidthPolicy(width()))
   const active = createMemo<FooterView>(() => props.view?.() ?? { type: "prompt" })
   const subagent = createMemo<FooterSubagentState>(() => {
     return (
@@ -267,24 +365,6 @@ export function RunFooterView(props: RunFooterViewProps) {
         keymap
           .getCommandBindings({ visibility: "registered", commands: ["command.palette.show"] })
           .get("command.palette.show")?.[0]?.sequence,
-        props.tuiConfig,
-      ) ?? "",
-  )
-  const subagentShortcut = useKeymapSelector(
-    (keymap: OpenTuiKeymap) =>
-      formatKeySequence(
-        keymap
-          .getCommandBindings({ visibility: "registered", commands: ["session.child.first"] })
-          .get("session.child.first")?.[0]?.sequence,
-        props.tuiConfig,
-      ) ?? "",
-  )
-  const queuedShortcut = useKeymapSelector(
-    (keymap: OpenTuiKeymap) =>
-      formatKeySequence(
-        keymap
-          .getCommandBindings({ visibility: "registered", commands: ["session.queued_prompts"] })
-          .get("session.queued_prompts")?.[0]?.sequence,
         props.tuiConfig,
       ) ?? "",
   )
@@ -508,10 +588,13 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return shell() ? "Shell mode" : ""
   })
-  // Statusline info pills (P3): ctx% > monitor > cost > todos > modified, in
-  // that priority order. All of them hide together below the `compact`
-  // breakpoint (same as the raw-usage string they replace); above that,
-  // footerWidthPolicy drops the lower-priority pills first as width shrinks.
+  // Statusline right zone: quiet by default, packed by measurement.
+  //
+  // A counter only appears once it is worth reacting to (P3's pills were
+  // always on, so an untouched session still rendered five of them), key hints
+  // collapse into the command palette they duplicate, and whatever survives is
+  // composed into one text node -- as separate boxes they used to overwrite
+  // each other whenever the row overflowed.
   const ctxColor = createMemo(() => {
     const percent = contextPercent()
     if (percent === null) {
@@ -524,62 +607,6 @@ export function RunFooterView(props: RunFooterViewProps) {
       return theme().warning
     }
     return theme().muted
-  })
-  const pills = createMemo(() => {
-    const stats = responsive().statusline
-    if (!stats.showPills) {
-      return []
-    }
-
-    const items: Array<{ text: string; color: ReturnType<typeof theme>["muted"] }> = []
-    const percent = contextPercent()
-    const tokens = contextTokens()
-    if (percent !== null) {
-      items.push({ text: `◆ ${percent}%`, color: ctxColor() })
-    } else if (tokens > 0) {
-      items.push({ text: `◆ ${Locale.number(tokens)}`, color: theme().muted })
-    }
-
-    if (stats.pills.monitor && monitorCount() > 0) {
-      items.push({ text: `▶ ${monitorCount()}`, color: theme().highlight })
-    }
-
-    if (stats.pills.cost) {
-      const budget = agentBudget()
-      if (budget && (budget.soft !== undefined || budget.hard !== undefined)) {
-        const denom = budget.soft ?? budget.hard!
-        const state = budgetState(cost(), budget)
-        const color = state === "ok" ? theme().muted : state === "soft" ? theme().warning : theme().error
-        items.push({ text: `${Locale.money(cost())}/${Locale.money(denom)}`, color })
-      } else if (cost() > 0) {
-        items.push({ text: Locale.money(cost()), color: theme().muted })
-      }
-    }
-
-    if (stats.pills.todos && todoCount() > 0) {
-      items.push({ text: `☐ ${todoCount()}`, color: theme().warning })
-    }
-
-    if (stats.pills.modified && modifiedCount() > 0) {
-      items.push({ text: `✎ ${modifiedCount()}`, color: theme().success })
-    }
-
-    return items
-  })
-  const modelStatus = createMemo(() => {
-    // Hidden while a turn is running so the busy statusline keeps room for
-    // status text, pills, and hints.
-    const current = props.currentModel()
-    if (!prompt() || shell() || busy() || !current) {
-      return
-    }
-
-    return {
-      model: model().model,
-      variant: props.currentVariant(),
-      provider: undefined,
-      // Prefer without provider, but keep it on the shared width policy if we add it back.
-    }
   })
   const statusColor = createMemo(() => {
     if (exiting()) {
@@ -596,42 +623,170 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return theme().muted
   })
-  const hasPills = createMemo(() => pills().length > 0)
-  const hasModelStatus = createMemo(() => responsive().statusline.showModel && Boolean(modelStatus()))
-  const contextHints = createMemo(() => {
-    if (!prompt() || shell() || !responsive().statusline.showContextHints) {
-      return []
-    }
-
-    const items: Array<{ kind: string; key: string; label: string }> = []
-    if (foregroundSubagents() && backgroundShortcut()) {
-      items.push({ kind: "background", key: backgroundShortcut(), label: "background" })
-    }
-    if (queuedPrompts().length > 0 && queuedShortcut()) {
-      items.push({ kind: "queued", key: queuedShortcut(), label: `${queue()} queued` })
-    }
-    if (activeTabs().length > 0 && subagentShortcut()) {
-      items.push({ kind: "subagents", key: subagentShortcut(), label: "subagents" })
-    }
-
-    const limit = responsive().statusline.contextHintLimit
-    return limit === undefined ? items : items.slice(0, limit)
-  })
-  const hasContextHints = createMemo(() => contextHints().length > 0)
-  const commandHint = createMemo(() => {
-    if (!prompt() || !responsive().statusline.showCommandHint) {
+  const budgetPill = createMemo(() => {
+    const budget = agentBudget()
+    if (!budget || (budget.soft === undefined && budget.hard === undefined)) {
       return
     }
 
-    if (shell()) {
-      return { key: "esc", label: "normal" }
-    }
-
-    if (command()) {
-      return { key: command(), label: "cmd" }
+    const state = budgetState(cost(), budget)
+    return {
+      state,
+      // "$1.52/1.50": the denominator drops its currency mark, which the
+      // numerator already establishes.
+      text: `${Locale.money(cost())}/${(budget.soft ?? budget.hard!).toFixed(2)}`,
+      color: state === "ok" ? theme().muted : state === "soft" ? theme().warning : theme().error,
     }
   })
-  const sectionSeparator = () => <span style={{ fg: theme().muted }}>· </span>
+  const metricItems = createMemo(() => {
+    const items: StatuslineItem[] = []
+    const percent = contextPercent()
+    const tokens = contextTokens()
+    if (percent !== null && percent >= CTX_PILL_MIN_PERCENT) {
+      items.push(
+        statuslineItem("ctx", "metrics", STATUSLINE_PRIORITY.ctx, [{ text: `◆${percent}%`, color: ctxColor() }]),
+      )
+    } else if (percent === null && tokens > 0) {
+      items.push(
+        statuslineItem("ctx", "metrics", STATUSLINE_PRIORITY.ctx, [
+          { text: `◆${Locale.number(tokens)}`, color: theme().muted },
+        ]),
+      )
+    }
+
+    if (cost() > 0) {
+      const budget = budgetPill()
+      items.push(
+        statuslineItem("cost", "metrics", STATUSLINE_PRIORITY.cost, [
+          budget ? { text: budget.text, color: budget.color } : { text: Locale.money(cost()), color: theme().muted },
+        ]),
+      )
+    }
+
+    if (queuedPrompts().length > 0) {
+      items.push(
+        statuslineItem("queued", "metrics", STATUSLINE_PRIORITY.queued, [
+          { text: `⇥${queue()}`, color: theme().muted },
+        ]),
+      )
+    }
+
+    if (monitorCount() > 0) {
+      items.push(
+        statuslineItem("monitor", "metrics", STATUSLINE_PRIORITY.monitor, [
+          { text: `▶${monitorCount()}`, color: theme().highlight },
+        ]),
+      )
+    }
+
+    if (todoCount() > 0) {
+      items.push(
+        statuslineItem("todos", "metrics", STATUSLINE_PRIORITY.todos, [
+          { text: `☐${todoCount()}`, color: theme().warning },
+        ]),
+      )
+    }
+
+    if (modifiedCount() > 0) {
+      items.push(
+        statuslineItem("modified", "metrics", STATUSLINE_PRIORITY.modified, [
+          { text: `✎${modifiedCount()}`, color: theme().success },
+        ]),
+      )
+    }
+
+    // A running turn hands the row to its status text. ctx% stays because it
+    // decides whether the turn survives, and an over-budget cost stays because
+    // it is the other reason you would reach for the interrupt key.
+    if (!busy() || exiting()) {
+      return items
+    }
+
+    return items.filter((item) => item.key === "ctx" || (item.key === "cost" && budgetPill()?.state !== "ok"))
+  })
+  const modelItem = createMemo<StatuslineItem | undefined>(() => {
+    const current = props.currentModel()
+    if (!prompt() || shell() || busy() || !current) {
+      return
+    }
+
+    const variant = props.currentVariant()
+    return statuslineItem("model", "model", STATUSLINE_PRIORITY.model, [
+      { text: model().model, color: theme().text },
+      ...(variant ? [{ text: ` ${variant}`, color: theme().warning, bold: true }] : []),
+    ])
+  })
+  const hintItems = createMemo(() => {
+    if (!prompt() || (busy() && !exiting())) {
+      return []
+    }
+
+    const items: StatuslineItem[] = []
+    if (!shell() && foregroundSubagents() && backgroundShortcut()) {
+      items.push(
+        statuslineItem("background", "background", STATUSLINE_PRIORITY.background, [
+          { text: compactKey(backgroundShortcut()), color: theme().text },
+          { text: " background", color: theme().muted },
+        ]),
+      )
+    }
+
+    if (shell()) {
+      items.push(
+        statuslineItem("command", "command", STATUSLINE_PRIORITY.command, [
+          { text: "esc", color: theme().text },
+          { text: " normal", color: theme().muted },
+        ]),
+      )
+      return items
+    }
+
+    // Bare key, no "cmd" label: the palette it opens names every other binding
+    // the statusline used to spell out, so this is the only one left to teach.
+    if (command()) {
+      items.push(
+        statuslineItem("command", "command", STATUSLINE_PRIORITY.command, [
+          { text: compactKey(command()), color: theme().text },
+        ]),
+      )
+    }
+
+    return items
+  })
+  // Columns the identity and status zones claim before the right zone gets
+  // what is left. Measured rather than guessed: the flexbox will happily
+  // overlap or shred a segment that does not fit, so the fit has to be decided
+  // here instead.
+  const reservedColumns = createMemo(() => {
+    const identity =
+      modeLabel().length +
+      1 +
+      (permissionModeIndicator().visible ? permissionModeIndicator().label.length + 1 : 0) +
+      (props.state().automode ? "AUTO".length + 1 : 0)
+    const spinner = busy() && !exiting() ? 2 + (interruptLabel() ? interruptLabel()!.length + 1 : 0) : 0
+    const status = (judging() ? "● judging… ".length : 0) + spinner + statusText().length
+    return identity + Math.max(STATUS_MIN_COLUMNS, status) + STATUSLINE_PADDING
+  })
+  const statusline = createMemo(() =>
+    fitStatusline(
+      [...metricItems(), ...(modelItem() ? [modelItem()!] : []), ...hintItems()],
+      Math.max(0, width() - reservedColumns()),
+    ),
+  )
+  // Rows the stacked panels get. Same call RunFooter.applyHeight() makes, so
+  // the reserved footer height matches what the panels below actually draw.
+  const panelRows = createMemo(() => {
+    const thinking = props.thinking?.()
+    const prompting = active().type === "prompt"
+    const tail = prompting && thinking?.active ? thinkingTailRows(thinking.text, width()).length : 0
+    return footerPanelRows({
+      budget: footerPanelBudget(term().height),
+      thinking: tail === 0 ? 0 : tail + 1,
+      todos: prompting ? (props.todos?.() ?? []).length : 0,
+      todoSummary: props.todoSummary?.() ?? false,
+      tabs: !panel() && !menu() ? tabs().length : 0,
+    })
+  })
 
   createEffect(() => {
     props.onRequestExit?.(composer.requestExit)
@@ -800,12 +955,21 @@ export function RunFooterView(props: RunFooterViewProps) {
         when={inspecting()}
         fallback={
           <box width="100%" flexDirection="column" gap={0}>
-            <Show when={active().type === "prompt"}>
-              <RunFooterThinkingPanel thinking={() => props.thinking?.()} theme={theme} />
+            <Show when={panelRows().thinking > 0}>
+              <RunFooterThinkingPanel
+                thinking={() => props.thinking?.()}
+                theme={theme}
+                rows={() => panelRows().thinking}
+              />
             </Show>
 
-            <Show when={active().type === "prompt" && (props.todos?.() ?? []).length > 0}>
-              <RunFooterTodoPanel todos={props.todos!} theme={theme} todoSummary={props.todoSummary} />
+            <Show when={panelRows().todos > 0}>
+              <RunFooterTodoPanel
+                todos={props.todos!}
+                theme={theme}
+                rows={() => panelRows().todos}
+                todoSummary={props.todoSummary}
+              />
             </Show>
 
             <For each={[promptView()]}>
@@ -1015,8 +1179,8 @@ export function RunFooterView(props: RunFooterViewProps) {
               />
             </Show>
 
-            <Show when={!panel() && !menu() && tabs().length > 0}>
-              <RunSubagentTree tabs={tabs} theme={theme} />
+            <Show when={panelRows().tree > 0}>
+              <RunSubagentTree tabs={tabs} theme={theme} rows={() => panelRows().tree} />
             </Show>
 
             <Show when={!panel() && !menu()}>
@@ -1087,67 +1251,21 @@ export function RunFooterView(props: RunFooterViewProps) {
                   </text>
                 </box>
 
-                <Show when={hasPills()}>
-                  <box paddingRight={1} backgroundColor="transparent" flexShrink={1}>
+                <Show when={statusline().length > 0}>
+                  <box paddingRight={1} backgroundColor="transparent" flexShrink={0}>
                     <text wrapMode="none" truncate>
-                      <For each={pills()}>
-                        {(pill, index) => (
+                      <For each={statusline()}>
+                        {(item, index) => (
                           <>
-                            <Show when={index() > 0}>
-                              <span style={{ fg: theme().muted }}> · </span>
-                            </Show>
-                            <span style={{ fg: pill.color }}>{pill.text}</span>
+                            <span>{statuslineGap(statusline()[index() - 1], item)}</span>
+                            <For each={item.parts}>
+                              {(part) => <span style={{ fg: part.color, bold: part.bold }}>{part.text}</span>}
+                            </For>
                           </>
                         )}
                       </For>
                     </text>
                   </box>
-                </Show>
-
-                <Show when={responsive().statusline.showModel && modelStatus()}>
-                  {(info) => (
-                    <box paddingRight={1} backgroundColor="transparent" flexShrink={0}>
-                      <text fg={theme().text} wrapMode="none">
-                        {info().model}
-                        <Show when={info().provider}>
-                          {(provider) => <span style={{ fg: theme().muted }}> {provider()}</span>}
-                        </Show>
-                        <Show when={info().variant}>
-                          {(variant) => (
-                            <>
-                              <span style={{ fg: theme().warning, bold: true }}> {variant()}</span>
-                            </>
-                          )}
-                        </Show>
-                      </text>
-                    </box>
-                  )}
-                </Show>
-
-                <For each={contextHints()}>
-                  {(hint, index) => (
-                    <box paddingRight={1} backgroundColor="transparent" flexShrink={0} maxWidth={24}>
-                      <text fg={theme().text} wrapMode="none" truncate>
-                        <Show when={index() > 0 || ((hasPills() || hasModelStatus()) && index() === 0)}>
-                          {sectionSeparator()}
-                        </Show>
-                        <span style={{ fg: theme().text }}>{hint.key}</span>{" "}
-                        <span style={{ fg: theme().muted }}>{hint.label}</span>
-                      </text>
-                    </box>
-                  )}
-                </For>
-
-                <Show when={commandHint()}>
-                  {(hint) => (
-                    <box paddingRight={1} backgroundColor="transparent" flexShrink={0} maxWidth={18}>
-                      <text fg={theme().text} wrapMode="none" truncate>
-                        <Show when={hasPills() || hasModelStatus() || hasContextHints()}>{sectionSeparator()}</Show>
-                        <span style={{ fg: theme().text }}>{hint().key}</span>{" "}
-                        <span style={{ fg: theme().muted }}>{hint().label}</span>
-                      </text>
-                    </box>
-                  )}
                 </Show>
               </box>
             </Show>
@@ -1179,6 +1297,7 @@ export function RunFooterView(props: RunFooterViewProps) {
 function RunFooterThinkingPanel(props: {
   thinking: () => FooterThinkingState | undefined
   theme: () => RunFooterTheme
+  rows: () => number
 }) {
   const term = useTerminalDimensions()
   const rows = createMemo(() => {
@@ -1187,7 +1306,8 @@ function RunFooterThinkingPanel(props: {
       return []
     }
 
-    return thinkingTailRows(state.text, term().width)
+    // One of the allotted rows belongs to the "● Thinking…" header.
+    return thinkingTailRows(state.text, term().width, props.rows() - 1)
   })
 
   return (
@@ -1221,6 +1341,7 @@ function RunFooterThinkingPanel(props: {
 function RunFooterTodoPanel(props: {
   todos: () => FooterTodoItem[]
   theme: () => RunFooterTheme
+  rows: () => number
   todoSummary?: () => boolean
 }) {
   function glyph(status: string) {
@@ -1235,11 +1356,13 @@ function RunFooterTodoPanel(props: {
   }
 
   const summary = () => props.todoSummary?.() ?? false
+  const visible = createMemo(() => todoPanelVisible(props.todos().length, props.rows()))
+  const hidden = createMemo(() => props.todos().length - visible())
 
   return (
     <box
       width="100%"
-      height={summary() ? 1 : todoPanelRowCount(props.todos())}
+      height={props.rows()}
       flexShrink={0}
       flexDirection="column"
       backgroundColor="transparent"
@@ -1250,7 +1373,7 @@ function RunFooterTodoPanel(props: {
         when={summary()}
         fallback={
           <>
-            <For each={props.todos().slice(0, MAX_TODO_ROWS)}>
+            <For each={props.todos().slice(0, visible())}>
               {(item) => (
                 <box width="100%" height={1} flexDirection="row" gap={1} flexShrink={0} backgroundColor="transparent">
                   <text fg={color(item.status)} wrapMode="none" flexShrink={0}>
@@ -1275,10 +1398,10 @@ function RunFooterTodoPanel(props: {
                 </box>
               )}
             </For>
-            <Show when={props.todos().length > MAX_TODO_ROWS}>
+            <Show when={hidden() > 0}>
               <box width="100%" height={1} flexDirection="row" flexShrink={0} backgroundColor="transparent">
                 <text fg={props.theme().muted} wrapMode="none" truncate>
-                  … +{props.todos().length - MAX_TODO_ROWS} more
+                  … +{hidden()} more
                 </text>
               </box>
             </Show>

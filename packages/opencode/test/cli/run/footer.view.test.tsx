@@ -20,6 +20,7 @@ import { MAX_THINKING_ROWS, RunFooterView, thinkingTailRows } from "@/cli/cmd/ru
 import { RunEntryContent } from "@/cli/cmd/run/scrollback.writer"
 import { RUN_THEME_FALLBACK, type RunTheme } from "@/cli/cmd/run/theme"
 import type {
+  FooterQueuedPrompt,
   FooterState,
   FooterSubagentState,
   FooterSubagentTab,
@@ -186,6 +187,7 @@ async function renderFooter(
     currentModel?: RunInput["model"]
     currentVariant?: string
     subagents?: FooterSubagentState
+    queuedPrompts?: FooterQueuedPrompt[]
     todos?: () => FooterTodoItem[]
     backgroundSubagents?: boolean
     width?: number
@@ -226,6 +228,7 @@ async function renderFooter(
           state={state}
           view={view}
           subagent={subagents}
+          queuedPrompts={() => input.queuedPrompts ?? []}
           todos={input.todos ?? (() => [])}
           theme={input.theme ?? (() => RUN_THEME_FALLBACK)}
           tuiConfig={config}
@@ -1111,24 +1114,20 @@ test("direct footer shows editable prompts and additional queued work while runn
     const mode = statusItems[0]
     const main = statusItems[1]
     const spinner = main.getChildren()[0]
-    const queued = statusItems[3]
-    const hint = statusItems.at(-1)!
 
     expect(spinner).toBeDefined()
-    // The model name is hidden while a turn is running.
+    // A running turn hands the row to its status text: the model name, every
+    // key hint, and the counters all step aside. The queued prompt is still
+    // reachable -- it just no longer spells its binding out on the statusline.
     expect(frame).not.toContain("a-model-name")
-    expect(frame).toContain("3 queued")
-    expect(frame).toContain("ctrl+b background")
-    expect(frame).toContain("ctrl+x q 3 queued")
-    expect(frame).toContain("ctrl+x down subagents")
-    expect(frame).toContain("ctrl+p cmd")
-    expect(frame).toContain("subagents · ctrl+p cmd")
+    expect(frame).not.toContain("queued")
+    expect(frame).not.toContain("ctrl+")
+    expect(frame).not.toContain("^")
     expect(frame).not.toContain("1 agent")
+    expect(statusItems).toHaveLength(2)
     expect(statusline.backgroundColor.toInts()).toEqual(transparent)
     expect(mode.backgroundColor.toInts()).toEqual(transparent)
     expect(main.backgroundColor.toInts()).toEqual(transparent)
-    expect(queued.backgroundColor.toInts()).toEqual(transparent)
-    expect(hint.backgroundColor.toInts()).toEqual(transparent)
   } finally {
     app.renderer.currentFocusedRenderable?.blur()
     app.renderer.currentFocusedEditor?.blur()
@@ -1137,7 +1136,7 @@ test("direct footer shows editable prompts and additional queued work while runn
   }
 })
 
-test("direct footer separates a lone context hint from model and command hint", async () => {
+test("direct footer spaces the model two columns from the command hint", async () => {
   const app = await renderFooter({
     providers: [provider()],
     currentModel: { providerID: "opencode", modelID: "gpt-5" },
@@ -1156,37 +1155,65 @@ test("direct footer separates a lone context hint from model and command hint", 
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("GPT-5")
-    expect(frame).toContain("xhigh · ctrl+x down subagents · ctrl+p cmd")
-    expect(frame).not.toContain("ctrl+b background")
+    // No separator glyph: the gap between clusters carries the grouping, and
+    // the subagent binding is left to the tree that already lists the tabs.
+    expect(frame).toContain("GPT-5 xhigh  ^p")
+    expect(frame).not.toContain("·")
+    expect(frame).not.toContain("ctrl+")
+    expect(frame).not.toContain("subagents")
     expect(frame).not.toContain("queued")
   } finally {
     app.cleanup()
   }
 })
 
-test("direct footer hides the subagent hint when only completed subagents remain", async () => {
-  const app = await renderFooter({
-    providers: [provider()],
-    currentModel: { providerID: "opencode", modelID: "gpt-5" },
-    currentVariant: "xhigh",
+test("direct footer offers the background hint only while foreground subagents run", async () => {
+  const running = await renderFooter({
+    subagents: {
+      tabs: [subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow" })],
+      details: {},
+      permissions: [],
+      questions: [],
+    },
+    width: 160,
+  })
+  try {
+    await running.renderOnce()
+    expect(running.captureCharFrame()).toContain("^b background")
+  } finally {
+    running.cleanup()
+  }
+
+  const done = await renderFooter({
     subagents: {
       tabs: [subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow", status: "completed" })],
       details: {},
       permissions: [],
       questions: [],
     },
-    backgroundSubagents: false,
     width: 160,
+  })
+  try {
+    await done.renderOnce()
+    expect(done.captureCharFrame()).not.toContain("background")
+  } finally {
+    done.cleanup()
+  }
+})
+
+test("direct footer counts queued prompts as a ⇥ pill instead of a key hint", async () => {
+  const app = await renderFooter({
+    width: 160,
+    state: { queue: 3 },
+    queuedPrompts: [{ messageID: "m-1", partID: "p-1", prompt: { text: "follow up", parts: [] } }],
   })
 
   try {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("GPT-5")
-    expect(frame).toContain("xhigh · ctrl+p cmd")
-    expect(frame).not.toContain("ctrl+x down subagents")
+    expect(frame).toContain("⇥3")
+    expect(frame).not.toContain("queued")
   } finally {
     app.cleanup()
   }
@@ -1209,10 +1236,10 @@ test("direct footer omits interrupt key hint when interrupt is unbound", async (
   }
 })
 
-test("direct footer renders all four info pills separated by middots", async () => {
+test("direct footer renders the info counters as one space-separated cluster", async () => {
   const app = await renderFooter({
     width: 130,
-    state: { contextTokens: 159_600, contextPercent: 42, cost: 4.23, modified: 3 },
+    state: { contextTokens: 159_600, contextPercent: 62, cost: 4.23, modified: 3, monitorCount: 2 },
     todos: () => [
       { status: "pending", content: "one" },
       { status: "completed", content: "two" },
@@ -1223,11 +1250,8 @@ test("direct footer renders all four info pills separated by middots", async () 
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("◆ 42%")
-    expect(frame).toContain("$4.23")
-    expect(frame).toContain("☐ 1")
-    expect(frame).toContain("✎ 3")
-    expect(frame).toContain("◆ 42% · $4.23 · ☐ 1 · ✎ 3")
+    expect(frame).toContain("◆62% $4.23 ▶2 ☐1 ✎3")
+    expect(frame).not.toContain("·")
   } finally {
     app.cleanup()
   }
@@ -1236,15 +1260,44 @@ test("direct footer renders all four info pills separated by middots", async () 
 test("direct footer keeps the ctx pill percentage-only even when spacious", async () => {
   const app = await renderFooter({
     width: 150,
-    state: { contextTokens: 159_600, contextPercent: 16 },
+    state: { contextTokens: 159_600, contextPercent: 66 },
   })
 
   try {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("◆ 16%")
+    expect(frame).toContain("◆66%")
     expect(frame).not.toContain("159.6K")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer shows the ctx pill only once usage is worth reacting to", async () => {
+  const quiet = await renderFooter({ width: 130, state: { contextTokens: 1000, contextPercent: 49 } })
+  try {
+    await quiet.renderOnce()
+    expect(quiet.captureCharFrame()).not.toContain("%")
+  } finally {
+    quiet.cleanup()
+  }
+
+  const shown = await renderFooter({ width: 130, state: { contextTokens: 1000, contextPercent: 50 } })
+  try {
+    await shown.renderOnce()
+    expect(shown.captureCharFrame()).toContain("◆50%")
+  } finally {
+    shown.cleanup()
+  }
+})
+
+test("direct footer falls back to a token count when no context percentage is known", async () => {
+  const app = await renderFooter({ width: 130, state: { contextTokens: 159_600, contextPercent: null } })
+
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("◆159.6K")
   } finally {
     app.cleanup()
   }
@@ -1283,10 +1336,10 @@ test("direct footer colors the ctx% pill warning at 80% and error at 95%", async
   }
 })
 
-test("direct footer hides zero-value pills", async () => {
+test("direct footer leaves the counter cluster empty on an untouched session", async () => {
   const app = await renderFooter({
     width: 130,
-    state: { contextTokens: 1000, contextPercent: 10, cost: 0, modified: 0 },
+    state: { contextTokens: 1000, contextPercent: 10, cost: 0, modified: 0, monitorCount: 0 },
     todos: () => [],
   })
 
@@ -1294,10 +1347,11 @@ test("direct footer hides zero-value pills", async () => {
     await app.renderOnce()
     const frame = app.captureCharFrame()
 
-    expect(frame).toContain("◆ 10%")
+    expect(frame).not.toContain("◆")
     expect(frame).not.toContain("$")
     expect(frame).not.toContain("☐")
     expect(frame).not.toContain("✎")
+    expect(frame).not.toContain("▶")
   } finally {
     app.cleanup()
   }
@@ -1313,8 +1367,8 @@ test("direct footer shows a budget-fraction cost pill colored by threshold", asy
   })
   try {
     await ok.renderOnce()
-    expect(ok.captureCharFrame()).toContain("$0.42/$1.50")
-    expect(findSpan(ok.captureSpans(), "$0.42/$1.50")?.fg.toInts()).toEqual(
+    expect(ok.captureCharFrame()).toContain("$0.42/1.50")
+    expect(findSpan(ok.captureSpans(), "$0.42/1.50")?.fg.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.muted as RGBA).toInts(),
     )
   } finally {
@@ -1328,8 +1382,8 @@ test("direct footer shows a budget-fraction cost pill colored by threshold", asy
   })
   try {
     await soft.renderOnce()
-    expect(soft.captureCharFrame()).toContain("$1.52/$1.50")
-    expect(findSpan(soft.captureSpans(), "$1.52/$1.50")?.fg.toInts()).toEqual(
+    expect(soft.captureCharFrame()).toContain("$1.52/1.50")
+    expect(findSpan(soft.captureSpans(), "$1.52/1.50")?.fg.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.warning as RGBA).toInts(),
     )
   } finally {
@@ -1343,8 +1397,8 @@ test("direct footer shows a budget-fraction cost pill colored by threshold", asy
   })
   try {
     await hard.renderOnce()
-    expect(hard.captureCharFrame()).toContain("$2.50/$1.50")
-    expect(findSpan(hard.captureSpans(), "$2.50/$1.50")?.fg.toInts()).toEqual(
+    expect(hard.captureCharFrame()).toContain("$2.50/1.50")
+    expect(findSpan(hard.captureSpans(), "$2.50/1.50")?.fg.toInts()).toEqual(
       (RUN_THEME_FALLBACK.footer.error as RGBA).toInts(),
     )
   } finally {
@@ -1369,97 +1423,51 @@ test("direct footer keeps the plain cost pill when the current agent has no budg
   }
 })
 
-test("direct footer degrades the budget pill at the same width breakpoint as the plain cost pill", async () => {
-  const budgetAgent = agent({ name: "budget-build", mode: "primary", budget: { soft: 1.5, hard: 2.5 } })
-  const app = await renderFooter({
-    width: 85,
-    agents: [budgetAgent],
-    state: { agent: "budget-build", cost: 0.42 },
-  })
-
-  try {
-    await app.renderOnce()
-    expect(app.captureCharFrame()).not.toContain("$0.42")
-  } finally {
-    app.cleanup()
-  }
-})
-
-function pillsRow(frame: string) {
-  return frame.split("\n").find((line) => line.includes("BUILD") && line.includes("cmd")) ?? ""
-}
-
-test("direct footer drops info pills by priority as width shrinks", async () => {
+test("direct footer sheds statusline segments whole as width shrinks", async () => {
   const state = {
-    contextTokens: 1000,
-    contextPercent: 42,
+    agent: "build",
+    contextPercent: 62,
     cost: 4.23,
     modified: 3,
+    monitorCount: 2,
   } satisfies Partial<FooterState>
-  // The todo panel's own checkbox glyph ("☐ one") also uses ☐, so the
-  // pills-row assertions below check the status line specifically rather
-  // than the whole frame.
-  const todos = () => [{ status: "pending", content: "one" }]
+  const todos = () => [{ status: "pending" as const, content: "one" }]
+  // Not in `providers`, so modelInfo falls back to the id verbatim -- a long
+  // one is what actually crowds the zone at ordinary terminal widths.
+  const currentModel = { providerID: "opencode", modelID: "a-model-name-long-enough-to-crowd-the-statusline" }
+  const TOKENS = ["✎3", "☐1", "▶2", currentModel.modelID, "$4.23", "◆62%", "^p"]
 
-  const full = await renderFooter({ width: 130, state, todos })
-  try {
-    await full.renderOnce()
-    const frame = full.captureCharFrame()
-    expect(frame).toContain("◆ 42%")
-    expect(frame).toContain("$4.23")
-    expect(frame).toContain("☐ 1")
-    expect(frame).toContain("✎ 3")
-  } finally {
-    full.cleanup()
+  const survivors: string[][] = []
+  for (const width of [130, 120, 110, 100, 90, 80, 70, 60, 50, 40]) {
+    const app = await renderFooter({ width, state, todos, currentModel })
+    try {
+      await app.renderOnce()
+      const row = app
+        .captureCharFrame()
+        .split("\n")
+        .find((line) => line.startsWith("BUILD"))!
+
+      // The failure this replaces: a segment sliced mid-token into fragments
+      // like "◆ 78% ·... · $4.23".
+      expect(row).not.toContain("...")
+      expect(row).not.toContain("…")
+      expect(row.trimEnd().length).toBeLessThanOrEqual(width)
+      survivors.push(TOKENS.filter((token) => row.includes(token)))
+    } finally {
+      app.cleanup()
+    }
   }
 
-  const noModified = await renderFooter({ width: 110, state, todos })
-  try {
-    await noModified.renderOnce()
-    const frame = noModified.captureCharFrame()
-    expect(frame).toContain("◆ 42%")
-    expect(frame).toContain("$4.23")
-    expect(frame).toContain("☐ 1")
-    expect(frame).not.toContain("✎")
-  } finally {
-    noModified.cleanup()
-  }
-
-  const noTodos = await renderFooter({ width: 95, state, todos })
-  try {
-    await noTodos.renderOnce()
-    const frame = noTodos.captureCharFrame()
-    expect(frame).toContain("◆ 42%")
-    expect(frame).toContain("$4.23")
-    expect(pillsRow(frame)).not.toContain("☐")
-    expect(frame).not.toContain("✎")
-  } finally {
-    noTodos.cleanup()
-  }
-
-  const noCost = await renderFooter({ width: 85, state, todos })
-  try {
-    await noCost.renderOnce()
-    const frame = noCost.captureCharFrame()
-    expect(frame).toContain("◆ 42%")
-    expect(frame).not.toContain("$")
-    expect(pillsRow(frame)).not.toContain("☐")
-    expect(frame).not.toContain("✎")
-  } finally {
-    noCost.cleanup()
-  }
-
-  const hidden = await renderFooter({ width: 79, state, todos })
-  try {
-    await hidden.renderOnce()
-    const frame = hidden.captureCharFrame()
-    expect(frame).not.toContain("◆")
-    expect(frame).not.toContain("$")
-    expect(pillsRow(frame)).not.toContain("☐")
-    expect(frame).not.toContain("✎")
-  } finally {
-    hidden.cleanup()
-  }
+  // Every segment present at some width is still present at every wider one,
+  // and TOKENS is ordered by the priority they are shed in.
+  survivors.forEach((kept, index) => {
+    expect(kept).toEqual(TOKENS.slice(TOKENS.length - kept.length))
+    if (index > 0) {
+      expect(survivors[index - 1]!.length).toBeGreaterThanOrEqual(kept.length)
+    }
+  })
+  expect(survivors[0]).toEqual(TOKENS)
+  expect(survivors.at(-1)!.length).toBeLessThan(TOKENS.length)
 })
 
 test("direct footer mode label keeps left padding without a status pill", async () => {
@@ -1470,7 +1478,7 @@ test("direct footer mode label keeps left padding without a status pill", async 
     const statusline = app
       .captureCharFrame()
       .split("\n")
-      .find((line) => line.includes("BUILD") && line.includes("cmd"))
+      .find((line) => line.startsWith("BUILD"))
 
     expect(statusline).toBeDefined()
     expect(statusline?.startsWith("BUILD ")).toBe(true)
@@ -1487,7 +1495,7 @@ test("direct footer mode label reflects a custom agent", async () => {
     const statusline = app
       .captureCharFrame()
       .split("\n")
-      .find((line) => line.includes("PLAN") && line.includes("cmd"))
+      .find((line) => line.startsWith("PLAN"))
 
     expect(statusline).toBeDefined()
   } finally {
@@ -1884,7 +1892,9 @@ test("direct footer todo panel shows an overflow row past the max", async () => 
     content: `Task ${index + 1}`,
   }))
 
-  const app = await renderFooter({ todos: () => todos, height: 12 })
+  // Tall enough that footerPanelBudget() is not the binding constraint --
+  // MAX_TODO_ROWS is what this case is about.
+  const app = await renderFooter({ todos: () => todos, height: 24 })
 
   try {
     await app.renderOnce()
@@ -1896,6 +1906,30 @@ test("direct footer todo panel shows an overflow row past the max", async () => 
     expect(frame).not.toContain("Task 7")
     expect(frame).not.toContain("Task 8")
     expect(frame).toContain("+2 more")
+  } finally {
+    app.cleanup()
+  }
+})
+
+test("direct footer panels give back rows on a short terminal", async () => {
+  const todos: FooterTodoItem[] = Array.from({ length: 8 }, (_, index) => ({
+    status: "pending",
+    content: `Task ${index + 1}`,
+  }))
+
+  const app = await renderFooter({ todos: () => todos, height: 12 })
+
+  try {
+    await app.renderOnce()
+    const frame = app.captureCharFrame()
+
+    // budget = floor(12 / 2) = 6, so the list sheds a row versus the 7 it
+    // would take on a tall terminal, and says so.
+    expect(frame).toContain("Task 5")
+    expect(frame).not.toContain("Task 6")
+    expect(frame).toContain("+3 more")
+    // The composer still gets its rows -- nothing is pushed off the top.
+    expect(frame).toContain("❯")
   } finally {
     app.cleanup()
   }

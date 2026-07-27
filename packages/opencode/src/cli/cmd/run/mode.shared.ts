@@ -28,9 +28,12 @@ export function modeDecision(mode: PermissionMode, request: PermissionRequest): 
   return "ask"
 }
 
+// Statusline badge for a non-default mode. Deliberately a bare glyph: the
+// full wording cost 18 of the statusline's columns to restate something the
+// permission dialogs already say, and the badge only appears off-default.
 export function modeLabel(mode: PermissionMode): string {
   if (mode === "accept-edits") {
-    return "⏵⏵ accept edits on"
+    return "⏵⏵"
   }
 
   return ""

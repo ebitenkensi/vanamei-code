@@ -33,9 +33,8 @@ import { OpencodeKeymapProvider } from "@/cli/ui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { RUN_SESSIONS_PANEL_ROWS } from "./footer.sessions"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
-import { subagentTreeRowCount } from "./footer.subagent-tree"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
-import { RunFooterView, thinkingTailRows, todoPanelRowCount } from "./footer.view"
+import { RunFooterView, footerPanelBudget, footerPanelRows, thinkingTailRows } from "./footer.view"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import type {
@@ -832,34 +831,27 @@ export class RunFooter implements FooterApi {
     return this.view().type === "prompt" && this.todos().length > 0
   }
 
-  private thinkingPanelRows(): number {
-    const state = this.thinking()
-    if (!state?.active || this.view().type !== "prompt") {
-      return 0
-    }
+  // Rows the stacked panels get, through the same budget RunFooterView applies
+  // -- both sides have to agree or the reserved height stops matching what is
+  // drawn.
+  private panelRows(): number {
+    const thinking = this.thinking()
+    const tail =
+      thinking?.active && this.view().type === "prompt"
+        ? thinkingTailRows(thinking.text, this.renderer.terminalWidth).length
+        : 0
+    const rows = footerPanelRows({
+      budget: footerPanelBudget(this.renderer.terminalHeight),
+      thinking: tail === 0 ? 0 : tail + 1,
+      todos: this.todoPanelVisible() ? this.todos().length : 0,
+      todoSummary: this.todoSummary(),
+      tabs:
+        this.view().type === "prompt" && this.promptRoute.type === "composer" && !this.autocomplete
+          ? this.subagent().tabs.length
+          : 0,
+    })
 
-    const rows = thinkingTailRows(state.text, this.renderer.terminalWidth)
-    return rows.length === 0 ? 0 : rows.length + 1
-  }
-
-  private todoPanelRows(): number {
-    if (!this.todoPanelVisible()) {
-      return 0
-    }
-
-    if (this.todoSummary()) {
-      return 1
-    }
-
-    return todoPanelRowCount(this.todos())
-  }
-
-  private subagentTreeRows(): number {
-    if (this.view().type !== "prompt" || this.promptRoute.type !== "composer" || this.autocomplete) {
-      return 0
-    }
-
-    return subagentTreeRowCount(this.subagent().tabs)
+    return rows.tree + rows.todos + rows.thinking
   }
 
   // Resizes the footer to fit the current view. Permission and question views
@@ -891,7 +883,7 @@ export class RunFooter implements FooterApi {
                             ? this.base + SUBAGENT_INSPECTOR_ROWS
                             : this.base + Math.max(TEXTAREA_MIN_ROWS, Math.min(PROMPT_MAX_ROWS, this.rows))
 
-    const total = height + this.todoPanelRows() + this.thinkingPanelRows() + this.subagentTreeRows()
+    const total = height + this.panelRows()
     if (total !== this.renderer.footerHeight) {
       this.renderer.footerHeight = total
     }

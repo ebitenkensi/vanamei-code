@@ -1207,6 +1207,7 @@ async function renderFooterView(input: {
   backgroundSubagents?: boolean
   queuedPrompts?: FooterQueuedPrompt[]
   sessions?: FooterSessionTab[]
+  thinking?: string
   interact?: (app: TestRenderApp) => Promise<void>
 }): Promise<RenderResult> {
   const [view] = createSignal<FooterView>(input.view ?? { type: "prompt" })
@@ -1235,6 +1236,7 @@ async function renderFooterView(input: {
           view={view}
           subagent={subagent}
           todos={() => input.todos ?? []}
+          thinking={() => (input.thinking ? { active: true, text: input.thinking, lines: 0, expanded: false } : undefined)}
           queuedPrompts={() => input.queuedPrompts ?? []}
           sessions={() => input.sessions ?? []}
           theme={() => RUN_THEME_FALLBACK}
@@ -1461,6 +1463,85 @@ const CASES: GalleryCase[] = [
         height,
         agents: [BUDGET_AGENT],
         state: { agent: BUDGET_AGENT.name, cost: 2.5 },
+      }),
+  },
+  {
+    name: "footer.statusline.loaded",
+    description:
+      "Statusline with every counter live (ctx, budgeted cost, queued, monitors, todos, modified) plus the model and both key hints -- the state the A+C redesign is measured against.",
+    height: 14,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        providers: [provider()],
+        currentModel: { providerID: "opencode", modelID: "gpt-5" },
+        currentVariant: "high",
+        todos: SAMPLE_TODOS,
+        queuedPrompts: SAMPLE_QUEUED,
+        subagent: { tabs: SAMPLE_SUBAGENT_TREE_TABS, details: {}, permissions: [], questions: [] },
+        state: {
+          agent: BUDGET_AGENT.name,
+          contextPercent: 78,
+          contextTokens: 156_000,
+          cost: 1.52,
+          modified: 7,
+          monitorCount: 2,
+          queue: 2,
+        },
+      }),
+  },
+  {
+    name: "footer.statusline.quiet",
+    description:
+      "Statusline on an untouched session: every counter is below the threshold that earns it a place, leaving the model and the command hint.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        providers: [provider()],
+        currentModel: { providerID: "opencode", modelID: "gpt-5" },
+        currentVariant: "high",
+        state: { contextPercent: 31 },
+      }),
+  },
+  {
+    name: "footer.statusline.running",
+    description:
+      "Statusline during a turn: the status text owns the row, the model and key hints step aside, and only ctx% plus an over-budget cost stay.",
+    height: 8,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        agents: [BUDGET_AGENT],
+        providers: [provider()],
+        currentModel: { providerID: "opencode", modelID: "gpt-5" },
+        state: {
+          agent: BUDGET_AGENT.name,
+          phase: "running",
+          permissionMode: "accept-edits",
+          automode: true,
+          contextPercent: 78,
+          cost: 1.9,
+          modified: 7,
+        },
+      }),
+  },
+  {
+    name: "footer.panel-budget",
+    description:
+      "Thinking tail, todo list, and subagent tree competing for a 12-row terminal: each sheds rows to its own overflow line so the composer keeps its place.",
+    height: 12,
+    render: (width, height) =>
+      renderFooterView({
+        width,
+        height,
+        todos: [...SAMPLE_TODOS, ...SAMPLE_TODOS, ...SAMPLE_TODOS],
+        subagent: { tabs: SAMPLE_SUBAGENT_TREE_TABS, details: {}, permissions: [], questions: [] },
+        thinking: Array.from({ length: 14 }, (_, index) => `reasoning line ${index + 1}`).join("\n"),
       }),
   },
   {

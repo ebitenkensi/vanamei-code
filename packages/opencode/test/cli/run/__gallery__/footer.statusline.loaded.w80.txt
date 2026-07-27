@@ -1,8 +1,14 @@
+ ☒ Set up project
+ ☐ Implement feature
+ ☐ Write tests
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ❯                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-BUILD AUTO                                                                   ^p
-
+ ⠋ Task(Inspect auth flow) Explore
+   ⎿  Grep("SessionExecution")
+ ✓ Task(Migrate config schema) General
+   ⎿  Done
+BUDGET-BUILD                  ◆78% $1.52/1.50 ⇥2  GPT-5 high  ^b background  ^p
 
 
 

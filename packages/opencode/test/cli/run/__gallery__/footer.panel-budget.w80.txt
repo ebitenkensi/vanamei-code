@@ -1,8 +1,12 @@
+ ☒ Set up project
+ ☐ Implement feature
+ … +7 more
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ❯                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-BUILD AUTO                                                                   ^p
-
-
+ ⠋ Task(Inspect auth flow) Explore
+   ⎿  Grep("SessionExecution")
+ … +1 more
+BUILD                                                     ☐6  ^b background  ^p
 
 

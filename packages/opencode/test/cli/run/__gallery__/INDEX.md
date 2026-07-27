@@ -47,6 +47,14 @@ regenerate with the script instead. Each state is rendered at widths 80 and 120.
 | `footer.statusline.budget-soft.w120.txt` | Statusline budget-fraction pill in warning color once session cost reaches the soft budget. |
 | `footer.statusline.budget-hard.w80.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
 | `footer.statusline.budget-hard.w120.txt` | Statusline budget-fraction pill in error color once session cost reaches the hard budget. |
+| `footer.statusline.loaded.w80.txt` | Statusline with every counter live (ctx, budgeted cost, queued, monitors, todos, modified) plus the model and both key hints -- the state the A+C redesign is measured against. |
+| `footer.statusline.loaded.w120.txt` | Statusline with every counter live (ctx, budgeted cost, queued, monitors, todos, modified) plus the model and both key hints -- the state the A+C redesign is measured against. |
+| `footer.statusline.quiet.w80.txt` | Statusline on an untouched session: every counter is below the threshold that earns it a place, leaving the model and the command hint. |
+| `footer.statusline.quiet.w120.txt` | Statusline on an untouched session: every counter is below the threshold that earns it a place, leaving the model and the command hint. |
+| `footer.statusline.running.w80.txt` | Statusline during a turn: the status text owns the row, the model and key hints step aside, and only ctx% plus an over-budget cost stay. |
+| `footer.statusline.running.w120.txt` | Statusline during a turn: the status text owns the row, the model and key hints step aside, and only ctx% plus an over-budget cost stay. |
+| `footer.panel-budget.w80.txt` | Thinking tail, todo list, and subagent tree competing for a 12-row terminal: each sheds rows to its own overflow line so the composer keeps its place. |
+| `footer.panel-budget.w120.txt` | Thinking tail, todo list, and subagent tree competing for a 12-row terminal: each sheds rows to its own overflow line so the composer keeps its place. |
 | `panel.command-menu.w80.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.command-menu.w120.txt` | Standalone command palette body with commands, an agent, and a subagent entry. |
 | `panel.model-select.w80.txt` | Standalone model picker body with a current selection and a deprecated model hidden. |
