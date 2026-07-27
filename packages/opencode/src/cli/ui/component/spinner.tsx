@@ -154,8 +154,11 @@ export function Spinner(props: {
       <Show when={txt().length > 0}>
         <text>
           <span style={{ fg: glyphColor() }}>{parts().b}</span>
-          <Show when={animated() && parts().h.length > 0}>
-            <span style={{ fg: shimColor() }}>{parts().h}</span>
+          {/* The shimmer slice still has to be drawn when animations are off --
+              skipping it swallowed three characters of the message, so a
+              frozen spinner read "errupt" instead of "interrupt". */}
+          <Show when={parts().h.length > 0}>
+            <span style={{ fg: animated() ? shimColor() : glyphColor() }}>{parts().h}</span>
           </Show>
           <Show when={parts().a.length > 0}>
             <span style={{ fg: glyphColor() }}>{parts().a}</span>
