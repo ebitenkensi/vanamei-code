@@ -290,9 +290,12 @@ describe("plugin.openai.ws-pool", () => {
         socket.send(JSON.stringify({ type: "response.completed", response: { id: `resp_${connections}` } }))
       })
     })
+    // idleTimeout doubles as the in-flight watchdog: the request/response
+    // round trip must finish inside it, so it needs headroom for a loaded
+    // CI runner while staying under waitFor's deadline for the prune wait.
     const fetch = OpenAIWebSocketPool.createWebSocketFetch({
       url: server.url,
-      idleTimeout: 20,
+      idleTimeout: 250,
     })
 
     const first = await fetch(server.url, streamRequest())
@@ -875,10 +878,12 @@ function closeHttpServer(server: HttpServer) {
   return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
 }
 
+// Every caller waits for something that should happen, so the deadline is
+// purely a failure bound — generous enough for a loaded CI runner.
 async function waitFor(predicate: () => boolean, message: string) {
   const started = Date.now()
   while (!predicate()) {
-    if (Date.now() - started > 1_000) throw new Error(message)
+    if (Date.now() - started > 5_000) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
 }
