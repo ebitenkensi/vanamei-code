@@ -2,6 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Runner } from "@/effect/runner"
+import { SessionRunCoordinator } from "@opencode-ai/core/session/run-coordinator"
 import { BackgroundJob } from "@/background/job"
 import { Effect, Latch, Layer, Scope, Context } from "effect"
 import { Session } from "./session"
@@ -32,19 +33,23 @@ const layer = Layer.effect(
     const background = yield* BackgroundJob.Service
     const status = yield* SessionStatus.Service
 
+    const coordinator = yield* SessionRunCoordinator.make<SessionID, never>({
+      drain: () => Effect.void,
+    })
+
     const state = yield* InstanceState.make(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
         const runners = new Map<SessionID, Runner.Runner<SessionV1.WithParts>>()
-        yield* Effect.addFinalizer(
-          Effect.fnUntraced(function* () {
-            yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
-              concurrency: "unbounded",
-              discard: true,
-            })
-            runners.clear()
-          }),
-        )
+          yield* Effect.addFinalizer(
+            Effect.fnUntraced(function* () {
+              yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
+                concurrency: "unbounded",
+                discard: true,
+              })
+              runners.clear()
+            }),
+          )
         return { runners, scope }
       }),
     )
@@ -76,6 +81,7 @@ const layer = Layer.effect(
 
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
       yield* cancelBackgroundJobs(background, sessionID)
+      yield* coordinator.interrupt(sessionID)
       const data = yield* InstanceState.get(state)
       const existing = data.runners.get(sessionID)
       if (!existing) {
@@ -90,7 +96,12 @@ const layer = Layer.effect(
       onInterrupt: Effect.Effect<SessionV1.WithParts>,
       work: Effect.Effect<SessionV1.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, onInterrupt)).ensureRunning(work)
+      return yield* coordinator.work(
+        sessionID,
+        Effect.gen(function* () {
+          return yield* (yield* runner(sessionID, onInterrupt)).ensureRunning(work)
+        }),
+      )
     })
 
     const startShell = Effect.fn("SessionRunState.startShell")(function* (

@@ -16,6 +16,7 @@ import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { AgentAttachment, Source } from "@opencode-ai/schema/prompt"
@@ -93,6 +94,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const shareSvc = yield* SessionShare.Service
     const promptSvc = yield* SessionPrompt.Service
     const sessionV2 = yield* SessionV2.Service
+    const sessionExec = yield* SessionExecution.Service
     const revertSvc = yield* SessionRevert.Service
     const compactSvc = yield* SessionCompaction.Service
     const runState = yield* SessionRunState.Service
@@ -280,7 +282,10 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
-      yield* promptSvc.cancel(ctx.params.sessionID)
+      yield* Effect.all([promptSvc.cancel(ctx.params.sessionID), sessionExec.interrupt(ctx.params.sessionID)], {
+        concurrency: "unbounded",
+        discard: true,
+      })
       return true
     })
 
