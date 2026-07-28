@@ -72,6 +72,12 @@ type SessionInfo = {
   id: string
   title?: string
   directory?: string
+  // Set when we bound to a session that already existed rather than creating
+  // one. Drives `resume`, which is what makes the runtime restore that
+  // session's history ring, first-turn state, and variant -- bare `opencode
+  // attach` resolves an existing session without --session/--continue, so the
+  // flags alone cannot answer this.
+  resumed?: boolean
 }
 
 function inline(info: Inline) {
@@ -654,6 +660,7 @@ export const RunCommand = effectCmd({
             id: current.data.id,
             title: current.data.title,
             directory: current.data.directory,
+            resumed: true,
           }
         }
 
@@ -668,7 +675,10 @@ export const RunCommand = effectCmd({
           }
 
           if (resolved) {
-            return resolved
+            // Every non-cancelled resolution above hands back a session that
+            // already existed -- the picker's "Create new session" row and an
+            // empty auto-resolve both come back undefined.
+            return { ...resolved, resumed: true }
           }
           // Picker's "Create new session" or an empty auto-resolve: fall
           // through to session-create below.
@@ -700,6 +710,7 @@ export const RunCommand = effectCmd({
             id: base.id,
             title: base.title,
             directory: base.directory,
+            resumed: true,
           }
         }
 
@@ -1123,7 +1134,7 @@ export const RunCommand = effectCmd({
             directory: cwd,
             sessionID,
             sessionTitle: sess.title,
-            resume: Boolean(args.session || args.continue) && !args.fork,
+            resume: sess.resumed === true,
             replay,
             replayLimit: args["replay-limit"],
             agent,
@@ -1269,7 +1280,7 @@ export const RunCommand = effectCmd({
                 directory: directory ?? root,
                 sessionID: sess.id,
                 sessionTitle: sess.title,
-                resume: Boolean(args.session || args.continue) && !args.fork,
+                resume: sess.resumed === true,
                 replay,
                 replayLimit: args["replay-limit"],
                 agent: args.agent,

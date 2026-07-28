@@ -18,7 +18,7 @@ import { MessageID } from "@/session/schema"
 import * as Locale from "@/util/locale"
 import { createRunDemo } from "./demo"
 import { modeCycle, modeDecision } from "./mode.shared"
-import { resolveModelInfo, resolveRunTuiConfig, resolveSessionInfo } from "./runtime.boot"
+import { resolveModelInfo, resolveRunTuiConfig, resolveSessionBinding, resolveSessionInfo } from "./runtime.boot"
 import { createRuntimeLifecycle } from "./runtime.lifecycle"
 import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
@@ -242,21 +242,30 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
           history: [],
           variant: undefined,
         })
-  const savedTask = resolveSavedVariant(ctx.model)
-  const [tuiConfig, session, savedVariant] = await Promise.all([tuiConfigTask, sessionTask, savedTask])
+  // Binding to an existing session (`opencode attach` after a /detach,
+  // --continue, -s) has to come back on what that session was left on: without
+  // this the footer would show the default agent and "Model default", the next
+  // turn would silently run as the default agent, and variant cycling would be
+  // dead because it needs a model. Explicit CLI flags still win.
+  const bindingTask = resolveSessionBinding(ctx.sdk, ctx.sessionID)
+  const [tuiConfig, session, binding] = await Promise.all([tuiConfigTask, sessionTask, bindingTask])
+  const model = ctx.model ?? binding.model
+  // Resolved off the restored model, not ctx.model, so the saved per-model
+  // variant preference still applies to a session we adopted.
+  const savedVariant = await resolveSavedVariant(model)
   const state: RuntimeState = {
     shown: !session.first,
     aborting: false,
-    model: ctx.model,
+    model,
     providers: [],
     variants: [],
     limits: {},
-    activeVariant: resolveVariant(ctx.variant, session.variant, savedVariant, []),
+    activeVariant: resolveVariant(ctx.variant, session.variant ?? binding.variant, savedVariant, []),
     sessionID: ctx.sessionID,
     history: [...session.history],
     localRows: [],
     sessionTitle: ctx.sessionTitle,
-    agent: ctx.agent,
+    agent: ctx.agent ?? binding.agent,
     agents: [],
     includeFiles: true,
     permissionMode: "normal",
@@ -270,10 +279,13 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       return state.session
     }
 
-    state.session = input.resolveSession(ctx).then((next) => {
+    state.session = input.resolveSession(ctx).then(async (next) => {
       state.sessionID = next.sessionID
       state.sessionTitle = next.sessionTitle ?? state.sessionTitle
-      state.agent = next.agent
+      state.agent = next.agent ?? (await resolveSessionBinding(ctx.sdk, next.sessionID)).agent
+      if (!next.agent && state.agent) {
+        footer.event({ type: "agent", agent: state.agent })
+      }
     })
     return state.session
   }
@@ -664,7 +676,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
     state.variants = variantsFor(state.providers, state.model)
     state.limits = info.limits
 
-    const next = resolveVariant(ctx.variant, session.variant, savedVariant, state.variants)
+    const next = resolveVariant(ctx.variant, session.variant ?? binding.variant, savedVariant, state.variants)
     if (next !== state.activeVariant) {
       state.activeVariant = next
     }
@@ -776,6 +788,15 @@ async function runInteractiveRuntime(input: RunRuntimeInput, deps: RunRuntimeDep
       const info = await resolveSessionInfo(ctx.sdk, sessionID, state.model)
       state.shown = !info.first
       state.history = info.history
+
+      // The chosen session may have been left on a different agent than the one
+      // this footer is showing; rebind both so the statusline and the next turn
+      // agree with the session we just switched to.
+      const agent = ctx.agent ?? (await resolveSessionBinding(ctx.sdk, sessionID)).agent
+      if (agent && agent !== state.agent) {
+        state.agent = agent
+        footer.event({ type: "agent", agent })
+      }
 
       state.demo = input.demo
         ? createRunDemo({
