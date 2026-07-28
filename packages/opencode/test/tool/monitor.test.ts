@@ -50,6 +50,7 @@ function makeStubOps(): { ops: TaskPromptOps; calls: SessionPrompt.PromptInput[]
   const calls: SessionPrompt.PromptInput[] = []
   const ops: TaskPromptOps = {
     cancel: () => Effect.void,
+    admit: () => Effect.void,
     resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
     prompt: (input) => {
       calls.push(input)
@@ -499,6 +500,7 @@ describe("tool.monitor", () => {
         extra: {
           promptOps: {
             cancel: () => Effect.void,
+            admit: () => Effect.void,
             resolvePromptParts: (template: string) => Effect.succeed([{ type: "text" as const, text: template }]),
             prompt: () => Effect.die("simulated inject failure"),
           } satisfies TaskPromptOps,

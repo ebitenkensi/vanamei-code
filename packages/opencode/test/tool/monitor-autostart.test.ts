@@ -45,6 +45,7 @@ function makeStubOps(): { ops: TaskPromptOps; calls: SessionPrompt.PromptInput[]
   const calls: SessionPrompt.PromptInput[] = []
   const ops: TaskPromptOps = {
     cancel: () => Effect.void,
+    admit: () => Effect.void,
     resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
     prompt: (input) => {
       calls.push(input)
@@ -272,6 +273,7 @@ describe("tool.monitor-autostart", () => {
 
       const reentrantOps: TaskPromptOps = {
         cancel: () => Effect.void,
+        admit: () => Effect.void,
         resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
         prompt: (input) => {
           // Simulate reentry: the new turn's promptOps construction calls rebind

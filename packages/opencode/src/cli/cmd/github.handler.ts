@@ -28,6 +28,9 @@ import { MessageV2 } from "../../session/message-v2"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionPrompt } from "@/session/prompt"
+import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionMessage } from "@opencode-ai/core/session/message"
+import { PromptInput } from "@opencode-ai/schema/prompt-input"
 import { Git } from "@/git"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Process } from "@/util/process"
@@ -376,6 +379,7 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
   const sessionSvc = yield* Session.Service
   const sessionShare = yield* SessionShare.Service
   const sessionPrompt = yield* SessionPrompt.Service
+  const sessionV2 = yield* SessionV2.Service
   const events = yield* EventV2Bridge.Service
   const runLocalEffect = <A, E>(effect: Effect.Effect<A, E>) =>
     Effect.runPromise(effect.pipe(Effect.provideService(InstanceRef, ctx)))
@@ -888,9 +892,19 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
       return runLocalEffect(
         Effect.gen(function* () {
           const prompt = sessionPrompt
+          const messageID = MessageID.ascending()
+          yield* sessionV2
+            .prompt({
+              id: SessionMessage.ID.make(messageID),
+              sessionID: session.id,
+              prompt: PromptInput.Prompt.make({ text: message }),
+              delivery: "steer",
+              resume: false,
+            })
+            .pipe(Effect.ignore)
           const result = yield* prompt.prompt({
             sessionID: session.id,
-            messageID: MessageID.ascending(),
+            messageID,
             variant,
             model: {
               providerID,
@@ -936,9 +950,19 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
           if (text) return text
 
           console.log("Requesting summary from agent...")
+          const summaryMessageID = MessageID.ascending()
+          yield* sessionV2
+            .prompt({
+              id: SessionMessage.ID.make(summaryMessageID),
+              sessionID: session.id,
+              prompt: PromptInput.Prompt.make({ text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences." }),
+              delivery: "steer",
+              resume: false,
+            })
+            .pipe(Effect.ignore)
           const summary = yield* prompt.prompt({
             sessionID: session.id,
-            messageID: MessageID.ascending(),
+            messageID: summaryMessageID,
             variant,
             model: {
               providerID,

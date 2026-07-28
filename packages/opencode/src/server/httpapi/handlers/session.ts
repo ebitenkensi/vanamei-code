@@ -415,6 +415,17 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof CommandPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
+      yield* sessionV2
+        .prompt({
+          id: SessionMessage.ID.make(ctx.payload.messageID ?? MessageID.ascending()),
+          sessionID: ctx.params.sessionID,
+          prompt: PromptInput.Prompt.make({
+            text: `${ctx.payload.command} ${ctx.payload.arguments}`.trim(),
+          }),
+          delivery: "steer",
+          resume: false,
+        })
+        .pipe(Effect.ignore)
       return yield* promptSvc
         .command({ ...ctx.payload, sessionID: ctx.params.sessionID })
         .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
