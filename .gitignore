@@ -34,3 +34,6 @@ logs/
 *.bun-build
 tsconfig.tsbuildinfo
 /.mcp.json
+
+# Git tracks .github/ — negation overrides ~/.config/git/ignore which ignores .github/
+!/.github/

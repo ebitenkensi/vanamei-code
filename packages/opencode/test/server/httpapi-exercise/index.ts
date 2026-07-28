@@ -1740,6 +1740,22 @@ const scenarios: Scenario[] = [
     .probe({ path: "/global/upgrade", body: { target: 1 } })
     .at(() => ({ path: "/global/upgrade", body: { target: 1 } }))
     .status(400),
+  http.protected
+    .post("/server/handoff", "server.handoff")
+    .inProject()
+    .seeded((ctx) => ctx.session({ title: "Handoff" }))
+    .at((ctx) => ({
+      path: "/server/handoff",
+      headers: ctx.headers(),
+      body: { sessionID: ctx.state.id, prompts: [{ parts: [] }] },
+    }))
+    .status(204),
+  // Must be last: the handler calls process.exit(0) via setImmediate.
+  http.protected
+    .post("/server/shutdown", "server.shutdown")
+    .global()
+    .at(() => ({ path: "/server/shutdown" }))
+    .status(204),
 ]
 
 const llmScenarios = new Set([
