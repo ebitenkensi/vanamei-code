@@ -69,13 +69,29 @@ V2 コア (packages/core) の設計品質は監査で裏付けられた — 耐�
 - `globalThis.fetch` 差し替えが 2 ファイル (http-recorder が同居しているのに)。
 - `core/test/session-runner.test.ts` 3,365 行の単一ファイル。
 
-### S6 死蔵・腐敗 (即焼却可能)
+### S6 死蔵・腐敗 — 焼却済み (R1a)・焼却取り消し・未着手
 
-ルート: `artifacts/` (Remotion 動画 + コミット済み mp4)・`github/` (upstream Action。`.github/` と紛らわしい)・`sdks/` (workspace 外の vscode 拡張)・`install` (存在しない releases を指す)・`STATS.md` (upstream の DL 統計)・`screenshot-uk.png`・`sst-env.d.ts`×3・`specs/` 13 本 (全て切断前。`tui-package.md` は削除済みパッケージの spec)・`HANDOFF.md` (7/17、出荷済み内容と矛盾)・`PLAN.md` (完了済。6 バグ記録は SPEC.md へ移設の価値あり)・`nix/desktop.nix` + `flake.nix:45,63`・`patches/install-korean-ime-fix.sh`・upstream 運用系 workflow 約 15 本・`script/publish.ts:51,54-55` (存在しないパスで publish 破損)・README の画像参照全滅 (`packages/console`/`web`)・CONTRIBUTING の app/desktop 記述。
+#### 焼却済み (R1a: 2fe0b3041 / 7376727d0)
 
-コード: `sdk-next` 333 行 (embedded host ~30 行のみ client へ移植)・`sdk/js/src/gen` 6,819 行 (v1 importers 6 件を /v2 へ移行)・`cli/ui/spinner.ts` 368 行 (importer ゼロ)・`cli/ui/parsers-config.ts`+shim 386 行・`src/temporary.ts`・`storage/` 327 行 (実質 NotFoundError 1 個と ignore された write 1 個のため)・`session/message.ts` 148 行・`server/projectors.ts`+`init-projectors.ts` (no-op)・`sync/README.md` (存在しない API の記述 179 行)・core 側: `effect/dfdf`・`plugin/layer-map.example.ts`・`util/array.ts`・`data-migration.sql.ts`・死重複 `core/{patch,snapshot,id}.ts` 510 行・未接続 config 断片 ~700 行・死 config オプション (`attribution`/`watcher`/`layout`/`autoshare`)・死 export 約 40。
+ルート: `artifacts/`・`github/`・`sdks/`・`install`・`STATS.md`・`screenshot-uk.png`・`sst-env.d.ts`×3・`specs/` (13 本、後述の session.md を除く)・`HANDOFF.md`・`PLAN.md` (6 バグ記録は下記 Appendix へ移設)・`nix/desktop.nix` + `flake.nix:45,63`・`patches/install-korean-ime-fix.sh`・upstream 運用系 workflow 約 15 本・`script/publish.ts:51,54-55` (dead ui/desktop paths)・README/CONTRIBUTING の dead references。
 
-挙動疑義: `opencode web` — UI パッケージ消滅後もサーバを立ててブラウザを開く。
+コード: `sdk-next` (全パッケージ)・`cli/ui/spinner.ts`・`cli/ui/parsers-config.ts`+shim・`src/temporary.ts`・`storage/`・`session/message.ts`・`server/projectors.ts`+`init-projectors.ts`・`sync/README.md`・core: `effect/dfdf`・`plugin/layer-map.example.ts`・`util/array.ts`・core 死重複 (`{patch,snapshot,id}.ts` — 未削除、importer あり)。
+
+#### 焼却取り消し (R1a repair: 339d03b9d)
+
+以下の 3 件は S6 で「死骸」と診断したが稼働経路が存在し復元:
+
+- `packages/core/src/data-migration.sql.ts` — migration 生成パイプラインの宣言として有効。`bun test` で未生成 migration を検出する。
+- `packages/sdk/js/src/gen/` — v1 の `import` 6 件 (生成型) が残存。これらの importer を v2/client へ移行した上で削除。
+- `specs/v2/session.md` — R3「台帳駆動」の正本。session.md 以外の specs は焼却のまま。
+
+#### 未着手 (R1 対象外、R3 以降)
+
+core 側未接続 config 断片 ~700 行・死 config オプション (`attribution`/`watcher`/`layout`/`autoshare`)・死 export 約 40。
+
+#### 挙動疑義 (R1d で解消)
+
+`opencode web` — R1d にてコマンドごと削除済み (4cf081469)。
 
 ### S7 CLI / run UI の局所負債
 
