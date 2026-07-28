@@ -173,3 +173,15 @@ schema ──→ protocol ──→ server ←── core ←── llm ←─�
 - 削除の巻き添え。→ R0 の CI 復旧を必ず先行。フェーズごと全ゲート + タグ。
 - 生成 SDK 退役の互換性。→ 外部消費者ゼロ (未公開フォーク) を確認済み。`sdk` の廃止は R4 の最後。
 - monitor 恒真断言の裏に実バグが隠れている可能性。→ R0 で顕在化させ、修正は独立コミットで。
+
+## Appendix: 6 Production Bug Records (from P4 E2E, July 2026)
+
+These bugs were found and fixed during P4 live two-agent E2E testing. Preserved
+here as reference after PLAN.md was deleted in R1.
+
+(a) monitor child tied to per-call scope died on tool return → Scope.provide(scope) + forkChild
+(b) monitor.event/stopped not routed in stream.transport sid() → rows never rendered
+(c) permission.replied/judged event-order race ate Auto-allowed rows and stuck the judging pill
+(d) loadSkills unbounded concurrency made duplicate-name skill resolution a race → sequential
+(e) run --interactive was a dead flag (handler read args.mini)
+(f) flood guard OOM-killed the whole session (yes hello, systemd oom-kill 実測): unbounded stdout queue + per-line pipeline let the heap balloon before the batch guard fired, and killing from inside the stdout consumer deadlocked proc.kill → chunk-level 1MB/60s byte guard before line splitting, Queue.dropping(1000), flood teardown moved to the owner fiber via Deferred, drain-only mode after trip, double monitor.stopped publish guarded.
