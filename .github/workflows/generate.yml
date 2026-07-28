@@ -1,16 +1,14 @@
 name: generate
 
 on:
-  push:
-    branches:
-      - dev
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   generate:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -18,34 +16,26 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
-      - name: Setup git committer
-        id: committer
-        uses: ./.github/actions/setup-git-committer
-        with:
-          opencode-app-id: ${{ vars.OPENCODE_APP_ID }}
-          opencode-app-secret: ${{ secrets.OPENCODE_APP_SECRET }}
+      - name: Generate legacy JS SDK
+        run: ./packages/sdk/js/script/build.ts
 
-      - name: Generate
-        run: ./script/generate.ts
+      - name: Generate client
+        working-directory: packages/client
+        run: bun run generate
 
-      - name: Commit and push
+      - name: Verify generated code is up to date
         run: |
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "No changes to commit"
-            exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            echo ""
+            echo "============================================"
+            echo "Generated code is out of date."
+            echo "Please run locally and push:"
+            echo ""
+            echo "  ./packages/sdk/js/script/build.ts"
+            echo "  cd packages/client && bun run generate"
+            echo "  git add -A && git commit -m \"chore: generate\" && git push"
+            echo ""
+            echo "============================================"
+            git status --short
+            exit 1
           fi
-          git add -A
-          git commit -m "chore: generate" --allow-empty
-          git push origin HEAD:${{ github.ref_name }} --no-verify
-          # if ! git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }} --no-verify; then
-          #   echo ""
-          #   echo "============================================"
-          #   echo "Failed to push generated code."
-          #   echo "Please run locally and push:"
-          #   echo ""
-          #   echo "  ./script/generate.ts"
-          #   echo "  git add -A && git commit -m \"chore: generate\" && git push"
-          #   echo ""
-          #   echo "============================================"
-          #   exit 1
-          # fi
