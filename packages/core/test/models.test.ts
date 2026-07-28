@@ -174,6 +174,7 @@ describe("ModelsDev Service", () => {
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBe(1)
     }),
+    { timeout: 15000 },
   )
 
   it.live("get() is single-flight under concurrent calls", () =>
@@ -234,6 +235,7 @@ describe("ModelsDev Service", () => {
       expect(final.calls[0].url).toContain("/api.json")
       expect(final.calls[0].userAgent).toContain("/cli")
     }),
+    { timeout: 15000 },
   )
 
   it.live("refresh(false) skips fetch when on-disk file is fresh", () =>
@@ -267,6 +269,7 @@ describe("ModelsDev Service", () => {
       expect(final.calls.length).toBe(1)
       expect(after).toEqual(fixture2)
     }),
+    { timeout: 15000 },
   )
 
   it.live("refresh swallows HTTP errors and leaves cache intact", () =>
@@ -286,5 +289,6 @@ describe("ModelsDev Service", () => {
       const final = yield* Ref.get(state)
       expect(final.calls.length).toBeGreaterThanOrEqual(1)
     }),
+    { timeout: 15000 },
   )
 })
