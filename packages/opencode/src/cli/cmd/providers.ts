@@ -371,8 +371,7 @@ export const ProvidersLoginCommand = effectCmd({
     const priority: Record<string, number> = {
       opencode: 0,
       openai: 1,
-      "github-copilot": 2,
-      google: 3,
+      google: 2,
       anthropic: 4,
       openrouter: 5,
       vercel: 6,

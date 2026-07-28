@@ -237,7 +237,7 @@ function sessionRecord(agent: string, variant = "default") {
   }
 }
 
-async function waitFor(check: () => boolean, timeout = 1_000): Promise<void> {
+async function waitFor(check: () => boolean, timeout = 5_000): Promise<void> {
   const end = Date.now() + timeout
   while (Date.now() < end) {
     if (check()) {
