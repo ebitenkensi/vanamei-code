@@ -26,6 +26,17 @@ export type SessionInfo = {
   variant: string | undefined
 }
 
+// What an existing session is already bound to server-side. The server rewrites
+// this on every turn (SessionPrompt.createUserMessage -> Session.setAgentModel),
+// so it is how a client that was not present for that turn -- `opencode attach`
+// after a /detach, --continue, a /sessions switch -- learns what the session was
+// left on instead of falling back to the defaults.
+export type SessionBinding = {
+  agent: string | undefined
+  model: RunInput["model"]
+  variant: string | undefined
+}
+
 type Config = Awaited<ReturnType<typeof TuiConfig.get>>
 type BootService = {
   readonly resolveModelInfo: (
@@ -38,6 +49,7 @@ type BootService = {
     sessionID: string,
     model: RunInput["model"],
   ) => Effect.Effect<SessionInfo>
+  readonly resolveSessionBinding: (sdk: RunInput["sdk"], sessionID: string) => Effect.Effect<SessionBinding>
   readonly resolveRunTuiConfig: () => Effect.Effect<RunTuiConfig>
   readonly resolveDiffStyle: () => Effect.Effect<RunDiffStyle>
 }
@@ -62,6 +74,14 @@ function emptySessionInfo(): SessionInfo {
   return {
     first: true,
     history: [],
+    variant: undefined,
+  }
+}
+
+function emptySessionBinding(): SessionBinding {
+  return {
+    agent: undefined,
+    model: undefined,
     variant: undefined,
   }
 }
@@ -155,6 +175,33 @@ const layer = Layer.effect(
       }
     })
 
+    const resolveSessionBinding = Effect.fn("RunBoot.resolveSessionBinding")(function* (
+      sdk: RunInput["sdk"],
+      sessionID: string,
+    ) {
+      if (!sessionID) {
+        return emptySessionBinding()
+      }
+
+      const info = yield* Effect.promise(() =>
+        sdk.session
+          .get({ sessionID })
+          .then((item) => item.data)
+          .catch(() => undefined),
+      )
+      if (!info) {
+        return emptySessionBinding()
+      }
+
+      return {
+        agent: info.agent,
+        model: info.model ? { providerID: info.model.providerID, modelID: info.model.id } : undefined,
+        // The session record stores "no variant" as the literal "default"
+        // (Session.setAgentModel); the run UI models that as undefined.
+        variant: info.model?.variant === "default" ? undefined : info.model?.variant,
+      }
+    })
+
     const resolveRunTuiConfig = Effect.fn("RunBoot.resolveRunTuiConfig")(function* () {
       return runTuiConfig(yield* config())
     })
@@ -166,6 +213,7 @@ const layer = Layer.effect(
     return Service.of({
       resolveModelInfo,
       resolveSessionInfo,
+      resolveSessionBinding,
       resolveRunTuiConfig,
       resolveDiffStyle,
     })
@@ -190,6 +238,11 @@ export async function resolveSessionInfo(
   model: RunInput["model"],
 ): Promise<SessionInfo> {
   return runtime.runPromise((svc) => svc.resolveSessionInfo(sdk, sessionID, model)).catch(() => emptySessionInfo())
+}
+
+// Reads the agent, model, and variant an existing session is already bound to.
+export async function resolveSessionBinding(sdk: RunInput["sdk"], sessionID: string): Promise<SessionBinding> {
+  return runtime.runPromise((svc) => svc.resolveSessionBinding(sdk, sessionID)).catch(() => emptySessionBinding())
 }
 
 // Reads TUI config once for direct mode keymap setup and display preferences.

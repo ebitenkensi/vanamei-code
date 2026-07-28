@@ -31,6 +31,7 @@ import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { Flock } from "@opencode-ai/core/util/flock"
+import { titlecase } from "@/util/locale"
 import { OpencodeKeymapProvider } from "@/cli/ui/keymap"
 import { readJson, writeJsonAtomic } from "@/util/persistence"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
@@ -500,6 +501,16 @@ export class RunFooter implements FooterApi {
 
       this.setVariants(next.variants)
       this.setCurrentVariant(next.current)
+      return
+    }
+
+    if (next.type === "agent") {
+      if (this.isGone) {
+        return
+      }
+
+      this.setCurrentAgent(next.agent)
+      this.patch({ agent: titlecase(next.agent) })
       return
     }
 

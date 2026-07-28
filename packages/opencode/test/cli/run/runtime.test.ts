@@ -202,8 +202,37 @@ function recordingFooter() {
   return {
     api,
     events,
+    // The runtime registers its prompt handler once the queue starts, so a test
+    // that submits has to wait for this before calling submit().
+    accepting() {
+      return promptHandler !== undefined
+    },
     submit(text: string) {
       promptHandler?.({ text, parts: [] })
+    },
+  }
+}
+
+// What `GET /session/{id}` returns for a session that has already run a turn:
+// the server stamps agent/model/variant on every turn, and "default" is how it
+// spells "no variant".
+function sessionRecord(agent: string, variant = "default") {
+  return {
+    id: "ses-1",
+    slug: "ses-1",
+    projectID: "prj-1",
+    directory: "/tmp",
+    title: "Session",
+    agent,
+    model: {
+      id: "gpt-5",
+      providerID: "openai",
+      variant,
+    },
+    version: "0.0.0",
+    time: {
+      created: 1,
+      updated: 1,
     },
   }
 }
@@ -404,5 +433,195 @@ describe("run interactive runtime", () => {
     )
     expect(oldTodoIndex).toBeGreaterThanOrEqual(0)
     expect(todoResetIndex).toBeGreaterThan(oldTodoIndex)
+  })
+
+  // `opencode attach` after a /detach passes no --agent and no --model, so what
+  // the session was left on has to come back from the server record -- otherwise
+  // the footer shows the default agent and "Model default", the next turn runs
+  // as the default agent, and variant cycling is dead for want of a model.
+  test("binds to the agent, model, and variant the attached session was left on", async () => {
+    const sdk = new OpencodeClient()
+    spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
+    spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
+    spyOn(sdk.command, "list").mockImplementation(() => ok([]))
+    spyOn(sdk.config, "providers").mockImplementation(() => ok({ providers: [], default: {} }))
+    spyOn(sdk.session, "get").mockImplementation(() => ok(sessionRecord("plan", "high")))
+
+    const bound: Array<{ agent: string | undefined; model: unknown; variant: string | undefined }> = []
+    let sent: { agent: string | undefined; model: unknown; variant: string | undefined } | undefined
+    const ui = recordingFooter()
+
+    const task = runInteractiveMode(
+      {
+        sdk,
+        directory: "/tmp",
+        sessionID: "ses-1",
+        sessionTitle: "Session",
+        resume: false,
+        agent: undefined,
+        model: undefined,
+        variant: undefined,
+        files: [],
+        thinking: true,
+        backgroundSubagents: false,
+      },
+      {
+        createRuntimeLifecycle: async (options: {
+          agent: string | undefined
+          model: unknown
+          variant: string | undefined
+        }) => {
+          bound.push({ agent: options.agent, model: options.model, variant: options.variant })
+          return {
+            footer: ui.api,
+            onResize: () => () => {},
+            refreshTheme: () => {},
+            resetForReplay: () => Promise.resolve(),
+            close: () => Promise.resolve(),
+          }
+        },
+        streamTransport: Promise.resolve({
+          createSessionTransport: async () => ({
+            runPromptTurn: async (input: {
+              agent: string | undefined
+              model: unknown
+              variant: string | undefined
+            }) => {
+              sent = { agent: input.agent, model: input.model, variant: input.variant }
+            },
+            selectSubagent: () => {},
+            replayOnResize: async () => false,
+            close: async () => {},
+          }),
+          formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        }),
+      },
+    )
+
+    await waitFor(() => ui.accepting())
+    ui.submit("hello")
+    await waitFor(() => sent !== undefined)
+
+    ui.api.close()
+    await task
+
+    const expected = { agent: "plan", model: { providerID: "openai", modelID: "gpt-5" }, variant: "high" }
+    expect(bound).toEqual([expected])
+    expect(sent).toEqual(expected)
+  })
+
+  // "default" is the server's spelling for "no variant"; carrying it through
+  // verbatim would show a bogus "default" variant in the statusline and send it
+  // back as if the user had picked it.
+  test("treats the record's default variant as no variant", async () => {
+    const sdk = new OpencodeClient()
+    spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
+    spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
+    spyOn(sdk.command, "list").mockImplementation(() => ok([]))
+    spyOn(sdk.config, "providers").mockImplementation(() => ok({ providers: [], default: {} }))
+    spyOn(sdk.session, "get").mockImplementation(() => ok(sessionRecord("build")))
+
+    const bound: Array<string | undefined> = []
+    const ui = recordingFooter()
+
+    const task = runInteractiveMode(
+      {
+        sdk,
+        directory: "/tmp",
+        sessionID: "ses-1",
+        sessionTitle: "Session",
+        resume: false,
+        agent: undefined,
+        model: undefined,
+        variant: undefined,
+        files: [],
+        thinking: true,
+        backgroundSubagents: false,
+      },
+      {
+        createRuntimeLifecycle: async (options: { variant: string | undefined }) => {
+          bound.push(options.variant)
+          return {
+            footer: ui.api,
+            onResize: () => () => {},
+            refreshTheme: () => {},
+            resetForReplay: () => Promise.resolve(),
+            close: () => Promise.resolve(),
+          }
+        },
+        streamTransport: Promise.resolve({
+          createSessionTransport: async () => ({
+            runPromptTurn: async () => {},
+            selectSubagent: () => {},
+            replayOnResize: async () => false,
+            close: async () => {},
+          }),
+          formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        }),
+      },
+    )
+
+    await waitFor(() => bound.length === 1)
+
+    ui.api.close()
+    await task
+
+    expect(bound).toEqual([undefined])
+  })
+
+  test("keeps an explicit agent over the one the session was left on", async () => {
+    const sdk = new OpencodeClient()
+    spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
+    spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
+    spyOn(sdk.command, "list").mockImplementation(() => ok([]))
+    spyOn(sdk.config, "providers").mockImplementation(() => ok({ providers: [], default: {} }))
+    spyOn(sdk.session, "get").mockImplementation(() => ok(sessionRecord("plan")))
+
+    const bound: Array<string | undefined> = []
+    const ui = recordingFooter()
+
+    const task = runInteractiveMode(
+      {
+        sdk,
+        directory: "/tmp",
+        sessionID: "ses-1",
+        sessionTitle: "Session",
+        resume: false,
+        agent: "build",
+        model: undefined,
+        variant: undefined,
+        files: [],
+        thinking: true,
+        backgroundSubagents: false,
+      },
+      {
+        createRuntimeLifecycle: async (options: { agent: string | undefined }) => {
+          bound.push(options.agent)
+          return {
+            footer: ui.api,
+            onResize: () => () => {},
+            refreshTheme: () => {},
+            resetForReplay: () => Promise.resolve(),
+            close: () => Promise.resolve(),
+          }
+        },
+        streamTransport: Promise.resolve({
+          createSessionTransport: async () => ({
+            runPromptTurn: async () => {},
+            selectSubagent: () => {},
+            replayOnResize: async () => false,
+            close: async () => {},
+          }),
+          formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        }),
+      },
+    )
+
+    await waitFor(() => bound.length === 1)
+
+    ui.api.close()
+    await task
+
+    expect(bound).toEqual(["build"])
   })
 })

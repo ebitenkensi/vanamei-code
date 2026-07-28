@@ -281,6 +281,13 @@ export type FooterEvent =
       variants: string[]
       current: string | undefined
     }
+  // Rebinds the footer to an agent the user did not pick in this client (the
+  // session's own agent, restored when binding to an existing session). Updates
+  // the statusline label and the agent panel's selection together.
+  | {
+      type: "agent"
+      agent: string
+    }
   | {
       type: "queue"
       queue: number
