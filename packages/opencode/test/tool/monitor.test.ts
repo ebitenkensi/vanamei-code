@@ -37,8 +37,10 @@ const eventV2BridgeMock = Layer.succeed(
 )
 
 const monitorLayer = Layer.mergeAll(
-  LayerNode.compile(LayerNode.group([MonitorAPINode, CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node])),
-  eventV2BridgeMock,
+  LayerNode.compile(
+    LayerNode.group([MonitorAPINode, CrossSpawnSpawner.node, Session.node, Truncate.node, Agent.node, EventV2Bridge.node]),
+    [[EventV2Bridge.node, eventV2BridgeMock]],
+  ),
   testInstanceStoreLayer,
 )
 

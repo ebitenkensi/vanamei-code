@@ -104,8 +104,9 @@ session_root_count() { sql "SELECT count(*) FROM session WHERE project_id='$1' A
 # "type" field and, for type "text", a "text" field holding the exact
 # rendered string; message.data has the "role" field) via
 # `sqlite3 <db> "SELECT json_extract(data,'$.type'), data FROM part ..."`.
-# item h's own USER_TIME_H/NEWER_ASSISTANT_H checks below are a separate,
-# already-passing design (see their own comments) and are left as-is.
+# item h's NEWER_ASSISTANT_H check now uses the same type='text' + text-field
+# filter as session_has_text so a reasoning part restating the nonce no longer
+# produces a false positive.
 session_has_text() {
   local n
   n=$(sql "SELECT count(*) FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$1' AND json_extract(m.data,'\$.role')='assistant' AND json_extract(p.data,'\$.type')='text' AND json_extract(p.data,'\$.text') LIKE '%$2%';")
@@ -885,7 +886,7 @@ else
   # sqlite assert: an assistant reply newer than the queued user message exists
   USER_TIME_H=$(sql "SELECT m.time_created FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$SID_H' AND p.data LIKE '%$NONCE_H%' AND json_extract(m.data,'\$.role')='user' ORDER BY m.time_created ASC LIMIT 1;")
   if [ -n "$USER_TIME_H" ]; then
-    NEWER_ASSISTANT_H=$(sql "SELECT count(*) FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$SID_H' AND p.data LIKE '%$NONCE_H_UPPER%' AND json_extract(m.data,'\$.role')='assistant' AND m.time_created >= $USER_TIME_H;")
+    NEWER_ASSISTANT_H=$(sql "SELECT count(*) FROM part p JOIN message m ON p.message_id=m.id WHERE m.session_id='$SID_H' AND json_extract(m.data,'\$.role')='assistant' AND json_extract(p.data,'\$.type')='text' AND json_extract(p.data,'\$.text') LIKE '%$NONCE_H_UPPER%' AND m.time_created >= $USER_TIME_H;")
     echo "assistant replies at/after queued user message ($USER_TIME_H): $NEWER_ASSISTANT_H"
     [ -n "$NEWER_ASSISTANT_H" ] && [ "$NEWER_ASSISTANT_H" != "0" ] || { echo "ACTUAL: no newer assistant reply found"; H_OK=false; }
   else
