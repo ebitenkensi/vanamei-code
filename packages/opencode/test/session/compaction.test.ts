@@ -1660,7 +1660,7 @@ describe("SessionNs.getUsage", () => {
     expect(result.cost).toBe(3 + 1.5)
   })
 
-  test("uses authoritative Copilot billed cost when provided", () => {
+  test("does not use removed Copilot billed cost override", () => {
     const result = SessionNs.getUsage({
       model: createModel({
         context: 100_000,
@@ -1671,7 +1671,8 @@ describe("SessionNs.getUsage", () => {
       metadata: { copilot: { totalNanoAiu: 4_473_525_000 } },
     })
 
-    expect(result.cost).toBe(0.04473525)
+    // github-copilot is outside the keep-set; cost must come from model pricing.
+    expect(result.cost).toBe(0.035907)
   })
 
   test("uses matching context cost tier before over-200k fallback", () => {
@@ -1748,72 +1749,31 @@ describe("SessionNs.getUsage", () => {
     expect(result.cost).toBe(0.9 + 0.4)
   })
 
-  test.each(["@ai-sdk/anthropic", "@ai-sdk/amazon-bedrock", "@ai-sdk/google-vertex/anthropic"])(
-    "computes total from components for %s models",
-    (npm) => {
-      const model = createModel({ context: 100_000, output: 32_000, npm })
-      // AI SDK v6: inputTokens includes cached tokens for all providers
-      const item = usage({
-        inputTokens: 1000,
-        outputTokens: 500,
-        totalTokens: 1500,
-        cacheReadInputTokens: 200,
-      })
-      if (npm === "@ai-sdk/amazon-bedrock") {
-        const result = SessionNs.getUsage({
-          model,
-          usage: item,
-          metadata: {
-            bedrock: {
-              usage: {
-                cacheWriteInputTokens: 300,
-              },
-            },
-          },
-        })
+  test("computes total from components for Anthropic models", () => {
+    const model = createModel({ context: 100_000, output: 32_000, npm: "@ai-sdk/anthropic" })
+    // AI SDK v6: inputTokens includes cached tokens for all providers
+    const item = usage({
+      inputTokens: 1000,
+      outputTokens: 500,
+      totalTokens: 1500,
+      cacheReadInputTokens: 200,
+    })
 
-        // inputTokens (1000) includes cache, so adjusted = 1000 - 200 - 300 = 500
-        expect(result.tokens.input).toBe(500)
-        expect(result.tokens.cache.read).toBe(200)
-        expect(result.tokens.cache.write).toBe(300)
-        // total = adjusted (500) + output (500) + cacheRead (200) + cacheWrite (300)
-        expect(result.tokens.total).toBe(1500)
-        return
-      }
-
-      const result = SessionNs.getUsage({
-        model,
-        usage: item,
-        metadata: {
-          anthropic: {
-            cacheCreationInputTokens: 300,
-          },
-        },
-      })
-
-      // inputTokens (1000) includes cache, so adjusted = 1000 - 200 - 300 = 500
-      expect(result.tokens.input).toBe(500)
-      expect(result.tokens.cache.read).toBe(200)
-      expect(result.tokens.cache.write).toBe(300)
-      // total = adjusted (500) + output (500) + cacheRead (200) + cacheWrite (300)
-      expect(result.tokens.total).toBe(1500)
-    },
-  )
-
-  test("extracts cache write tokens from vertex metadata key", () => {
-    const model = createModel({ context: 100_000, output: 32_000, npm: "@ai-sdk/google-vertex/anthropic" })
     const result = SessionNs.getUsage({
       model,
-      usage: usage({ inputTokens: 1000, outputTokens: 500, totalTokens: 1500, cacheReadInputTokens: 200 }),
+      usage: item,
       metadata: {
-        vertex: {
+        anthropic: {
           cacheCreationInputTokens: 300,
         },
       },
     })
 
+    // inputTokens (1000) includes cache, so adjusted = 1000 - 200 - 300 = 500
     expect(result.tokens.input).toBe(500)
     expect(result.tokens.cache.read).toBe(200)
     expect(result.tokens.cache.write).toBe(300)
+    // total = adjusted (500) + output (500) + cacheRead (200) + cacheWrite (300)
+    expect(result.tokens.total).toBe(1500)
   })
 })

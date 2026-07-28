@@ -1050,7 +1050,7 @@ describe("session.message-v2.toModelMessage", () => {
       api: {
         id: "deepseek/deepseek-v4-pro",
         url: "https://openrouter.ai/api/v1",
-        npm: "@openrouter/ai-sdk-provider",
+        npm: "@ai-sdk/openai-compatible",
       },
       capabilities: {
         ...model.capabilities,
@@ -1098,18 +1098,12 @@ describe("session.message-v2.toModelMessage", () => {
     ).toStrictEqual([
       {
         role: "assistant",
-        content: [
-          {
-            type: "reasoning",
-            text: "thinking",
-            providerOptions: {
-              openrouter: {
-                reasoning_details: reasoningDetails,
-              },
-            },
-          },
-          { type: "text", text: "answer" },
-        ],
+        content: [{ type: "text", text: "answer" }],
+      providerOptions: {
+        openaiCompatible: {
+          reasoning_details: "thinking",
+        },
+      },
       },
     ])
   })

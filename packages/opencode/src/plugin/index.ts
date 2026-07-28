@@ -12,14 +12,7 @@ import { ServerAuth } from "@/server/auth"
 import { CodexAuthPlugin } from "./openai/codex"
 import { Session } from "@/session/session"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { CopilotAuthPlugin } from "./github-copilot/copilot"
-import { gitlabAuthPlugin as GitlabAuthPlugin } from "opencode-gitlab-auth"
 import { PoeAuthPlugin } from "opencode-poe-auth"
-import { CloudflareAIGatewayAuthPlugin, CloudflareWorkersAuthPlugin } from "./cloudflare"
-import { AzureAuthPlugin } from "./azure"
-import { DigitalOceanAuthPlugin } from "./digitalocean"
-import { XaiAuthPlugin } from "./xai"
-import { SnowflakeCortexAuthPlugin } from "./snowflake-cortex"
 import { Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
@@ -69,15 +62,7 @@ function internalPlugins(flags: RuntimeFlags.Info): PluginInstance[] {
       CodexAuthPlugin(input, {
         experimentalWebSockets: experimentalWebSocketsEnabled({ enabled: flags.experimentalWebSockets }),
       }),
-    CopilotAuthPlugin,
-    GitlabAuthPlugin,
     PoeAuthPlugin,
-    CloudflareWorkersAuthPlugin,
-    CloudflareAIGatewayAuthPlugin,
-    AzureAuthPlugin,
-    DigitalOceanAuthPlugin,
-    SnowflakeCortexAuthPlugin,
-    XaiAuthPlugin,
   ]
 }
 
@@ -143,7 +128,7 @@ const layer = Layer.effect(
           baseUrl: serverUrl?.toString() ?? "http://localhost:4096",
           directory: ctx.directory,
           headers: ServerAuth.headers(),
-          ...(serverUrl ? {} : { fetch: async (...args) => Server.Default().app.fetch(...args) }),
+          ...(serverUrl ? {} : { fetch: async (request: Request) => Server.Default().app.fetch(request) }),
         })
         const cfg = yield* config.get()
         const input: PluginInput = {

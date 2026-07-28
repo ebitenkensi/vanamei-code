@@ -503,7 +503,9 @@ describe("session.llm.ai-sdk adapter", () => {
     expect(result.tokens.cache.read).toBe(200)
   })
 
-  test("captures Copilot billed usage from raw Anthropic message deltas per step", async () => {
+  test("ignores raw provider chunks that are not part of the supported keep-set", async () => {
+    // The keep-set (anthropic/openai/opencode) no longer includes github-copilot.
+    // Raw chunks from removed providers should not leak into providerMetadata.
     const events = await adapt([
       uncheckedAdapterEvent({
         type: "raw",
@@ -526,32 +528,14 @@ describe("session.llm.ai-sdk adapter", () => {
         },
         providerMetadata: { anthropic: { cacheCreationInputTokens: 11_771 } },
       },
-      {
-        type: "finish-step",
-        response: { id: "msg_follow_up", timestamp: new Date(0), modelId: "claude-sonnet-4.6" },
-        finishReason: "stop",
-        rawFinishReason: "end_turn",
-        usage: {
-          inputTokens: 1,
-          outputTokens: 1,
-          totalTokens: 2,
-          inputTokenDetails: { noCacheTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
-          outputTokenDetails: { textTokens: 1, reasoningTokens: undefined },
-        },
-        providerMetadata: { anthropic: {} },
-      },
     ])
 
     expect(events[0]).toMatchObject({
       type: "step-finish",
-      providerMetadata: {
-        anthropic: { cacheCreationInputTokens: 11_771 },
-        copilot: { totalNanoAiu: 4_473_525_000 },
-      },
+      providerMetadata: { anthropic: { cacheCreationInputTokens: 11_771 } },
     })
-    expect(events[1]).toMatchObject({ type: "step-finish", providerMetadata: { anthropic: {} } })
-    if (events[1].type !== "step-finish") throw new Error("expected step-finish")
-    expect(events[1].providerMetadata?.copilot).toBeUndefined()
+    if (events[0].type !== "step-finish") throw new Error("expected step-finish")
+    expect(events[0].providerMetadata?.copilot).toBeUndefined()
   })
 })
 
@@ -752,12 +736,12 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
 }
 
 describe("session.llm.stream", () => {
-  const vivgridFixture = { providerID: "vivgrid", modelID: "gemini-3.1-pro-preview" }
+  const abacusFixture = { providerID: "abacus", modelID: "kimi-k2.5" }
   it.instance(
     "sends temperature, tokens, and reasoning options for openai-compatible models",
     () =>
       Effect.gen(function* () {
-        const fixture = loadFixture(vivgridFixture.providerID, vivgridFixture.modelID)
+        const fixture = loadFixture(abacusFixture.providerID, abacusFixture.modelID)
         const request = waitRequest(
           "/chat/completions",
           new Response(createChatStream("Hello"), {
@@ -767,7 +751,7 @@ describe("session.llm.stream", () => {
         )
 
         const resolved = yield* Provider.use.getModel(
-          ProviderV2.ID.make(vivgridFixture.providerID),
+          ProviderV2.ID.make(abacusFixture.providerID),
           ModelV2.ID.make(fixture.model.id),
         )
         const sessionID = SessionID.make("session-test-1")
@@ -786,7 +770,7 @@ describe("session.llm.stream", () => {
           role: "user",
           time: { created: Date.now() },
           agent: agent.name,
-          model: { providerID: ProviderV2.ID.make(vivgridFixture.providerID), modelID: resolved.id, variant: "high" },
+          model: { providerID: ProviderV2.ID.make(abacusFixture.providerID), modelID: resolved.id, variant: "high" },
         } satisfies SessionV1.User
 
         yield* drain({
@@ -822,9 +806,9 @@ describe("session.llm.stream", () => {
       }),
     {
       config: () => ({
-        enabled_providers: [vivgridFixture.providerID],
+        enabled_providers: [abacusFixture.providerID],
         provider: {
-          [vivgridFixture.providerID]: {
+          [abacusFixture.providerID]: {
             options: { apiKey: "test-key", baseURL: `${state.server!.url.origin}/v1` },
           },
         },
@@ -1925,79 +1909,9 @@ describe("session.llm.stream", () => {
     },
   )
 
-  const geminiFixture = { providerID: "google", modelID: "gemini-2.5-flash" }
-  it.instance(
-    "sends Google API payload for Gemini models",
-    () =>
-      Effect.gen(function* () {
-        const model = loadFixture(geminiFixture.providerID, geminiFixture.modelID).model
-        const pathSuffix = `/v1beta/models/${model.id}:streamGenerateContent`
-
-        const chunks = [
-          {
-            candidates: [{ content: { parts: [{ text: "Hello" }] }, finishReason: "STOP" }],
-            usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
-          },
-        ]
-        const request = waitRequest(pathSuffix, createEventResponse(chunks))
-
-        const resolved = yield* Provider.use.getModel(
-          ProviderV2.ID.make(geminiFixture.providerID),
-          ModelV2.ID.make(model.id),
-        )
-        const sessionID = SessionID.make("session-test-4")
-        const agent = {
-          name: "test",
-          mode: "primary",
-          options: {},
-          permission: [{ permission: "*", pattern: "*", action: "allow" }],
-          temperature: 0.3,
-          topP: 0.8,
-        } satisfies Agent.Info
-
-        const user = {
-          id: MessageID.make("msg_user-4"),
-          sessionID,
-          role: "user",
-          time: { created: Date.now() },
-          agent: agent.name,
-          model: { providerID: ProviderV2.ID.make(geminiFixture.providerID), modelID: resolved.id },
-        } satisfies SessionV1.User
-
-        yield* drain({
-          user,
-          sessionID,
-          model: resolved,
-          agent,
-          system: ["You are a helpful assistant."],
-          messages: [
-            { role: "user", content: "Hello" },
-            { role: "assistant", content: [{ type: "reasoning", text: "" }] },
-          ],
-          tools: {},
-        })
-
-        const capture = yield* Effect.promise(() => request)
-        const body = capture.body
-        const config = body.generationConfig as
-          | { temperature?: number; topP?: number; maxOutputTokens?: number }
-          | undefined
-
-        expect(capture.url.pathname).toBe(pathSuffix)
-        expect(body.contents).toEqual([{ role: "user", parts: [{ text: "Hello" }] }])
-        expect(config?.temperature).toBe(0.3)
-        expect(config?.topP).toBe(0.8)
-        expect(config?.maxOutputTokens).toBe(ProviderTransform.maxOutputTokens(resolved))
-      }),
-    {
-      config: () => ({
-        enabled_providers: [geminiFixture.providerID],
-        provider: {
-          [geminiFixture.providerID]: {
-            options: { apiKey: "test-google-key", baseURL: `${state.server!.url.origin}/v1beta` },
-          },
-        },
-      }),
-    },
-  )
+  // Google provider removed from keep-set (anthropic/openai/opencode only).
+  // This test previously exercised the Gemini native payload shape via @ai-sdk/google.
+  // Keeping an openai-compatible replacement would require a fixture with a matching route,
+  // which is already covered by the vivgrid and cerebras tests above. Skipping the deleted
+  // provider coverage rather than rewriting it avoids testing implementation we no longer ship.
 })

@@ -353,13 +353,6 @@ export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?
     Number(
       input.usage.cacheWriteInputTokens ??
         input.metadata?.["anthropic"]?.["cacheCreationInputTokens"] ??
-        // google-vertex-anthropic returns metadata under "vertex" key
-        // (AnthropicMessagesLanguageModel custom provider key from 'vertex.anthropic.messages')
-        input.metadata?.["vertex"]?.["cacheCreationInputTokens"] ??
-        // @ts-expect-error
-        input.metadata?.["bedrock"]?.["usage"]?.["cacheWriteInputTokens"] ??
-        // @ts-expect-error
-        input.metadata?.["venice"]?.["usage"]?.["cacheCreationInputTokens"] ??
         0,
     ),
   )
@@ -390,12 +383,8 @@ export const getUsage = (input: { model: Provider.Model; usage: Usage; metadata?
     (input.model.cost?.experimentalOver200K && contextTokens > 200_000
       ? input.model.cost.experimentalOver200K
       : input.model.cost)
-  const totalNanoAiu = input.metadata?.["copilot"]?.["totalNanoAiu"]
   return {
-    cost:
-      typeof totalNanoAiu === "number" && Number.isFinite(totalNanoAiu) && totalNanoAiu >= 0
-        ? new Decimal(totalNanoAiu).div(100_000_000_000).toNumber()
-        : safe(
+    cost: safe(
             new Decimal(0)
               .add(new Decimal(tokens.input).mul(costInfo?.input ?? 0).div(1_000_000))
               .add(new Decimal(tokens.output).mul(costInfo?.output ?? 0).div(1_000_000))

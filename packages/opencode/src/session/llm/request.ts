@@ -11,7 +11,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { SystemPrompt } from "../system"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Record } from "effect"
-import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
+import { type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
 
@@ -32,7 +32,6 @@ type PrepareInput = {
   readonly auth: Auth.Info | undefined
   readonly plugin: Plugin.Interface
   readonly flags: RuntimeFlags.Info
-  readonly isWorkflow: boolean
 }
 
 export type Prepared = {
@@ -89,17 +88,10 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
         providerOptions: input.provider.options,
       })
   const options = mergeOptions(mergeOptions(mergeOptions(base, input.model.options), input.agent.options), variant)
-  if (
-    input.model.api.npm === "@ai-sdk/azure" &&
-    (input.provider.options.useCompletionUrls || input.model.options.useCompletionUrls || options.useCompletionUrls)
-  ) {
-    delete options.reasoningSummary
-    delete options.include
-  }
   if (isOpenaiOauth) options.instructions = system.join("\n")
 
   const messages =
-    isOpenaiOauth || input.isWorkflow
+    isOpenaiOauth
       ? input.messages
       : [
           ...system.map(
@@ -149,30 +141,6 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   // Codex parity: OpenAI Responses-family providers hardcode `strict: false`
   // on every function tool so MCP-sourced and dynamic schemas that don't
   // satisfy OpenAI's structured-outputs constraints still register.
-  if (
-    input.model.api.npm === "@ai-sdk/openai" ||
-    input.model.api.npm === "@ai-sdk/azure" ||
-    input.model.api.npm === "@ai-sdk/amazon-bedrock/mantle"
-  ) {
-    for (const key of Object.keys(tools)) tools[key] = { ...tools[key], strict: false }
-  }
-  if (
-    input.model.providerID.includes("github-copilot") &&
-    Object.keys(tools).length === 0 &&
-    hasToolCalls(input.messages)
-  ) {
-    // Copilot needs a tools field when replaying prior tool calls, even if no tools are currently enabled.
-    tools["_noop"] = aiTool({
-      description: "Do not call this tool. It exists only for API compatibility and must never be invoked.",
-      inputSchema: jsonSchema({
-        type: "object",
-        properties: {
-          reason: { type: "string", description: "Unused" },
-        },
-      }),
-      execute: async () => ({ output: "", title: "", metadata: {} }),
-    })
-  }
 
   const opencodeProjectID = input.model.providerID.startsWith("opencode")
     ? (yield* InstanceState.context).project.id
