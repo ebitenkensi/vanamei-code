@@ -21,7 +21,6 @@ import { ImportCommand } from "./cli/cmd/import"
 import { AttachCommand } from "./cli/cmd/attach"
 import { TuiThreadCommand } from "./cli/cmd/tui"
 import { AcpCommand } from "./cli/cmd/acp"
-import { WebCommand } from "./cli/cmd/web"
 import { EOL } from "os"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
@@ -81,7 +80,6 @@ const cli = yargs(args)
   .usage("")
   .completion("completion", "generate shell completion script")
   .command(AcpCommand)
-  .command(WebCommand)
   .command(McpCommand)
   .command(TuiThreadCommand)
   .command(AttachCommand)
