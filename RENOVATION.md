@@ -2,6 +2,8 @@
 
 決定日: 2026-07-24 / 方針: **V2完遂型** / 切断点: **queue-handoff 完了後の dev**
 
+> 後続: 第二次改修計画は `RENOVATION-2.md` (2026-07-28 起草・同日裁可、R0-R1 着手可)。
+
 ## 決定事項
 
 - upstream (sst/opencode) dev の常時追走を停止する。remote は残し、以後は provider/セキュリティ修正の cherry-pick のみ。
