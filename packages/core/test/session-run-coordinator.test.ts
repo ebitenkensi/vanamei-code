@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { SessionRunCoordinator } from "@opencode-ai/core/session/run-coordinator"
 import { testEffect } from "./lib/effect"
 
@@ -412,6 +412,199 @@ describe("SessionRunCoordinator", () => {
         yield* Deferred.await(completed)
 
         expect(runs).toBe(limit)
+      }),
+    ),
+  )
+
+  it.effect("work joins an in-flight execution so all joiners observe the same completion value", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>()
+        const coordinator = yield* SessionRunCoordinator.make<string, never>({ drain: () => Effect.void })
+
+        const work = coordinator.work(
+          "session",
+          Effect.sync(() => "shared-result").pipe(Effect.tap(() => Deferred.await(gate))),
+        )
+
+        const first = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+        const second = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        yield* Deferred.succeed(gate, undefined)
+        const a = yield* Fiber.join(first)
+        const b = yield* Fiber.join(second)
+
+        expect(a).toBe("shared-result")
+        expect(b).toBe("shared-result")
+        expect(a).toBe(b)
+      }),
+    ),
+  )
+
+  it.effect("work joiners share the same error value", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>()
+        const failure = new Error("shared-failure")
+        const coordinator = yield* SessionRunCoordinator.make<string, Error>({ drain: () => Effect.void })
+
+        const work = coordinator.work("session", Deferred.await(gate).pipe(Effect.andThen(Effect.fail(failure))))
+
+        const first = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+        const second = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        yield* Deferred.succeed(gate, undefined)
+        const a = yield* Fiber.join(first).pipe(Effect.flip)
+        const b = yield* Fiber.join(second).pipe(Effect.flip)
+
+        expect(a).toBe(failure)
+        expect(b).toBe(failure)
+      }),
+    ),
+  )
+
+  it.effect("interrupting a waiting work joiner does not cancel the running work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>()
+        let runs = 0
+        const coordinator = yield* SessionRunCoordinator.make({ drain: () => Effect.void })
+
+        const work = coordinator.work(
+          "session",
+          Effect.sync(() => {
+            runs++
+          }).pipe(Effect.andThen(Deferred.await(gate))),
+        )
+
+        const first = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+        const second = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        yield* Fiber.interrupt(second)
+        expect(runs).toBe(1)
+
+        yield* Deferred.succeed(gate, undefined)
+        yield* Fiber.join(first)
+
+        expect(runs).toBe(1)
+      }),
+    ),
+  )
+
+  it.effect("a different key runs concurrently and independently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const bothStarted = yield* Deferred.make<void>()
+        const gate = yield* Deferred.make<void>()
+        let active = 0
+        const coordinator = yield* SessionRunCoordinator.make({ drain: () => Effect.void })
+
+        const work = (key: string) =>
+          coordinator.work(
+            key,
+            Effect.sync(() => ++active).pipe(
+              Effect.tap(() => (active === 2 ? Deferred.succeed(bothStarted, undefined) : Effect.void)),
+              Effect.andThen(Deferred.await(gate)),
+            ),
+          )
+
+        const first = yield* work("first").pipe(Effect.forkChild)
+        yield* work("second").pipe(Effect.forkChild)
+        yield* Deferred.await(bothStarted)
+        yield* Deferred.succeed(gate, undefined)
+        yield* Fiber.join(first)
+      }),
+    ),
+  )
+
+  it.effect("a waiting work joiner restarts the work when the starter fiber is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const gate = yield* Deferred.make<void>()
+        let runs = 0
+        const coordinator = yield* SessionRunCoordinator.make({ drain: () => Effect.void })
+
+        const work = coordinator.work(
+          "session",
+          Effect.sync(() => ++runs).pipe(
+            Effect.tap(() => Deferred.succeed(started, undefined)),
+            Effect.tap((run) => (run === 1 ? Deferred.await(gate) : Effect.void)),
+          ),
+        )
+
+        const starter = yield* work.pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        const joiner = yield* work.pipe(Effect.forkChild)
+        yield* Effect.yieldNow
+
+        yield* Fiber.interrupt(starter)
+        const restarted = yield* Fiber.join(joiner)
+
+        expect(restarted).toBe(2)
+        expect(runs).toBe(2)
+      }),
+    ),
+  )
+
+  it.effect("work reentered from its own running fiber dies instead of joining itself", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const coordinator = yield* SessionRunCoordinator.make<string, never>({ drain: () => Effect.void })
+
+        const exit = yield* coordinator
+          .work(
+            "session",
+            Effect.suspend(() => coordinator.work("session", Effect.void)),
+          )
+          .pipe(Effect.exit)
+
+        expect(Exit.hasDies(exit)).toBe(true)
+      }),
+    ),
+  )
+
+  it.effect("runs a wake registered while work holds the key", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const gate = yield* Deferred.make<void>()
+        const drained = yield* Deferred.make<void>()
+        const coordinator = yield* SessionRunCoordinator.make<string, never>({
+          drain: () => Deferred.succeed(drained, undefined).pipe(Effect.asVoid),
+        })
+
+        const worked = yield* coordinator
+          .work("session", Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(gate))))
+          .pipe(Effect.forkChild)
+
+        yield* Deferred.await(started)
+        yield* coordinator.wake("session")
+        yield* Deferred.succeed(gate, undefined)
+        yield* Fiber.join(worked)
+        yield* Deferred.await(drained)
+      }),
+    ),
+  )
+
+  it.effect("preserves caller Context.Reference inside work run on the calling fiber", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const Ref = Context.Reference<{ tag: number }>("TestCallerRef", { defaultValue: () => ({ tag: 0 }) })
+        const coordinator = yield* SessionRunCoordinator.make({ drain: () => Effect.void })
+
+        const read = yield* coordinator
+          .work("session", Effect.serviceOption(Ref))
+          .pipe(Effect.provideService(Ref, { tag: 42 }))
+
+        expect(read._tag).toBe("Some")
+        if (read._tag === "Some") expect(read.value).toEqual({ tag: 42 })
       }),
     ),
   )

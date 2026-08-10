@@ -415,9 +415,14 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof CommandPayload.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
+      // The admitted row is promoted by the message the command expands into, so
+      // both sides must carry the same id — admitting a freshly minted one while
+      // SessionPrompt.command mints its own leaves a pending row no promotion can
+      // ever match, and the recovery wake would replay it as a second prompt.
+      const messageID = ctx.payload.messageID ?? MessageID.ascending()
       yield* sessionV2
         .prompt({
-          id: SessionMessage.ID.make(ctx.payload.messageID ?? MessageID.ascending()),
+          id: SessionMessage.ID.make(messageID),
           sessionID: ctx.params.sessionID,
           prompt: PromptInput.Prompt.make({
             text: `${ctx.payload.command} ${ctx.payload.arguments}`.trim(),
@@ -425,9 +430,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           delivery: "steer",
           resume: false,
         })
-        .pipe(Effect.ignore)
+        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
       return yield* promptSvc
-        .command({ ...ctx.payload, sessionID: ctx.params.sessionID })
+        .command({ ...ctx.payload, messageID, sessionID: ctx.params.sessionID })
         .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
     })
 

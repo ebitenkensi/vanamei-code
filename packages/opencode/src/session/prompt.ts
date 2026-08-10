@@ -56,7 +56,6 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { SessionInput } from "@opencode-ai/core/session/input"
 import { SessionMessage } from "@opencode-ai/core/session/message"
-import { Prompt } from "@opencode-ai/schema/prompt"
 
 import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
@@ -154,7 +153,11 @@ const layer = Layer.effect(
         cancel: (sessionID: SessionID) => cancel(sessionID),
         resolvePromptParts: (template: string) => resolvePromptParts(template),
         prompt: (input: PromptInput) => prompt(input).pipe(Effect.catch(Effect.die)),
-        admit: (input: PromptInput) => Effect.void,
+        // Task-launched prompts have no durable admission yet: this seam owns no
+        // SessionV2 handle, so it cannot reuse the admit-only prompt the httpapi
+        // paths go through (see SessionHttpApi.admitPrompt). Deliberately a
+        // no-op rather than a partial admission that would look durable.
+        admit: () => Effect.void,
       } satisfies TaskPromptOps
     })
 
@@ -1070,17 +1073,6 @@ const layer = Layer.effect(
     )(function* (input: PromptInput) {
       const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       yield* revert.cleanup(session)
-      yield* SessionInput.admit(db, events, {
-        id: SessionMessage.ID.make(input.messageID ?? MessageID.ascending()),
-        sessionID: input.sessionID,
-        prompt: Prompt.fromUserMessage({
-          text: input.parts
-            .filter((p): p is SessionV1.TextPartInput => p.type === "text" && !p.synthetic)
-            .map((p) => p.text)
-            .join("\n"),
-        }),
-        delivery: "steer",
-      }).pipe(Effect.ignore)
       const message = yield* createUserMessage(input)
       // V1→V2 promotion bridge: mark any durable admission for this exact
       // messageID promoted now that the user message is visible. No-ops when

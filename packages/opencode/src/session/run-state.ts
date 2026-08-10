@@ -41,15 +41,15 @@ const layer = Layer.effect(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
         const runners = new Map<SessionID, Runner.Runner<SessionV1.WithParts>>()
-          yield* Effect.addFinalizer(
-            Effect.fnUntraced(function* () {
-              yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
-                concurrency: "unbounded",
-                discard: true,
-              })
-              runners.clear()
-            }),
-          )
+        yield* Effect.addFinalizer(
+          Effect.fnUntraced(function* () {
+            yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
+              concurrency: "unbounded",
+              discard: true,
+            })
+            runners.clear()
+          }),
+        )
         return { runners, scope }
       }),
     )
@@ -81,6 +81,10 @@ const layer = Layer.effect(
 
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
       yield* cancelBackgroundJobs(background, sessionID)
+      // Only stops a drain this coordinator owns. Work admitted through
+      // ensureRunning is owned by its calling fiber, so the Runner below is what
+      // actually cancels it; the V2 execution lane is a separate coordinator and
+      // is interrupted by the abort handler (SessionHttpApi.abort).
       yield* coordinator.interrupt(sessionID)
       const data = yield* InstanceState.get(state)
       const existing = data.runners.get(sessionID)

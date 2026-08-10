@@ -901,7 +901,17 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
               delivery: "steer",
               resume: false,
             })
-            .pipe(Effect.ignore)
+            // The admission is a crash-recovery net, not part of the reply path:
+            // a failure must not abort the run, but it must not pass silently for
+            // a durable record either — V1 still delivers the prompt below.
+            .pipe(
+              Effect.tapCause((cause) =>
+                Effect.logError("Failed to admit github prompt", cause).pipe(
+                  Effect.annotateLogs({ sessionID: session.id }),
+                ),
+              ),
+              Effect.ignore,
+            )
           const result = yield* prompt.prompt({
             sessionID: session.id,
             messageID,
@@ -955,11 +965,23 @@ export const githubRun = Effect.fn("Cli.github.run")(function* (args: { event?: 
             .prompt({
               id: SessionMessage.ID.make(summaryMessageID),
               sessionID: session.id,
-              prompt: PromptInput.Prompt.make({ text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences." }),
+              prompt: PromptInput.Prompt.make({
+                text: "Summarize the actions (tool calls & reasoning) you did for the user in 1-2 sentences.",
+              }),
               delivery: "steer",
               resume: false,
             })
-            .pipe(Effect.ignore)
+            // The admission is a crash-recovery net, not part of the reply path:
+            // a failure must not abort the run, but it must not pass silently for
+            // a durable record either — V1 still delivers the prompt below.
+            .pipe(
+              Effect.tapCause((cause) =>
+                Effect.logError("Failed to admit github prompt", cause).pipe(
+                  Effect.annotateLogs({ sessionID: session.id }),
+                ),
+              ),
+              Effect.ignore,
+            )
           const summary = yield* prompt.prompt({
             sessionID: session.id,
             messageID: summaryMessageID,
